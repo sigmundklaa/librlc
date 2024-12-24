@@ -100,11 +100,6 @@ struct rlc_pdu {
         uint32_t seg_offset;
 };
 
-struct rlc_chunk {
-        const void *data;
-        size_t size;
-};
-
 #define rlc_each_node(start_, tptr_, prop_name_)                               \
         tptr_ = start_;                                                        \
         tptr_ != NULL;                                                         \

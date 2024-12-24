@@ -5,15 +5,9 @@
 #include <stdbool.h>
 
 #include <rlc/rlc.h>
+#include <rlc/chunks.h>
 
-#define rlc_max(a, b)   (((a) > (b)) ? (a) : (b))
-#define rlc_min(a, b)   (((a) < (b)) ? (a) : (b))
-#define rlc_assert(...) assert(__VA_ARGS__)
-
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
-#define rlc_errf(fmt_, ...) (void)fprintf(stderr, fmt_, ##__VA_ARGS__)
+#include "utils.h"
 
 static const char *rlc_transfer_type_str(enum rlc_transfer_type type)
 {
@@ -25,11 +19,6 @@ static const char *rlc_transfer_type_str(enum rlc_transfer_type type)
         case RLC_UM:
                 return "UM";
         }
-}
-
-static const void *ptr_offset_(const void *in, size_t offset)
-{
-        return (const void *)((uintptr_t)in + offset);
 }
 
 static size_t header_size_(enum rlc_transfer_type type)
@@ -51,50 +40,13 @@ static size_t pdu_calc_size_(struct rlc_context *ctx, size_t payload_size,
         return rlc_min(payload_size, max_size - header_size_(ctx->type));
 }
 
-static void encode_pdu_(struct rlc_context *ctx, struct rlc_transfer *transfer,
-                        struct rlc_pdu *pdu, struct rlc_chunk *chunks,
-                        size_t num_chunks)
+static void encode_pdu_header_(struct rlc_context *ctx,
+                               struct rlc_transfer *transfer,
+                               struct rlc_pdu *pdu, struct rlc_chunk *chunk)
 {
-        size_t offset;
-        size_t i;
-        size_t chunk_offset;
-        size_t pdu_remaining;
-        bool overflow;
-        const struct rlc_chunk *cur;
-
-        offset = 0;
-        i = 1;
-        pdu_remaining = pdu->size;
-        overflow = false;
-
-        for (rlc_each_item(transfer->chunks, cur, transfer->num_chunks)) {
-                if (overflow) {
-                        chunks[i].data = cur->data;
-                        chunks[i].size = rlc_min(pdu_remaining, cur->size);
-                } else if (offset + cur->size >= pdu->seg_offset) {
-                        chunk_offset = pdu->seg_offset - offset;
-
-                        chunks[i].data = ptr_offset_(cur->data, chunk_offset);
-                        chunks[i].size = rlc_min(pdu_remaining,
-                                                 cur->size - chunk_offset);
-
-                        overflow = true;
-                } else {
-                        offset += cur->size;
-                        continue;
-                }
-
-                pdu_remaining -= chunks[i].size;
-                if (pdu_remaining == 0) {
-                        break;
-                }
-
-                i++;
-        }
-
         /* TODO */
-        chunks[0].data = "Test";
-        chunks[0].size = 3;
+        chunk->data = "Test";
+        chunk->size = 3;
 }
 
 static rlc_errno decode_pdu_(struct rlc_context *ctx, struct rlc_pdu *pdu,
@@ -106,56 +58,6 @@ static rlc_errno decode_pdu_(struct rlc_context *ctx, struct rlc_pdu *pdu,
         (void)num_chunks;
 
         return 0;
-}
-
-static size_t pdu_num_chunks_(struct rlc_transfer *transfer,
-                              struct rlc_pdu *pdu)
-{
-        size_t ret;
-        size_t size;
-        size_t offset;
-        bool overflow;
-        const struct rlc_chunk *cur;
-
-        size = pdu->size;
-        offset = 0;
-        ret = 0;
-        overflow = false;
-
-        for (rlc_each_item(transfer->chunks, cur, transfer->num_chunks)) {
-                if (overflow) {
-                        size -= rlc_min(size, cur->size);
-                } else if (offset + cur->size >= pdu->seg_offset) {
-                        size -= rlc_min(size - (pdu->seg_offset - offset),
-                                        cur->size);
-                        overflow = true;
-                } else {
-                        offset += cur->size;
-                        continue;
-                }
-
-                ret++;
-
-                if (size == 0) {
-                        break;
-                }
-        }
-
-        return ret;
-}
-
-static size_t chunks_full_size_(const struct rlc_chunk *chunks, size_t len)
-{
-        const struct rlc_chunk *cur;
-        size_t total;
-
-        total = 0;
-
-        for (rlc_each_item(chunks, cur, len)) {
-                total += cur->size;
-        }
-
-        return total;
 }
 
 static inline rlc_errno do_tx_request_(struct rlc_context *ctx)
@@ -172,7 +74,7 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx,
                              struct rlc_transfer *transfer, struct rlc_pdu *pdu,
                              size_t max_size)
 {
-        rlc_errno status;
+        ssize_t status;
         ssize_t total_size;
         size_t num_chunks;
         const struct rlc_methods *methods;
@@ -185,11 +87,29 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx,
         pdu->sn = transfer->sn;
 
         {
-                num_chunks = pdu_num_chunks_(transfer, pdu) + 1;
+                /* Allocate and (shallow) copy over the chunks of the SDU,
+                 * adding the header at the start. */
+                num_chunks = rlc_chunks_num_view(transfer->chunks,
+                                                 transfer->num_chunks,
+                                                 pdu->size, pdu->seg_offset);
+                num_chunks += 1; /* PDU header is kept in chunk 0 */
                 struct rlc_chunk chunks[num_chunks];
 
-                encode_pdu_(ctx, transfer, pdu, chunks, num_chunks);
-                total_size = chunks_full_size_(chunks, num_chunks);
+                status = rlc_chunks_copy_view(transfer->chunks,
+                                              transfer->num_chunks, chunks + 1,
+                                              pdu->size, pdu->seg_offset);
+                if (status != pdu->size) {
+                        if (status >= 0) {
+                                status = -ENODATA;
+                        }
+
+                        rlc_errf("Chunk copy failed: %" RLC_PRI_ERRNO,
+                                 (rlc_errno)status);
+                        return status;
+                }
+
+                encode_pdu_header_(ctx, transfer, pdu, &chunks[0]);
+                total_size = rlc_chunks_size(chunks, num_chunks);
 
                 if (total_size > max_size) {
                         return -ENOSPC;
@@ -399,8 +319,8 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 } else {
                         switch (cur->state) {
                         case RLC_READY:
-                                tot_size = chunks_full_size_(cur->chunks,
-                                                             cur->num_chunks);
+                                tot_size = rlc_chunks_size(cur->chunks,
+                                                           cur->num_chunks);
                                 pdu_size = tot_size - cur->tx_offset_unack;
 
                                 pdu.seg_offset = cur->tx_offset_unack;

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <rlc/rlc.h>
+#include <rlc/chunks.h>
 
 static rlc_errno tx_request(struct rlc_context *ctx)
 {
