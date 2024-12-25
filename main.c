@@ -50,7 +50,7 @@ int main(void)
 {
         rlc_errno status;
         rlc_context ctx;
-        rlc_transfer transfer;
+        rlc_sdu sdu;
         struct rlc_chunk chunks[3] = {
                 {
                         .data = "First",
@@ -69,7 +69,7 @@ int main(void)
         status = rlc_init(&ctx, RLC_AM, 4, 128, &methods);
         assert(status == 0);
 
-        status = rlc_send(&ctx, &transfer, chunks, 3);
+        status = rlc_send(&ctx, &sdu, chunks, 3);
         assert(status == 0);
 
         return 0;

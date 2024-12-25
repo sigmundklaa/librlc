@@ -25,7 +25,7 @@ typedef sem_t rlc_sem;
 /** @cond PRIVATE */
 struct rlc_context;
 struct rlc_chunk;
-struct rlc_transfer;
+struct rlc_sdu;
 /** @endcond */
 
 struct rlc_methods {
@@ -40,7 +40,7 @@ struct rlc_methods {
         void (*mem_dealloc)(struct rlc_context *, void *);
 };
 
-enum rlc_transfer_type {
+enum rlc_sdu_type {
         RLC_AM,
         RLC_UM,
         RLC_TM
@@ -52,7 +52,7 @@ typedef struct rlc_context {
                 size_t size;
         } workbuf;
 
-        enum rlc_transfer_type type;
+        enum rlc_sdu_type type;
 
         size_t window_size;
         size_t buffer_size;
@@ -60,17 +60,17 @@ typedef struct rlc_context {
         /* RLC specification state variables */
         uint32_t tx_next;
 
-        struct rlc_transfer *transfers;
+        struct rlc_sdu *sdus;
         const struct rlc_methods *methods;
 } rlc_context;
 
-typedef struct rlc_transfer {
-        enum rlc_transfer_dir {
+typedef struct rlc_sdu {
+        enum rlc_sdu_dir {
                 RLC_TX,
                 RLC_RX,
         } dir;
 
-        enum rlc_transfer_state {
+        enum rlc_sdu_state {
                 RLC_READY,
                 RLC_RESEND,
                 RLC_DOACK,
@@ -90,11 +90,11 @@ typedef struct rlc_transfer {
         void *rx_buffer;
         size_t rx_buffer_size;
 
-        struct rlc_transfer *next;
-} rlc_transfer;
+        struct rlc_sdu *next;
+} rlc_sdu;
 
 struct rlc_pdu {
-        enum rlc_transfer_type type;
+        enum rlc_sdu_type type;
 
         size_t size;
 
@@ -112,11 +112,11 @@ struct rlc_pdu {
         cur_ < &arr_[len_];                                                    \
         cur_++
 
-rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_transfer_type type,
+rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    size_t window_size, size_t buffer_size,
                    const struct rlc_methods *methods);
 
-rlc_errno rlc_send(rlc_context *ctx, rlc_transfer *transfer,
+rlc_errno rlc_send(rlc_context *ctx, rlc_sdu *sdu,
                    const struct rlc_chunk *chunks, size_t num_chunks);
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size);

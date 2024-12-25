@@ -9,7 +9,7 @@
 
 #include "utils.h"
 
-static const char *rlc_transfer_type_str(enum rlc_transfer_type type)
+static const char *rlc_sdu_type_str(enum rlc_sdu_type type)
 {
         switch (type) {
         case RLC_AM:
@@ -24,7 +24,7 @@ static const char *rlc_transfer_type_str(enum rlc_transfer_type type)
         }
 }
 
-static size_t header_size_(enum rlc_transfer_type type)
+static size_t header_size_(enum rlc_sdu_type type)
 {
         switch (type) {
         case RLC_AM:
@@ -43,8 +43,7 @@ static size_t pdu_calc_size_(struct rlc_context *ctx, size_t payload_size,
         return rlc_min(payload_size, max_size - header_size_(ctx->type));
 }
 
-static void encode_pdu_header_(struct rlc_context *ctx,
-                               struct rlc_transfer *transfer,
+static void encode_pdu_header_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                                struct rlc_pdu *pdu, struct rlc_chunk *chunk)
 {
         /* TODO */
@@ -83,9 +82,8 @@ static inline rlc_errno do_tx_request_(struct rlc_context *ctx)
         return methods->tx_request(ctx);
 }
 
-static ssize_t do_tx_submit_(struct rlc_context *ctx,
-                             struct rlc_transfer *transfer, struct rlc_pdu *pdu,
-                             size_t max_size)
+static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_sdu *sdu,
+                             struct rlc_pdu *pdu, size_t max_size)
 {
         ssize_t status;
         ssize_t total_size;
@@ -97,20 +95,19 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx,
                 return -ENOTSUP;
         }
 
-        pdu->sn = transfer->sn;
+        pdu->sn = sdu->sn;
 
         {
                 /* Allocate and (shallow) copy over the chunks of the SDU,
                  * adding the header at the start. */
-                num_chunks = rlc_chunks_num_view(transfer->chunks,
-                                                 transfer->num_chunks,
+                num_chunks = rlc_chunks_num_view(sdu->chunks, sdu->num_chunks,
                                                  pdu->size, pdu->seg_offset);
                 num_chunks += 1; /* PDU header is kept in chunk 0 */
                 struct rlc_chunk chunks[num_chunks];
 
-                status = rlc_chunks_copy_view(transfer->chunks,
-                                              transfer->num_chunks, chunks + 1,
-                                              pdu->size, pdu->seg_offset);
+                status = rlc_chunks_copy_view(sdu->chunks, sdu->num_chunks,
+                                              chunks + 1, pdu->size,
+                                              pdu->seg_offset);
                 if (status != pdu->size) {
                         if (status >= 0) {
                                 status = -ENODATA;
@@ -121,7 +118,7 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx,
                         return status;
                 }
 
-                encode_pdu_header_(ctx, transfer, pdu, &chunks[0]);
+                encode_pdu_header_(ctx, sdu, pdu, &chunks[0]);
                 total_size = rlc_chunks_size(chunks, num_chunks);
 
                 if (total_size > max_size) {
@@ -157,56 +154,53 @@ static inline void do_dealloc_(struct rlc_context *ctx, void *mem)
         methods->mem_dealloc(ctx, mem);
 }
 
-static void append_transfer_(struct rlc_context *ctx,
-                             struct rlc_transfer *transfer)
+static void append_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
-        struct rlc_transfer *cur;
-        struct rlc_transfer **lastp;
+        struct rlc_sdu *cur;
+        struct rlc_sdu **lastp;
 
-        lastp = &ctx->transfers;
+        lastp = &ctx->sdus;
 
-        for (rlc_each_node(ctx->transfers, cur, next)) {
+        for (rlc_each_node(ctx->sdus, cur, next)) {
                 lastp = &cur->next;
         }
 
-        *lastp = transfer;
+        *lastp = sdu;
 }
 
-static struct rlc_transfer *transfer_alloc_(struct rlc_context *ctx,
-                                            enum rlc_transfer_dir dir)
+static struct rlc_sdu *sdu_alloc_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
 {
-        struct rlc_transfer *transfer;
+        struct rlc_sdu *sdu;
 
-        transfer = do_alloc_(ctx, sizeof(*transfer));
-        if (transfer == NULL) {
+        sdu = do_alloc_(ctx, sizeof(*sdu));
+        if (sdu == NULL) {
                 return NULL;
         }
 
-        (void)memset(transfer, 0, sizeof(*transfer));
+        (void)memset(sdu, 0, sizeof(*sdu));
 
-        transfer->dir = dir;
+        sdu->dir = dir;
 
-        if (transfer->dir == RLC_RX) {
-                transfer->rx_buffer = do_alloc_(ctx, ctx->buffer_size);
-                if (transfer->rx_buffer == NULL) {
-                        do_dealloc_(ctx, transfer);
+        if (sdu->dir == RLC_RX) {
+                sdu->rx_buffer = do_alloc_(ctx, ctx->buffer_size);
+                if (sdu->rx_buffer == NULL) {
+                        do_dealloc_(ctx, sdu);
                         return NULL;
                 }
 
-                transfer->rx_buffer_size = ctx->buffer_size;
+                sdu->rx_buffer_size = ctx->buffer_size;
         }
 
-        return transfer;
+        return sdu;
 }
 
-static void transfer_dealloc_(struct rlc_context *ctx,
-                              struct rlc_transfer *transfer)
+static void sdu_dealloc_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
-        if (transfer->dir == RLC_RX) {
-                do_dealloc_(ctx, transfer->rx_buffer);
+        if (sdu->dir == RLC_RX) {
+                do_dealloc_(ctx, sdu->rx_buffer);
         }
 
-        do_dealloc_(ctx, transfer);
+        do_dealloc_(ctx, sdu);
 }
 
 static void prepare_pdu_(struct rlc_context *ctx, struct rlc_pdu *pdu)
@@ -216,7 +210,7 @@ static void prepare_pdu_(struct rlc_context *ctx, struct rlc_pdu *pdu)
         pdu->type = ctx->type;
 }
 
-rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_transfer_type type,
+rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    size_t window_size, size_t buffer_size,
                    const struct rlc_methods *methods)
 {
@@ -237,18 +231,18 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_transfer_type type,
         return 0;
 }
 
-rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_transfer *transfer,
+rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_sdu *sdu,
                    const struct rlc_chunk *chunks, size_t num_chunks)
 {
-        /* Encode chunk in a transfer */
-        (void)memset(transfer, 0, sizeof(*transfer));
+        /* Encode chunk in a sdu */
+        (void)memset(sdu, 0, sizeof(*sdu));
 
-        transfer->dir = RLC_TX;
-        transfer->chunks = chunks;
-        transfer->num_chunks = num_chunks;
-        transfer->sn = ctx->tx_next++;
+        sdu->dir = RLC_TX;
+        sdu->chunks = chunks;
+        sdu->num_chunks = num_chunks;
+        sdu->sn = ctx->tx_next++;
 
-        append_transfer_(ctx, transfer);
+        append_sdu_(ctx, sdu);
 
         return do_tx_request_(ctx);
 }
@@ -262,7 +256,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
 {
         ssize_t status;
         struct rlc_pdu pdu;
-        struct rlc_transfer *transfer;
+        struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
 
         status = decode_pdu_(ctx, &pdu, chunks, num_chunks);
@@ -273,43 +267,41 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
 
         if (pdu.type != ctx->type) {
                 rlc_errf("CTX/PDU type mismatch: %s vs %s",
-                         rlc_transfer_type_str(pdu.type),
-                         rlc_transfer_type_str(ctx->type));
+                         rlc_sdu_type_str(pdu.type),
+                         rlc_sdu_type_str(ctx->type));
                 return;
         }
 
-        /* Find assigned transfer */
-        for (rlc_each_node(ctx->transfers, transfer, next)) {
-                if (transfer->dir == RLC_RX && transfer->sn == pdu.sn) {
+        /* Find assigned sdu */
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir == RLC_RX && sdu->sn == pdu.sn) {
                         break;
                 }
         }
 
-        if (transfer == NULL) {
+        if (sdu == NULL) {
                 if (pdu.seg_offset != 0) {
                         rlc_errf("Unrecognized SN; dropping");
                         return;
                 }
 
-                transfer = transfer_alloc_(ctx, RLC_RX);
-                if (transfer == NULL) {
+                sdu = sdu_alloc_(ctx, RLC_RX);
+                if (sdu == NULL) {
                         rlc_errf("SDU alloc failed");
                         return;
                 }
 
-                transfer->state = RLC_READY;
-                transfer->sn = pdu.sn;
+                sdu->state = RLC_READY;
+                sdu->sn = pdu.sn;
 
                 /* TODO: check if full SDU (no SN) */
 
-                append_transfer_(ctx, transfer);
+                append_sdu_(ctx, sdu);
         }
 
         status = rlc_chunks_deepcopy_view(
-                chunks, num_chunks,
-                (uint8_t *)transfer->rx_buffer + transfer->rx_pos,
-                transfer->rx_buffer_size - transfer->rx_pos,
-                header_size_(pdu.type));
+                chunks, num_chunks, (uint8_t *)sdu->rx_buffer + sdu->rx_pos,
+                sdu->rx_buffer_size - sdu->rx_pos, header_size_(pdu.type));
         if (status <= 0) {
                 rlc_errf("Chunk deepcopy failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)status);
@@ -317,7 +309,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
 
         rlc_errf("Chunk count: %i", (int)status);
 
-        transfer->rx_pos += status;
+        sdu->rx_pos += status;
 
         /* TODO: if last, deliver upper layer */
 }
@@ -329,9 +321,9 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         size_t pdu_size;
         const void *data;
         struct rlc_pdu pdu;
-        struct rlc_transfer *cur;
+        struct rlc_sdu *cur;
 
-        for (rlc_each_node(ctx->transfers, cur, next)) {
+        for (rlc_each_node(ctx->sdus, cur, next)) {
                 prepare_pdu_(ctx, &pdu);
 
                 if (cur->dir == RLC_RX) {
