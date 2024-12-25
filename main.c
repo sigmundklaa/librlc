@@ -20,6 +20,8 @@ static rlc_errno tx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
                 (void)printf("chunk: %zu\n", cur->size);
         }
 
+        rlc_rx_submit(ctx, chunks, num_chunks);
+
         rlc_tx_avail(ctx, 7);
 
         return 0;

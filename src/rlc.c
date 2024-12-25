@@ -18,6 +18,9 @@ static const char *rlc_transfer_type_str(enum rlc_transfer_type type)
                 return "TM";
         case RLC_UM:
                 return "UM";
+        default:
+                rlc_assert(0);
+                return NULL;
         }
 }
 
@@ -56,6 +59,16 @@ static rlc_errno decode_pdu_(struct rlc_context *ctx, struct rlc_pdu *pdu,
         (void)pdu;
         (void)chunks;
         (void)num_chunks;
+
+        static int off = 0;
+
+        pdu->sn = 0;
+        pdu->type = RLC_AM;
+        pdu->seg_offset = off;
+        pdu->size =
+                rlc_chunks_size(chunks, num_chunks) - header_size_(pdu->type);
+
+        off += 4;
 
         return 0;
 }
@@ -247,7 +260,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_transfer *transfer,
 void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
                    size_t num_chunks)
 {
-        rlc_errno status;
+        ssize_t status;
         struct rlc_pdu pdu;
         struct rlc_transfer *transfer;
         struct rlc_chunk *cur_chunk;
@@ -292,8 +305,19 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
                 append_transfer_(ctx, transfer);
         }
 
-        for (rlc_each_item(chunks, cur_chunk, num_chunks)) {
+        status = rlc_chunks_deepcopy_view(
+                chunks, num_chunks,
+                (uint8_t *)transfer->rx_buffer + transfer->rx_pos,
+                transfer->rx_buffer_size - transfer->rx_pos,
+                header_size_(pdu.type));
+        if (status <= 0) {
+                rlc_errf("Chunk deepcopy failed: %" RLC_PRI_ERRNO,
+                         (rlc_errno)status);
         }
+
+        rlc_errf("Chunk count: %i", (int)status);
+
+        transfer->rx_pos += status;
 
         /* TODO: if last, deliver upper layer */
 }

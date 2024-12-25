@@ -82,6 +82,8 @@ typedef struct rlc_transfer {
         uint32_t tx_offset_ack;   /* Last acknowledged offset */
         uint32_t sn;
 
+        uint32_t rx_pos;
+
         const struct rlc_chunk *chunks;
         size_t num_chunks;
 
@@ -118,6 +120,9 @@ rlc_errno rlc_send(rlc_context *ctx, rlc_transfer *transfer,
                    const struct rlc_chunk *chunks, size_t num_chunks);
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size);
+
+void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
+                   size_t num_chunks);
 
 RLC_END_DECL
 

@@ -1,7 +1,6 @@
 
 #include <stddef.h>
 #include <string.h>
-#include <errno.h>
 
 #include <rlc/rlc.h>
 #include <rlc/chunks.h>
@@ -39,18 +38,17 @@ size_t rlc_chunks_num_view(const struct rlc_chunk *chunks, size_t num_chunks,
                 if (passed >= offset) {
                         tmp = rlc_min(cur->size, size - total);
                         total += tmp;
-                        passed += tmp;
-                } else if (passed + cur->size >= offset) {
+                } else if (passed + cur->size > offset) {
                         tmp = rlc_min(cur->size - (offset - passed),
                                       size - total);
                         total += tmp;
-                        passed += tmp;
                 } else {
                         passed += cur->size;
                         continue;
                 }
 
                 count++;
+                passed += cur->size;
 
                 if (total >= size) {
                         break;
@@ -90,8 +88,7 @@ ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks,
                                      copy_size);
 
                         total += copy_size;
-                        passed += copy_size;
-                } else if (passed + cur->size >= offset) {
+                } else if (passed + cur->size > offset) {
                         /* Offset into a chunk */
                         local_offset = offset - passed;
                         copy_size = rlc_min(cur->size - local_offset,
@@ -102,11 +99,12 @@ ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks,
                                      copy_size);
 
                         total += copy_size;
-                        passed += copy_size;
                 } else {
                         passed += cur->size;
                         continue;
                 }
+
+                passed += cur->size;
 
                 if (total >= max_size) {
                         break;
@@ -148,8 +146,7 @@ ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks, size_t num_chunks,
                         dst_chunks[i].size = copy_size;
 
                         total += copy_size;
-                        passed += copy_size;
-                } else if (passed + cur->size >= offset) {
+                } else if (passed + cur->size > offset) {
                         /* Offset into a chunk */
                         local_off = offset - passed;
                         copy_size = rlc_min(cur->size - local_off,
@@ -159,11 +156,12 @@ ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks, size_t num_chunks,
                         dst_chunks[i].size = copy_size;
 
                         total += copy_size;
-                        passed += copy_size;
                 } else {
                         passed += cur->size;
                         continue;
                 }
+
+                passed += cur->size;
 
                 if (total >= max_size) {
                         break;
