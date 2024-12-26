@@ -8,6 +8,7 @@
 #include <rlc/chunks.h>
 
 #include "utils.h"
+#include "encode.h"
 
 static const char *rlc_sdu_type_str(enum rlc_sdu_type type)
 {
@@ -41,35 +42,6 @@ static size_t pdu_calc_size_(struct rlc_context *ctx, size_t payload_size,
 {
         /* TODO: calculate header size */
         return rlc_min(payload_size, max_size - header_size_(ctx->type));
-}
-
-static void encode_pdu_header_(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                               struct rlc_pdu *pdu, struct rlc_chunk *chunk)
-{
-        /* TODO */
-        chunk->data = "Test";
-        chunk->size = 3;
-}
-
-static rlc_errno decode_pdu_(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                             struct rlc_chunk *chunks, size_t num_chunks)
-{
-        (void)ctx;
-        (void)pdu;
-        (void)chunks;
-        (void)num_chunks;
-
-        static int off = 0;
-
-        pdu->sn = 0;
-        pdu->type = RLC_AM;
-        pdu->seg_offset = off;
-        pdu->size =
-                rlc_chunks_size(chunks, num_chunks) - header_size_(pdu->type);
-
-        off += 4;
-
-        return 0;
 }
 
 static inline rlc_errno do_tx_request_(struct rlc_context *ctx)
@@ -118,7 +90,7 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                         return status;
                 }
 
-                encode_pdu_header_(ctx, sdu, pdu, &chunks[0]);
+                rlc_pdu_encode(ctx, pdu, &chunks[0]);
                 total_size = rlc_chunks_size(chunks, num_chunks);
 
                 if (total_size > max_size) {
@@ -259,7 +231,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
         struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
 
-        status = decode_pdu_(ctx, &pdu, chunks, num_chunks);
+        status = rlc_pdu_decode(ctx, &pdu, chunks, num_chunks);
         if (status != 0) {
                 rlc_errf("Unable to decode PDU; dropping");
                 return;
@@ -299,9 +271,15 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
                 append_sdu_(ctx, sdu);
         }
 
+        if (pdu.seg_offset >= sdu->rx_buffer_size) {
+                return;
+        }
+
+        /* Copy the contents of the chunks, skipping the header content */
         status = rlc_chunks_deepcopy_view(
-                chunks, num_chunks, (uint8_t *)sdu->rx_buffer + sdu->rx_pos,
-                sdu->rx_buffer_size - sdu->rx_pos, header_size_(pdu.type));
+                chunks, num_chunks, (uint8_t *)sdu->rx_buffer + pdu.seg_offset,
+                sdu->rx_buffer_size - pdu.seg_offset,
+                rlc_pdu_header_size(ctx, &pdu));
         if (status <= 0) {
                 rlc_errf("Chunk deepcopy failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)status);

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <inttypes.h>
 
 #ifdef __cplusplus
@@ -46,6 +47,12 @@ enum rlc_sdu_type {
         RLC_TM
 };
 
+enum rlc_sn_width {
+        RLC_SN_6BIT,
+        RLC_SN_12BIT,
+        RLC_SN_18BIT,
+};
+
 typedef struct rlc_context {
         struct {
                 uint8_t *mem;
@@ -53,6 +60,7 @@ typedef struct rlc_context {
         } workbuf;
 
         enum rlc_sdu_type type;
+        enum rlc_sn_width sn_width;
 
         size_t window_size;
         size_t buffer_size;
@@ -100,6 +108,13 @@ struct rlc_pdu {
 
         uint32_t sn;
         uint32_t seg_offset;
+
+        struct {
+                bool is_first: 1;
+                bool is_last: 1;
+
+                bool polled: 1;
+        } flags;
 };
 
 #define rlc_each_node(start_, tptr_, prop_name_)                               \

@@ -1,2 +1,8 @@
 
-target_sources(librlc PRIVATE rlc.c chunk.c)
+target_sources(
+    librlc
+    PRIVATE
+        rlc.c
+        chunk.c
+        encode.c
+)

@@ -5,7 +5,7 @@
 #include <rlc/rlc.h>
 
 struct rlc_chunk {
-        const void *data;
+        void *data;
         size_t size;
 };
 

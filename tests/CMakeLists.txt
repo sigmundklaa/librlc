@@ -14,6 +14,11 @@ function(add_test src_file)
             librlc
             unity
     )
+    target_include_directories(
+        ${test_name}
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    )
 
     set_property(
         TARGET
@@ -39,4 +44,4 @@ add_custom_target(
 )
 
 add_test(test_chunks.c)
-add_test(test_um.c)
+add_test(test_encode.c)
