@@ -330,6 +330,46 @@ static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         }
 }
 
+static bool serve_sdu_(const struct rlc_context *ctx, struct rlc_sdu *sdu,
+                       struct rlc_pdu *pdu, size_t size_avail)
+{
+        size_t tot_size;
+
+        switch (sdu->state) {
+        case RLC_READY:
+                tot_size = rlc_chunks_size(sdu->chunks, sdu->num_chunks);
+
+                pdu->size = tot_size - sdu->tx_offset_unack;
+                pdu->seg_offset = sdu->tx_offset_unack;
+                pdu->flags.is_first = pdu->seg_offset == 0;
+
+                pdu_size_adjust_(ctx, pdu, size_avail);
+
+                sdu->tx_offset_unack += pdu->size;
+                if (pdu->flags.is_last || sdu->tx_offset_unack >= tot_size) {
+                        pdu->flags.is_last = 1;
+                        sdu->state = RLC_WAITACK;
+                }
+
+                break;
+        case RLC_RESEND:
+#if 0
+                rlc_assert(ctx->type == RLC_AM);
+
+                tot_size = sdu->tx_offset_unack - sdu->tx_offset_ack;
+
+                pdu.seg_offset = sdu->tx_offset_ack;
+                pdu.size = 0;
+#endif
+
+                break;
+        default:
+                return false;
+        }
+
+        return true;
+}
+
 void rlc_tx_avail(struct rlc_context *ctx, size_t size)
 {
         ssize_t ret;
@@ -349,36 +389,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
 
                         /* Set offset to ack */
                 } else {
-                        switch (cur->state) {
-                        case RLC_READY:
-                                tot_size = rlc_chunks_size(cur->chunks,
-                                                           cur->num_chunks);
-
-                                pdu.size = tot_size - cur->tx_offset_unack;
-                                pdu.seg_offset = cur->tx_offset_unack;
-                                pdu.flags.is_first = pdu.seg_offset == 0;
-
-                                pdu_size_adjust_(ctx, &pdu, size);
-
-                                cur->tx_offset_unack += pdu.size;
-                                if (pdu.flags.is_last ||
-                                    cur->tx_offset_unack >= tot_size) {
-                                        pdu.flags.is_last = 1;
-                                        cur->state = RLC_WAITACK;
-                                }
-
-                                break;
-                        case RLC_RESEND:
-                                rlc_assert(ctx->type == RLC_AM);
-
-                                tot_size = cur->tx_offset_unack -
-                                           cur->tx_offset_ack;
-
-                                pdu.seg_offset = cur->tx_offset_ack;
-                                pdu.size = 0;
-
-                                break;
-                        default:
+                        if (!serve_sdu_(ctx, cur, &pdu, size)) {
                                 continue;
                         }
                 }
