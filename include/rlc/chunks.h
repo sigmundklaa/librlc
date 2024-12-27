@@ -4,11 +4,6 @@
 
 #include <rlc/rlc.h>
 
-struct rlc_chunk {
-        void *data;
-        size_t size;
-};
-
 size_t rlc_chunks_size(const struct rlc_chunk *chunks, size_t len);
 
 size_t rlc_chunks_num_view(const struct rlc_chunk *chunks, size_t num_chunks,

@@ -27,6 +27,7 @@ typedef sem_t rlc_sem;
 struct rlc_context;
 struct rlc_chunk;
 struct rlc_sdu;
+struct rlc_event;
 /** @endcond */
 
 struct rlc_methods {
@@ -34,8 +35,7 @@ struct rlc_methods {
                                size_t);
         rlc_errno (*tx_request)(struct rlc_context *);
 
-        rlc_errno (*tx_event)(struct rlc_context *);
-        rlc_errno (*rx_event)(struct rlc_context *);
+        void (*event)(const struct rlc_context *, struct rlc_event *);
 
         void *(*mem_alloc)(struct rlc_context *, size_t);
         void (*mem_dealloc)(struct rlc_context *, void *);
@@ -115,6 +115,22 @@ struct rlc_pdu {
 
                 bool polled: 1;
         } flags;
+};
+
+struct rlc_chunk {
+        void *data;
+        size_t size;
+};
+
+struct rlc_event {
+        enum rlc_event_type {
+                RLC_EVENT_RX_DONE,
+                RLC_EVENT_RX_FAIL,
+        } type;
+
+        union {
+                struct rlc_chunk rx_done;
+        } data;
 };
 
 #define rlc_each_node(start_, tptr_, prop_name_)                               \

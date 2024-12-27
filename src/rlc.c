@@ -25,25 +25,6 @@ static const char *rlc_sdu_type_str(enum rlc_sdu_type type)
         }
 }
 
-static size_t header_size_(enum rlc_sdu_type type)
-{
-        switch (type) {
-        case RLC_AM:
-                return 3;
-        case RLC_UM:
-                return 1;
-        case RLC_TM:
-                return 1;
-        }
-}
-
-static size_t pdu_calc_size_(struct rlc_context *ctx, size_t payload_size,
-                             size_t max_size)
-{
-        /* TODO: calculate header size */
-        return rlc_min(payload_size, max_size - header_size_(ctx->type));
-}
-
 static inline rlc_errno do_tx_request_(struct rlc_context *ctx)
 {
         const struct rlc_methods *methods = ctx->methods;
@@ -69,13 +50,15 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
         pdu->sn = sdu->sn;
 
+        /* Allocate and (shallow) copy over the chunks of the SDU,
+         * adding the header at the start. */
+        num_chunks = rlc_chunks_num_view(sdu->chunks, sdu->num_chunks,
+                                         pdu->size, pdu->seg_offset);
+        num_chunks += 1; /* PDU header is kept in chunk 0 */
+
         {
-                /* Allocate and (shallow) copy over the chunks of the SDU,
-                 * adding the header at the start. */
-                num_chunks = rlc_chunks_num_view(sdu->chunks, sdu->num_chunks,
-                                                 pdu->size, pdu->seg_offset);
-                num_chunks += 1; /* PDU header is kept in chunk 0 */
                 struct rlc_chunk chunks[num_chunks];
+                uint8_t header[rlc_pdu_header_size(ctx, pdu)];
 
                 status = rlc_chunks_copy_view(sdu->chunks, sdu->num_chunks,
                                               chunks + 1, pdu->size,
@@ -89,6 +72,9 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                                  (rlc_errno)status);
                         return status;
                 }
+
+                chunks[0].data = header;
+                (void)memset(header, 0, sizeof(header));
 
                 rlc_pdu_encode(ctx, pdu, &chunks[0]);
                 total_size = rlc_chunks_size(chunks, num_chunks);
@@ -138,6 +124,25 @@ static void append_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu)
         }
 
         *lastp = sdu;
+}
+
+static void remove_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        struct rlc_sdu *cur;
+        struct rlc_sdu **lastp;
+
+        lastp = &ctx->sdus;
+
+        for (rlc_each_node(ctx->sdus, cur, next)) {
+                if (cur == sdu) {
+                        *lastp = sdu->next;
+
+                        sdu->next = NULL;
+                        break;
+                }
+
+                lastp = &cur;
+        }
 }
 
 static struct rlc_sdu *sdu_alloc_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
@@ -193,13 +198,6 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         ctx->window_size = window_size;
         ctx->buffer_size = buffer_size;
 
-        ctx->workbuf.size = header_size_(type);
-
-        ctx->workbuf.mem = do_alloc_(ctx, ctx->workbuf.size);
-        if (ctx->workbuf.mem == NULL) {
-                return -ENOMEM;
-        }
-
         return 0;
 }
 
@@ -219,6 +217,28 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_sdu *sdu,
         return do_tx_request_(ctx);
 }
 
+static void do_event_(const struct rlc_context *ctx, struct rlc_event *event)
+{
+        const struct rlc_methods *methods = ctx->methods;
+        if (methods->event == NULL) {
+                rlc_assert(0);
+                return;
+        }
+
+        methods->event(ctx, event);
+}
+
+static void do_rx_done_(const struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        struct rlc_event event;
+
+        event.type = RLC_EVENT_RX_DONE;
+        event.data.rx_done.data = sdu->rx_buffer;
+        event.data.rx_done.size = sdu->rx_pos;
+
+        do_event_(ctx, &event);
+}
+
 /**
  * @details
  * Submits the incoming packet into the RLC system
@@ -231,16 +251,11 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
         struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
 
+        pdu.type = ctx->type;
+
         status = rlc_pdu_decode(ctx, &pdu, chunks, num_chunks);
         if (status != 0) {
                 rlc_errf("Unable to decode PDU; dropping");
-                return;
-        }
-
-        if (pdu.type != ctx->type) {
-                rlc_errf("CTX/PDU type mismatch: %s vs %s",
-                         rlc_sdu_type_str(pdu.type),
-                         rlc_sdu_type_str(ctx->type));
                 return;
         }
 
@@ -252,7 +267,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
         }
 
         if (sdu == NULL) {
-                if (pdu.seg_offset != 0) {
+                if (!pdu.flags.is_first) {
                         rlc_errf("Unrecognized SN; dropping");
                         return;
                 }
@@ -266,12 +281,11 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
                 sdu->state = RLC_READY;
                 sdu->sn = pdu.sn;
 
-                /* TODO: check if full SDU (no SN) */
-
                 append_sdu_(ctx, sdu);
         }
 
-        if (pdu.seg_offset >= sdu->rx_buffer_size) {
+        if (!pdu.flags.is_first && pdu.seg_offset >= sdu->rx_buffer_size) {
+                rlc_errf("Out of bounds: %i", (int)pdu.seg_offset);
                 return;
         }
 
@@ -283,13 +297,37 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
         if (status <= 0) {
                 rlc_errf("Chunk deepcopy failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)status);
+                return;
         }
-
-        rlc_errf("Chunk count: %i", (int)status);
 
         sdu->rx_pos += status;
 
-        /* TODO: if last, deliver upper layer */
+        if (pdu.flags.is_last) {
+                do_rx_done_(ctx, sdu);
+
+                remove_sdu_(ctx, sdu);
+                sdu_dealloc_(ctx, sdu);
+        }
+}
+
+static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
+                             size_t max_size)
+{
+        size_t hsize;
+
+        if (pdu->type == RLC_UM && pdu->flags.is_first) {
+                /* If size plus the header can be fit as is both SN and SO can
+                 * be omitted */
+                if (max_size - 1 >= pdu->size) {
+                        pdu->flags.is_last = 1;
+                        return;
+                }
+        }
+
+        hsize = rlc_pdu_header_size(ctx, pdu);
+        if (pdu->size + hsize > max_size) {
+                pdu->size -= pdu->size + hsize - max_size;
+        }
 }
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size)
@@ -315,13 +353,17 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                         case RLC_READY:
                                 tot_size = rlc_chunks_size(cur->chunks,
                                                            cur->num_chunks);
-                                pdu_size = tot_size - cur->tx_offset_unack;
 
+                                pdu.size = tot_size - cur->tx_offset_unack;
                                 pdu.seg_offset = cur->tx_offset_unack;
-                                pdu.size = pdu_calc_size_(ctx, pdu_size, size);
+                                pdu.flags.is_first = pdu.seg_offset == 0;
+
+                                pdu_size_adjust_(ctx, &pdu, size);
 
                                 cur->tx_offset_unack += pdu.size;
-                                if (cur->tx_offset_unack >= tot_size) {
+                                if (pdu.flags.is_last ||
+                                    cur->tx_offset_unack >= tot_size) {
+                                        pdu.flags.is_last = 1;
                                         cur->state = RLC_WAITACK;
                                 }
 
@@ -333,13 +375,15 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                                            cur->tx_offset_ack;
 
                                 pdu.seg_offset = cur->tx_offset_ack;
-                                pdu.size = pdu_calc_size_(ctx, tot_size, size);
+                                pdu.size = 0;
 
                                 break;
                         default:
                                 continue;
                         }
                 }
+
+                pdu.sn = cur->sn;
 
                 ret = do_tx_submit_(ctx, cur, &pdu, size);
                 if (ret <= 0) { /* TODO: log err */

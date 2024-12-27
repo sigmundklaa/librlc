@@ -62,7 +62,6 @@ static void bit_copy_mem_(uint8_t *dst, uint32_t src, unsigned int offset,
         uint8_t src_byte;
 
         bytes = (offset + width) / 8 + 1;
-        width_remain = width;
 
         for (i = 0; i < bytes; i++, dst++) {
                 if (offset >= 8) {
@@ -71,14 +70,14 @@ static void bit_copy_mem_(uint8_t *dst, uint32_t src, unsigned int offset,
                 }
 
                 num_bits = 8 - offset;
-                num_bits = rlc_min(width_remain, num_bits);
+                num_bits = rlc_min(width, num_bits);
 
                 src_byte = (src >> (width - num_bits)) & ((1 << num_bits) - 1);
 
                 *dst = bit_copy_(*dst, src_byte, offset, num_bits);
 
-                width_remain -= num_bits;
-                if (width_remain == 0) {
+                width -= num_bits;
+                if (width == 0) {
                         break;
                 }
 
