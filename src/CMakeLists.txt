@@ -5,4 +5,5 @@ target_sources(
         rlc.c
         chunk.c
         encode.c
+        task.c
 )

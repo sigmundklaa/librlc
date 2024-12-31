@@ -28,6 +28,7 @@ struct rlc_context;
 struct rlc_chunk;
 struct rlc_sdu;
 struct rlc_event;
+struct rlc_task;
 /** @endcond */
 
 struct rlc_methods {
@@ -44,7 +45,7 @@ struct rlc_methods {
 enum rlc_sdu_type {
         RLC_AM,
         RLC_UM,
-        RLC_TM
+        RLC_TM,
 };
 
 enum rlc_sn_width {
@@ -58,6 +59,8 @@ typedef struct rlc_context {
                 uint8_t *mem;
                 size_t size;
         } workbuf;
+
+        struct rlc_task *tasks;
 
         enum rlc_sdu_type type;
         enum rlc_sn_width sn_width;
