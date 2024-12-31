@@ -120,6 +120,26 @@ struct rlc_pdu {
         } flags;
 };
 
+/** @brief Optional status payload following a PDU Status header */
+struct rlc_pdu_status {
+        union {
+                struct {
+                        uint32_t start;
+                        uint32_t end;
+                } offset;
+
+                uint32_t range;
+        };
+
+        uint32_t nack_sn;
+
+        struct {
+                bool has_more: 1;
+                bool has_range: 1;
+                bool has_offset: 1;
+        } ext;
+};
+
 struct rlc_chunk {
         void *data;
         size_t size;

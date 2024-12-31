@@ -171,12 +171,19 @@ static struct rlc_sdu *sdu_alloc_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
         return sdu;
 }
 
-static void sdu_dealloc_(struct rlc_context *ctx, struct rlc_sdu *sdu)
+static void sdu_dealloc_rx_buffer_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
-        if (sdu->dir == RLC_RX) {
-                do_dealloc_(ctx, sdu->rx_buffer);
+        if (sdu->dir != RLC_RX || sdu->rx_buffer == NULL) {
+                return;
         }
 
+        do_dealloc_(ctx, sdu->rx_buffer);
+        sdu->rx_buffer = NULL;
+}
+
+static void sdu_dealloc_(struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        sdu_dealloc_rx_buffer_(ctx, sdu);
         do_dealloc_(ctx, sdu);
 }
 
@@ -284,6 +291,11 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
                 append_sdu_(ctx, sdu);
         }
 
+        if (sdu->state != RLC_READY) {
+                rlc_errf("Received when non-ready; discarding");
+                return;
+        }
+
         if (!pdu.flags.is_first && pdu.seg_offset >= sdu->rx_buffer_size) {
                 rlc_errf("Out of bounds: %i", (int)pdu.seg_offset);
                 return;
@@ -305,8 +317,21 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
         if (pdu.flags.is_last) {
                 do_rx_done_(ctx, sdu);
 
-                remove_sdu_(ctx, sdu);
-                sdu_dealloc_(ctx, sdu);
+                /* In acknowledged mode, the SDU should be deallocated when
+                 * transmitting the status, so that we can keep the information
+                 * in memory until it can be relayed back. The RX buffer can
+                 * however be freed to prevent excessive memory use. */
+                if (pdu.type == RLC_AM) {
+                        sdu->state = RLC_DOACK;
+
+                        sdu_dealloc_rx_buffer_(ctx, sdu);
+                } else {
+                        remove_sdu_(ctx, sdu);
+                        sdu_dealloc_(ctx, sdu);
+                }
+        } else if (pdu.type == RLC_AM && pdu.flags.polled) {
+                /* Send ACK before receiving any more data */
+                sdu->state = RLC_DOACK;
         }
 }
 
