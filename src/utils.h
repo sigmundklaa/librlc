@@ -2,6 +2,7 @@
 #ifndef RLC_UTILS_H__
 #define RLC_UTILS_H__
 
+#include <assert.h>
 #include <stdint.h>
 
 #include <rlc/rlc.h>

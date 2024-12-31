@@ -114,6 +114,9 @@ struct rlc_pdu {
                 bool is_last: 1;
 
                 bool polled: 1;
+
+                bool ext: 1;       /* AM Status PDU E1 bit */
+                bool is_status: 1; /* True if PDU is AM status PDU */
         } flags;
 };
 

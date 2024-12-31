@@ -120,6 +120,34 @@ static bool has_so_(const struct rlc_pdu *pdu)
         return !pdu->flags.is_first;
 }
 
+static size_t bytes_ceil_(size_t num_bits)
+{
+
+        return num_bits / 8 + ((num_bits % 8) != 0);
+}
+
+static void encode_status_header_(const struct rlc_context *ctx,
+                                  const struct rlc_pdu *pdu,
+                                  struct rlc_chunk *dst)
+{
+        size_t full_width;
+        size_t sn_width;
+
+        full_width = 0;
+
+        bit_copy_mem_(dst->data, (0b0 << 1) | 0b000, 0, 4);
+        full_width += 4;
+
+        sn_width = sn_num_bits_(ctx->sn_width);
+        bit_copy_mem_(dst->data, pdu->sn, full_width, sn_width);
+        full_width += sn_width;
+
+        bit_copy_mem_(dst->data, pdu->flags.ext, full_width, 1);
+        full_width += 1;
+
+        dst->size = bytes_ceil_(full_width);
+}
+
 void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
                     struct rlc_chunk *dst)
 {
@@ -127,8 +155,18 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
         size_t full_width;
         uint8_t si;
 
-        if (pdu->type == RLC_TM) {
+        switch (pdu->type) {
+        case RLC_TM:
+                /* Nothing to be done */
                 return;
+        case RLC_AM:
+                if (pdu->flags.is_status) {
+                        encode_status_header_(ctx, pdu, dst);
+                        return;
+                }
+                /* fallthrough */
+        case RLC_UM:
+                break;
         }
 
         full_width = 0;
@@ -165,7 +203,31 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
         }
 
-        dst->size = full_width / 8 + ((full_width % 8) != 0);
+        dst->size = bytes_ceil_(full_width);
+}
+
+static rlc_errno decode_status_header_(const struct rlc_context *ctx,
+                                       struct rlc_pdu *pdu,
+                                       const uint8_t header[5])
+{
+        uint8_t cpt;
+
+        /* CPT is reserved and must always be zero */
+        cpt = (header[0] >> 4) & 0x7;
+        if (cpt != 0) {
+                return -ENOTSUP;
+        }
+
+        if (ctx->sn_width == RLC_SN_12BIT) {
+                pdu->sn = ((header[0] & 0xf) << 8) | (header[1]);
+                pdu->flags.ext = (header[2] >> 7) & 0x1;
+        } else {
+                pdu->sn = ((header[0] & 0xf) << 14) | (header[1] << 6) |
+                          ((header[2] >> 2) & 0x3f);
+                pdu->flags.ext = (header[2] >> 1) & 0x1;
+        }
+
+        return 0;
 }
 
 rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
@@ -195,8 +257,11 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         }
 
         if (pdu->type == RLC_AM) {
-                /* D/C bit is ignored, as it is assumed that anything passed
-                 * to this function is a data PDU */
+                pdu->flags.is_status = (header[0] >> 7) & 1;
+                if (pdu->flags.is_status) {
+                        return decode_status_header_(ctx, pdu, header);
+                }
+
                 pdu->flags.polled = (header[0] >> 6) & 1;
 
                 from_si_(pdu, (header[0] >> 4) & 0x3);
