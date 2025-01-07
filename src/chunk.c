@@ -7,22 +7,22 @@
 
 #include "utils.h"
 
-size_t rlc_chunks_size(const struct rlc_chunk *chunks, size_t len)
+size_t rlc_chunks_size(const struct rlc_chunk *chunks)
 {
         const struct rlc_chunk *cur;
         size_t total;
 
         total = 0;
 
-        for (rlc_each_item(chunks, cur, len)) {
+        for (rlc_each_node(chunks, cur, next)) {
                 total += cur->size;
         }
 
         return total;
 }
 
-size_t rlc_chunks_num_view(const struct rlc_chunk *chunks, size_t num_chunks,
-                           size_t size, size_t offset)
+size_t rlc_chunks_num_view(const struct rlc_chunk *chunks, size_t size,
+                           size_t offset)
 {
         const struct rlc_chunk *cur;
         size_t total;
@@ -34,7 +34,7 @@ size_t rlc_chunks_num_view(const struct rlc_chunk *chunks, size_t num_chunks,
         passed = 0;
         count = 0;
 
-        for (rlc_each_item(chunks, cur, num_chunks)) {
+        for (rlc_each_node(chunks, cur, next)) {
                 if (passed >= offset) {
                         tmp = rlc_min(cur->size, size - total);
                         total += tmp;
@@ -58,15 +58,13 @@ size_t rlc_chunks_num_view(const struct rlc_chunk *chunks, size_t num_chunks,
         return count;
 }
 
-size_t rlc_chunks_num(const struct rlc_chunk *chunks, size_t num_chunks,
-                      size_t size)
+size_t rlc_chunks_num(const struct rlc_chunk *chunks, size_t size)
 {
-        return rlc_chunks_num_view(chunks, num_chunks, size, 0);
+        return rlc_chunks_num_view(chunks, size, 0);
 }
 
-ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks,
-                                 size_t num_chunks, void *dst, size_t max_size,
-                                 size_t offset)
+ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks, void *dst,
+                                 size_t max_size, size_t offset)
 {
         const struct rlc_chunk *cur;
         size_t total;
@@ -77,7 +75,7 @@ ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks,
         total = 0;
         passed = 0;
 
-        for (rlc_each_item(chunks, cur, num_chunks)) {
+        for (rlc_each_node(chunks, cur, next)) {
                 if (passed >= offset) {
                         /* The offset is either aligned at the chunk, or the
                          * unaligned offset has already been handled in the
@@ -114,13 +112,13 @@ ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks,
         return total;
 }
 
-ssize_t rlc_chunks_deepcopy(const struct rlc_chunk *chunks, size_t num_chunks,
-                            void *dst, size_t max_size)
+ssize_t rlc_chunks_deepcopy(const struct rlc_chunk *chunks, void *dst,
+                            size_t max_size)
 {
-        return rlc_chunks_deepcopy_view(chunks, num_chunks, dst, max_size, 0);
+        return rlc_chunks_deepcopy_view(chunks, dst, max_size, 0);
 }
 
-ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks, size_t num_chunks,
+ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks,
                              struct rlc_chunk *dst_chunks, size_t max_size,
                              size_t offset)
 {
@@ -135,7 +133,7 @@ ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks, size_t num_chunks,
         passed = 0;
         i = 0;
 
-        for (rlc_each_item(chunks, cur, num_chunks)) {
+        for (rlc_each_node(chunks, cur, next)) {
                 if (passed >= offset) {
                         /* The offset is either aligned at the chunk, or the
                          * unaligned offset has already been handled in the
@@ -173,9 +171,8 @@ ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks, size_t num_chunks,
         return total;
 }
 
-ssize_t rlc_chunks_copy(const struct rlc_chunk *chunks, size_t num_chunks,
+ssize_t rlc_chunks_copy(const struct rlc_chunk *chunks,
                         struct rlc_chunk *dst_chunks, size_t max_size)
 {
-        return rlc_chunks_copy_view(chunks, num_chunks, dst_chunks, max_size,
-                                    0);
+        return rlc_chunks_copy_view(chunks, dst_chunks, max_size, 0);
 }

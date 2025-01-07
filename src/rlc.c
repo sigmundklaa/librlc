@@ -35,12 +35,13 @@ static inline rlc_errno do_tx_request_(struct rlc_context *ctx)
         return methods->tx_request(ctx);
 }
 
-static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                             struct rlc_pdu *pdu, size_t max_size)
+static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_pdu *pdu,
+                             struct rlc_chunk *payload, size_t max_size)
 {
         ssize_t status;
         ssize_t total_size;
-        size_t num_chunks;
+        uint8_t header[rlc_pdu_header_size(ctx, pdu)];
+        struct rlc_chunk chunk;
         const struct rlc_methods *methods;
 
         methods = ctx->methods;
@@ -48,45 +49,22 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 return -ENOTSUP;
         }
 
-        pdu->sn = sdu->sn;
+        /* Size is set by encode */
+        chunk.data = header;
+        chunk.next = payload;
 
-        /* Allocate and (shallow) copy over the chunks of the SDU,
-         * adding the header at the start. */
-        num_chunks = rlc_chunks_num_view(sdu->chunks, sdu->num_chunks,
-                                         pdu->size, pdu->seg_offset);
-        num_chunks += 1; /* PDU header is kept in chunk 0 */
+        (void)memset(header, 0, sizeof(header));
 
-        {
-                struct rlc_chunk chunks[num_chunks];
-                uint8_t header[rlc_pdu_header_size(ctx, pdu)];
+        rlc_pdu_encode(ctx, pdu, &chunk);
+        total_size = rlc_chunks_size(&chunk);
 
-                status = rlc_chunks_copy_view(sdu->chunks, sdu->num_chunks,
-                                              chunks + 1, pdu->size,
-                                              pdu->seg_offset);
-                if (status != pdu->size) {
-                        if (status >= 0) {
-                                status = -ENODATA;
-                        }
+        if (total_size > max_size) {
+                return -ENOSPC;
+        }
 
-                        rlc_errf("Chunk copy failed: %" RLC_PRI_ERRNO,
-                                 (rlc_errno)status);
-                        return status;
-                }
-
-                chunks[0].data = header;
-                (void)memset(header, 0, sizeof(header));
-
-                rlc_pdu_encode(ctx, pdu, &chunks[0]);
-                total_size = rlc_chunks_size(chunks, num_chunks);
-
-                if (total_size > max_size) {
-                        return -ENOSPC;
-                }
-
-                status = methods->tx_submit(ctx, chunks, num_chunks);
-                if (status != 0) {
-                        return status;
-                }
+        status = methods->tx_submit(ctx, &chunk);
+        if (status != 0) {
+                return status;
         }
 
         return total_size;
@@ -187,7 +165,7 @@ static void sdu_dealloc_(struct rlc_context *ctx, struct rlc_sdu *sdu)
         do_dealloc_(ctx, sdu);
 }
 
-static void prepare_pdu_(struct rlc_context *ctx, struct rlc_pdu *pdu)
+static void prepare_pdu_(const struct rlc_context *ctx, struct rlc_pdu *pdu)
 {
         (void)memset(pdu, 0, sizeof(*pdu));
 
@@ -209,14 +187,13 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
 }
 
 rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                   const struct rlc_chunk *chunks, size_t num_chunks)
+                   struct rlc_chunk *chunks)
 {
         /* Encode chunk in a sdu */
         (void)memset(sdu, 0, sizeof(*sdu));
 
         sdu->dir = RLC_TX;
         sdu->chunks = chunks;
-        sdu->num_chunks = num_chunks;
         sdu->sn = ctx->tx_next++;
 
         append_sdu_(ctx, sdu);
@@ -224,7 +201,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_sdu *sdu,
         return do_tx_request_(ctx);
 }
 
-static void do_event_(const struct rlc_context *ctx, struct rlc_event *event)
+static void do_event_(struct rlc_context *ctx, struct rlc_event *event)
 {
         const struct rlc_methods *methods = ctx->methods;
         if (methods->event == NULL) {
@@ -235,7 +212,7 @@ static void do_event_(const struct rlc_context *ctx, struct rlc_event *event)
         methods->event(ctx, event);
 }
 
-static void do_rx_done_(const struct rlc_context *ctx, struct rlc_sdu *sdu)
+static void do_rx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         struct rlc_event event;
 
@@ -250,8 +227,7 @@ static void do_rx_done_(const struct rlc_context *ctx, struct rlc_sdu *sdu)
  * @details
  * Submits the incoming packet into the RLC system
  */
-void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
-                   size_t num_chunks)
+void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 {
         ssize_t status;
         struct rlc_pdu pdu;
@@ -260,7 +236,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
 
         pdu.type = ctx->type;
 
-        status = rlc_pdu_decode(ctx, &pdu, chunks, num_chunks);
+        status = rlc_pdu_decode(ctx, &pdu, chunks);
         if (status != 0) {
                 rlc_errf("Unable to decode PDU; dropping");
                 return;
@@ -303,7 +279,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
 
         /* Copy the contents of the chunks, skipping the header content */
         status = rlc_chunks_deepcopy_view(
-                chunks, num_chunks, (uint8_t *)sdu->rx_buffer + pdu.seg_offset,
+                chunks, (uint8_t *)sdu->rx_buffer + pdu.seg_offset,
                 sdu->rx_buffer_size - pdu.seg_offset,
                 rlc_pdu_header_size(ctx, &pdu));
         if (status <= 0) {
@@ -323,6 +299,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
                  * however be freed to prevent excessive memory use. */
                 if (pdu.type == RLC_AM) {
                         sdu->state = RLC_DOACK;
+                        ctx->gen_status = true;
 
                         sdu_dealloc_rx_buffer_(ctx, sdu);
                 } else {
@@ -332,6 +309,7 @@ void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
         } else if (pdu.type == RLC_AM && pdu.flags.polled) {
                 /* Send ACK before receiving any more data */
                 sdu->state = RLC_DOACK;
+                ctx->gen_status = true;
         }
 }
 
@@ -355,6 +333,19 @@ static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         }
 }
 
+static bool should_gen_status_(const struct rlc_context *ctx)
+{
+        return ctx->gen_status;
+}
+
+static ssize_t tx_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
+                       struct rlc_pdu *pdu, size_t max_size)
+{
+        pdu->sn = sdu->sn;
+
+        return do_tx_submit_(ctx, pdu, sdu->chunks, max_size);
+}
+
 static bool serve_sdu_(const struct rlc_context *ctx, struct rlc_sdu *sdu,
                        struct rlc_pdu *pdu, size_t size_avail)
 {
@@ -362,7 +353,7 @@ static bool serve_sdu_(const struct rlc_context *ctx, struct rlc_sdu *sdu,
 
         switch (sdu->state) {
         case RLC_READY:
-                tot_size = rlc_chunks_size(sdu->chunks, sdu->num_chunks);
+                tot_size = rlc_chunks_size(sdu->chunks);
 
                 pdu->size = tot_size - sdu->tx_offset_unack;
                 pdu->seg_offset = sdu->tx_offset_unack;
@@ -395,6 +386,122 @@ static bool serve_sdu_(const struct rlc_context *ctx, struct rlc_sdu *sdu,
         return true;
 }
 
+static struct rlc_chunk *encode_status_(struct rlc_context *ctx,
+                                        struct rlc_pdu_status *status)
+{
+        struct rlc_chunk *chunk;
+
+        /* TODO: size */
+        chunk = do_alloc_(ctx, sizeof(*chunk) + 4);
+        if (chunk == NULL) {
+                return NULL;
+        }
+
+        /* Initialize chunk and add to the list */
+        chunk->data = chunk + 1;
+        chunk->size = 4;
+        chunk->next = NULL;
+
+        return chunk;
+}
+
+static void free_chunks_(struct rlc_context *ctx, struct rlc_chunk *chunks)
+{
+        struct rlc_chunk *cur;
+        struct rlc_chunk *next;
+
+        cur = chunks;
+
+        while (cur != NULL) {
+                next = cur->next;
+                do_dealloc_(ctx, cur);
+                cur = next;
+        }
+}
+
+static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
+{
+        ssize_t ret;
+        struct rlc_pdu pdu;
+        struct rlc_sdu *sdu;
+        struct rlc_pdu_status status_pool[2];
+        struct rlc_pdu_status *cur_status;
+        struct rlc_pdu_status *last_status;
+        struct rlc_chunk *chunk;
+        struct rlc_chunk *head_chunk;
+        struct rlc_chunk **chunkptr;
+        size_t count;
+        size_t status_idx;
+
+        prepare_pdu_(ctx, &pdu);
+        pdu.flags.is_status = 1;
+        pdu.sn = ctx->rx_next_highest;
+
+        count = 0;
+        status_idx = 0;
+        head_chunk = NULL;
+        chunkptr = &head_chunk;
+
+        last_status = NULL;
+
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir != RLC_RX) {
+                        continue;
+                }
+
+                /* Alternate between two allocated status structs, so that
+                 * we can fill the current one and encode the last one */
+                status_idx = 1 - status_idx;
+                cur_status = &status_pool[status_idx];
+
+                *cur_status = (struct rlc_pdu_status){
+                        .ext.has_offset = 1,
+                        .nack_sn = sdu->sn,
+                        .offset.start = sdu->rx_pos,
+                        .offset.end = RLC_STATUS_SO_MAX,
+                };
+
+                /* Encode the last status instead of the current one, so that
+                 * the E1 bit can be set appropriately. On the first iteration,
+                 * skip encoding as there is no last */
+                if (last_status != NULL) {
+                        last_status->ext.has_more = 1;
+
+                        chunk = encode_status_(ctx, last_status);
+                        if (chunk == NULL) {
+                                ret = -ENOMEM;
+                                goto exit;
+                        }
+
+                        *chunkptr = chunk;
+                        chunkptr = &chunk->next;
+                }
+
+                last_status = cur_status;
+                count += 1;
+        }
+
+        if (count > 0) {
+                chunk = encode_status_(ctx, last_status);
+                if (chunk == NULL) {
+                        ret = -ENOMEM;
+                        goto exit;
+                }
+
+                *chunkptr = chunk;
+                chunkptr = &chunk->next;
+
+                pdu.flags.ext = 1;
+        }
+
+        ret = do_tx_submit_(ctx, &pdu, head_chunk, max_size);
+
+exit:
+        free_chunks_(ctx, head_chunk);
+
+        return ret;
+}
+
 void rlc_tx_avail(struct rlc_context *ctx, size_t size)
 {
         ssize_t ret;
@@ -404,24 +511,29 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         struct rlc_pdu pdu;
         struct rlc_sdu *cur;
 
+        if (should_gen_status_(ctx)) {
+                ret = gen_status_(ctx, size);
+                if (ret < 0) {
+                        return;
+                }
+
+                size -= ret;
+        }
+
         for (rlc_each_node(ctx->sdus, cur, next)) {
+                if (cur->dir != RLC_TX) {
+                        continue;
+                }
+
                 prepare_pdu_(ctx, &pdu);
 
-                if (cur->dir == RLC_RX) {
-                        if (ctx->type != RLC_AM || cur->state != RLC_DOACK) {
-                                continue;
-                        }
-
-                        /* Set offset to ack */
-                } else {
-                        if (!serve_sdu_(ctx, cur, &pdu, size)) {
-                                continue;
-                        }
+                if (!serve_sdu_(ctx, cur, &pdu, size)) {
+                        continue;
                 }
 
                 pdu.sn = cur->sn;
 
-                ret = do_tx_submit_(ctx, cur, &pdu, size);
+                ret = do_tx_submit_(ctx, &pdu, cur->chunks, size);
                 if (ret <= 0) { /* TODO: log err */
                         rlc_errf("PDU submit failed: error %" RLC_PRI_ERRNO,
                                  (rlc_errno)ret);

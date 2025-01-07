@@ -30,12 +30,14 @@ struct rlc_sdu;
 struct rlc_event;
 /** @endcond */
 
+#define RLC_STATUS_SO_MAX (UINT16_MAX)
+#define RLC_STATUS_SO_MIN (0x0)
+
 struct rlc_methods {
-        rlc_errno (*tx_submit)(struct rlc_context *, struct rlc_chunk *,
-                               size_t);
+        rlc_errno (*tx_submit)(struct rlc_context *, const struct rlc_chunk *);
         rlc_errno (*tx_request)(struct rlc_context *);
 
-        void (*event)(const struct rlc_context *, struct rlc_event *);
+        void (*event)(struct rlc_context *, const struct rlc_event *);
 
         void *(*mem_alloc)(struct rlc_context *, size_t);
         void (*mem_dealloc)(struct rlc_context *, void *);
@@ -67,6 +69,11 @@ typedef struct rlc_context {
 
         /* RLC specification state variables */
         uint32_t tx_next;
+        uint32_t rx_next;
+        uint32_t rx_next_highest;
+
+        /* Generate status PDU on next available opportunity. AM only*/
+        bool gen_status;
 
         struct rlc_sdu *sdus;
         const struct rlc_methods *methods;
@@ -92,8 +99,7 @@ typedef struct rlc_sdu {
 
         uint32_t rx_pos;
 
-        const struct rlc_chunk *chunks;
-        size_t num_chunks;
+        struct rlc_chunk *chunks;
 
         void *rx_buffer;
         size_t rx_buffer_size;
@@ -122,15 +128,12 @@ struct rlc_pdu {
 
 /** @brief Optional status payload following a PDU Status header */
 struct rlc_pdu_status {
-        union {
-                struct {
-                        uint32_t start;
-                        uint32_t end;
-                } offset;
+        struct {
+                uint32_t start;
+                uint32_t end;
+        } offset;
 
-                uint32_t range;
-        };
-
+        uint32_t range;
         uint32_t nack_sn;
 
         struct {
@@ -138,11 +141,15 @@ struct rlc_pdu_status {
                 bool has_range: 1;
                 bool has_offset: 1;
         } ext;
+
+        struct rlc_pdu_status *next;
 };
 
 struct rlc_chunk {
         void *data;
         size_t size;
+
+        struct rlc_chunk *next;
 };
 
 struct rlc_event {
@@ -170,13 +177,11 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    size_t window_size, size_t buffer_size,
                    const struct rlc_methods *methods);
 
-rlc_errno rlc_send(rlc_context *ctx, rlc_sdu *sdu,
-                   const struct rlc_chunk *chunks, size_t num_chunks);
+rlc_errno rlc_send(rlc_context *ctx, rlc_sdu *sdu, struct rlc_chunk *chunks);
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size);
 
-void rlc_rx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
-                   size_t num_chunks);
+void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks);
 
 RLC_END_DECL
 

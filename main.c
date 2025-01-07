@@ -11,22 +11,21 @@ static rlc_errno tx_request(struct rlc_context *ctx)
         return 0;
 }
 
-static rlc_errno tx_submit(struct rlc_context *ctx, struct rlc_chunk *chunks,
-                           size_t num_chunks)
+static rlc_errno tx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 {
-        struct rlc_chunk *cur;
+        const struct rlc_chunk *cur;
 
-        for (rlc_each_item(chunks, cur, num_chunks)) {
+        for (rlc_each_node(chunks, cur, next)) {
                 (void)printf("chunk: %zu\n", cur->size);
         }
 
-        rlc_rx_submit(ctx, chunks, num_chunks);
+        rlc_rx_submit(ctx, chunks);
         rlc_tx_avail(ctx, 7);
 
         return 0;
 }
 
-static void event(const rlc_context *ctx, struct rlc_event *event)
+static void event(rlc_context *ctx, const struct rlc_event *event)
 {
         if (event->type != RLC_EVENT_RX_DONE) {
                 (void)printf("unknown %i\n", (int)event->type);
@@ -82,10 +81,15 @@ int main(void)
                 },
         };
 
+#define link(l_, r_) chunks[l_].next = &chunks[r_]
+
+        link(0, 1);
+        link(1, 2);
+
         status = rlc_init(&ctx, RLC_UM, 4, 128, &methods);
         assert(status == 0);
 
-        status = rlc_send(&ctx, &sdu, chunks, 3);
+        status = rlc_send(&ctx, &sdu, chunks);
         assert(status == 0);
 
         return 0;

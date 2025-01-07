@@ -98,18 +98,19 @@ static void test_decode_umd(void)
                 {.data = buf + 1, .size = 2},
                 {.data = buf + 3, .size = 1},
         };
-        size_t num_chunks = sizeof(chunks) / sizeof(chunks[0]);
+        chunks[0].next = &chunks[1];
+        chunks[1].next = &chunks[2];
 
         /* Without SN and SO */
         buf[0] = 0b00 << 6;
-        status = rlc_pdu_decode(&ctx, &pdu, chunks, num_chunks);
+        status = rlc_pdu_decode(&ctx, &pdu, chunks);
         TEST_ASSERT_EQUAL_INT(0, status);
         TEST_ASSERT_EQUAL_INT(1, pdu.flags.is_last);
         TEST_ASSERT_EQUAL_INT(1, pdu.flags.is_first);
 
         /* With SN */
         buf[0] = (0b01 << 6) | 0x2a;
-        status = rlc_pdu_decode(&ctx, &pdu, chunks, num_chunks);
+        status = rlc_pdu_decode(&ctx, &pdu, chunks);
         TEST_ASSERT_EQUAL_INT(0, status);
         TEST_ASSERT_EQUAL_INT(0, pdu.flags.is_last);
         TEST_ASSERT_EQUAL_INT(1, pdu.flags.is_first);
@@ -119,7 +120,7 @@ static void test_decode_umd(void)
         buf[0] = (0b11 << 6) | 0x2a;
         buf[1] = 0x55;
         buf[2] = 0x55;
-        status = rlc_pdu_decode(&ctx, &pdu, chunks, num_chunks);
+        status = rlc_pdu_decode(&ctx, &pdu, chunks);
         TEST_ASSERT_EQUAL_INT(0, status);
         TEST_ASSERT_EQUAL_INT(0, pdu.flags.is_last);
         TEST_ASSERT_EQUAL_INT(0, pdu.flags.is_first);
@@ -132,7 +133,7 @@ static void test_decode_umd(void)
         buf[1] = 0xaa;
         buf[2] = 0x55;
         buf[3] = 0x55;
-        status = rlc_pdu_decode(&ctx, &pdu, chunks, num_chunks);
+        status = rlc_pdu_decode(&ctx, &pdu, chunks);
         TEST_ASSERT_EQUAL_INT(0, status);
         TEST_ASSERT_EQUAL_INT(0, pdu.flags.is_last);
         TEST_ASSERT_EQUAL_INT(0, pdu.flags.is_first);

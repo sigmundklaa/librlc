@@ -231,7 +231,7 @@ static rlc_errno decode_status_header_(const struct rlc_context *ctx,
 }
 
 rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
-                         const struct rlc_chunk *chunks, size_t num_chunks)
+                         const struct rlc_chunk *chunks)
 {
         rlc_errno status;
         ssize_t size;
@@ -247,7 +247,7 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 
         sn_size = sn_num_bytes_(ctx->sn_width);
 
-        size = rlc_chunks_deepcopy(chunks, num_chunks, header, sizeof(header));
+        size = rlc_chunks_deepcopy(chunks, header, sizeof(header));
         if (size < sn_size) {
                 if (size >= 0) {
                         return -ENODATA;
