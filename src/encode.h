@@ -17,6 +17,14 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 size_t rlc_pdu_header_size(const struct rlc_context *ctx,
                            const struct rlc_pdu *pdu);
 
+void rlc_status_encode(const struct rlc_context *ctc,
+                       const struct rlc_pdu_status *status,
+                       struct rlc_chunk *dst);
+
+ssize_t rlc_status_decode(const struct rlc_context *ctx,
+                          struct rlc_pdu_status *status,
+                          const struct rlc_chunk *chunks, size_t offset);
+
 RLC_END_DECL
 
 #endif /* RLC_ENCODE_H__ */

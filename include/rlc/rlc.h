@@ -88,7 +88,6 @@ typedef struct rlc_sdu {
         enum rlc_sdu_state {
                 RLC_READY,
                 RLC_RESEND,
-                RLC_DOACK,
                 RLC_WAITACK,
         } state;
 

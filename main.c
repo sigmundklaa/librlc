@@ -7,7 +7,7 @@
 
 static rlc_errno tx_request(struct rlc_context *ctx)
 {
-        rlc_tx_avail(ctx, 16);
+        rlc_tx_avail(ctx, 17);
         return 0;
 }
 
@@ -86,7 +86,7 @@ int main(void)
         link(0, 1);
         link(1, 2);
 
-        status = rlc_init(&ctx, RLC_UM, 4, 128, &methods);
+        status = rlc_init(&ctx, RLC_AM, 4, 128, &methods);
         assert(status == 0);
 
         status = rlc_send(&ctx, &sdu, chunks);

@@ -182,6 +182,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         ctx->methods = methods;
         ctx->window_size = window_size;
         ctx->buffer_size = buffer_size;
+        ctx->sn_width = RLC_SN_12BIT;
 
         return 0;
 }
@@ -223,6 +224,31 @@ static void do_rx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
         do_event_(ctx, &event);
 }
 
+static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
+                            const struct rlc_chunk *chunks)
+{
+        ssize_t bytes;
+        size_t offset;
+        struct rlc_pdu_status cur;
+
+        offset = rlc_pdu_header_size(ctx, pdu);
+
+        /* Iterate over every status */
+        bytes = rlc_status_decode(ctx, &cur, chunks, offset);
+        for (; bytes > 0; offset += bytes) {
+                /* register rx_next -> tx_next */
+                /* update nacked of every tx sdu */
+
+                bytes = rlc_status_decode(ctx, &cur, chunks, offset);
+        }
+
+        if (bytes < 0) {
+                rlc_errf("Status decode failed: %" RLC_PRI_ERRNO,
+                         (rlc_errno)bytes);
+                return;
+        }
+}
+
 /**
  * @details
  * Submits the incoming packet into the RLC system
@@ -238,7 +264,12 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         status = rlc_pdu_decode(ctx, &pdu, chunks);
         if (status != 0) {
-                rlc_errf("Unable to decode PDU; dropping");
+                process_status_(ctx, &pdu, chunks);
+                return;
+        }
+
+        if (pdu.flags.is_status) {
+                rlc_errf("Status");
                 return;
         }
 
@@ -298,17 +329,14 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                  * in memory until it can be relayed back. The RX buffer can
                  * however be freed to prevent excessive memory use. */
                 if (pdu.type == RLC_AM) {
-                        sdu->state = RLC_DOACK;
                         ctx->gen_status = true;
-
-                        sdu_dealloc_rx_buffer_(ctx, sdu);
-                } else {
-                        remove_sdu_(ctx, sdu);
-                        sdu_dealloc_(ctx, sdu);
+                        ctx->rx_next_highest += 1;
                 }
+
+                remove_sdu_(ctx, sdu);
+                sdu_dealloc_(ctx, sdu);
         } else if (pdu.type == RLC_AM && pdu.flags.polled) {
                 /* Send ACK before receiving any more data */
-                sdu->state = RLC_DOACK;
                 ctx->gen_status = true;
         }
 }
@@ -369,14 +397,7 @@ static bool serve_sdu_(const struct rlc_context *ctx, struct rlc_sdu *sdu,
 
                 break;
         case RLC_RESEND:
-#if 0
                 rlc_assert(ctx->type == RLC_AM);
-
-                tot_size = sdu->tx_offset_unack - sdu->tx_offset_ack;
-
-                pdu.seg_offset = sdu->tx_offset_ack;
-                pdu.size = 0;
-#endif
 
                 break;
         default:
@@ -493,6 +514,8 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 
                 pdu.flags.ext = 1;
         }
+
+        ctx->gen_status = false;
 
         ret = do_tx_submit_(ctx, &pdu, head_chunk, max_size);
 

@@ -46,6 +46,11 @@ static size_t sn_num_bytes_(enum rlc_sn_width width)
         return bits / 8 + ((bits % 8) != 0);
 }
 
+static unsigned int width_aligned_(unsigned int width)
+{
+        return (width + 7) & ~7;
+}
+
 static uint8_t bit_copy_(uint8_t dst, uint8_t src, unsigned int idx,
                          unsigned int width)
 {
@@ -112,7 +117,8 @@ static void from_si_(struct rlc_pdu *pdu, enum seg_info si)
 
 static bool has_sn_(const struct rlc_pdu *pdu)
 {
-        return !(pdu->flags.is_last && pdu->flags.is_first);
+        return (pdu->type != RLC_UM ||
+                !(pdu->flags.is_last && pdu->flags.is_first));
 }
 
 static bool has_so_(const struct rlc_pdu *pdu)
@@ -174,7 +180,7 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         if (pdu->type == RLC_AM) {
                 /* Data bit and polled bit */
-                bit_copy_mem_(dst->data, 0b1 | (pdu->flags.polled << 1), 0, 2);
+                bit_copy_mem_(dst->data, (0b1 << 1) | pdu->flags.polled, 0, 2);
 
                 full_width += 2;
         }
@@ -257,7 +263,7 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         }
 
         if (pdu->type == RLC_AM) {
-                pdu->flags.is_status = (header[0] >> 7) & 1;
+                pdu->flags.is_status = (~(header[0] >> 7)) & 1;
                 if (pdu->flags.is_status) {
                         return decode_status_header_(ctx, pdu, header);
                 }
@@ -315,4 +321,101 @@ size_t rlc_pdu_header_size(const struct rlc_context *ctx,
                 assert(0);
                 return 0;
         }
+}
+
+void rlc_status_encode(const struct rlc_context *ctx,
+                       const struct rlc_pdu_status *status,
+                       struct rlc_chunk *dst)
+{
+        size_t full_width;
+        size_t sn_width;
+        uint8_t ext;
+
+        full_width = 0;
+        sn_width = sn_num_bits_(ctx->sn_width);
+
+        bit_copy_mem_(dst->data, status->nack_sn, full_width, sn_width);
+        full_width += sn_width;
+
+        ext = (status->ext.has_more << 2) | (status->ext.has_offset << 1) |
+              (status->ext.has_range << 0);
+        bit_copy_mem_(dst->data, ext, full_width, 3);
+        full_width += 3;
+
+        full_width = width_aligned_(full_width);
+        if (status->ext.has_offset) {
+                bit_copy_mem_(dst->data, status->offset.start, full_width,
+                              SO_WIDTH_);
+                full_width += SO_WIDTH_;
+                bit_copy_mem_(dst->data, status->offset.end, full_width,
+                              SO_WIDTH_);
+                full_width += SO_WIDTH_;
+        }
+
+        if (status->ext.has_range) {
+                bit_copy_mem_(dst->data, status->range, full_width, sn_width);
+                full_width += sn_width;
+        }
+
+        dst->size = bytes_ceil_(full_width);
+}
+
+ssize_t rlc_status_decode(const struct rlc_context *ctx,
+                          struct rlc_pdu_status *status,
+                          const struct rlc_chunk *chunks, size_t offset)
+{
+        uint8_t header[8];
+        size_t req_size;
+        ssize_t size;
+        uint8_t ext;
+
+        req_size = sn_num_bytes_(ctx->sn_width);
+
+        size = rlc_chunks_deepcopy_view(chunks, header, offset, sizeof(header));
+        if (size < req_size) {
+                if (size >= 0) {
+                        return -ENODATA;
+                }
+
+                return size;
+        }
+
+        if (ctx->sn_width == RLC_SN_12BIT) {
+                status->nack_sn = (header[0] << 4) | ((header[1] >> 4) & 0xf);
+
+                ext = (header[1] >> 1) & 0x7;
+        } else {
+                status->nack_sn = (header[0] << 10) | (header[1] << 2) |
+                                  ((header[2] >> 6) & 0x3);
+
+                ext = (header[2] >> 3) & 0x7;
+        }
+
+        status->ext.has_more = (ext >> 2) & 0x1;
+        status->ext.has_offset = (ext >> 1) & 0x1;
+        status->ext.has_range = (ext >> 0) & 0x1;
+
+        if (status->ext.has_offset) {
+                req_size += (SO_WIDTH_ / 8) * 2;
+
+                if (size < req_size) {
+                        return -ENODATA;
+                }
+
+                status->offset.start =
+                        (header[req_size - 4] << 8) | (header[req_size - 3]);
+                status->offset.end =
+                        (header[req_size - 2] << 8) | (header[req_size - 1]);
+        }
+
+        if (status->ext.has_range) {
+                req_size += 1;
+                if (size < req_size) {
+                        return -ENODATA;
+                }
+
+                status->range = header[req_size - 1];
+        }
+
+        return req_size;
 }

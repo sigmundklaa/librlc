@@ -16,7 +16,7 @@ RLC_BEGIN_DECL
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
-#define rlc_errf(fmt_, ...) (void)fprintf(stderr, fmt_, ##__VA_ARGS__)
+#define rlc_errf(fmt_, ...) (void)fprintf(stderr, fmt_ "\n", ##__VA_ARGS__)
 
 static inline const void *rlc_voidptr_offset(const void *base, size_t offset)
 {
