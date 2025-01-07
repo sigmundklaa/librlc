@@ -411,17 +411,22 @@ static struct rlc_chunk *encode_status_(struct rlc_context *ctx,
                                         struct rlc_pdu_status *status)
 {
         struct rlc_chunk *chunk;
+        size_t size;
+        ssize_t ret;
 
-        /* TODO: size */
-        chunk = do_alloc_(ctx, sizeof(*chunk) + 4);
+        size = rlc_status_size(ctx, status);
+
+        chunk = do_alloc_(ctx, sizeof(*chunk) + size);
         if (chunk == NULL) {
                 return NULL;
         }
 
         /* Initialize chunk and add to the list */
         chunk->data = chunk + 1;
-        chunk->size = 4;
+        chunk->size = size;
         chunk->next = NULL;
+
+        rlc_status_encode(ctx, status, chunk);
 
         return chunk;
 }

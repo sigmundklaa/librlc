@@ -364,7 +364,7 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
                           struct rlc_pdu_status *status,
                           const struct rlc_chunk *chunks, size_t offset)
 {
-        uint8_t header[8];
+        uint8_t header[RLC_STATUS_MAX_SIZE];
         size_t req_size;
         ssize_t size;
         uint8_t ext;
@@ -418,4 +418,21 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
         }
 
         return req_size;
+}
+
+size_t rlc_status_size(const struct rlc_context *ctx,
+                       struct rlc_pdu_status *status)
+{
+        size_t ret;
+
+        ret = sn_num_bytes_(ctx->sn_width);
+        if (status->ext.has_offset) {
+                ret += (SO_WIDTH_ / 8) * 2;
+        }
+
+        if (status->ext.has_range) {
+                ret += 1;
+        }
+
+        return ret;
 }
