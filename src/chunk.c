@@ -128,12 +128,15 @@ ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks,
         size_t passed;
         size_t local_off;
         size_t i;
+        bool last;
 
         total = 0;
         passed = 0;
         i = 0;
 
         for (rlc_each_node(chunks, cur, next)) {
+                last = cur->next == NULL;
+
                 if (passed >= offset) {
                         /* The offset is either aligned at the chunk, or the
                          * unaligned offset has already been handled in the
@@ -159,9 +162,12 @@ ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks,
                         continue;
                 }
 
+                dst_chunks[i].next = last ? NULL : &dst_chunks[i + 1];
+
                 passed += cur->size;
 
                 if (total >= max_size) {
+                        dst_chunks[i].next = NULL;
                         break;
                 }
 
