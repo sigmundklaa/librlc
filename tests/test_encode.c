@@ -140,12 +140,85 @@ static void test_decode_umd(void)
         TEST_ASSERT_EQUAL_INT(0x5555, pdu.seg_offset);
 }
 
+static void test_encode_status(void)
+{
+        rlc_context ctx = {
+                .type = RLC_AM,
+                .sn_width = RLC_SN_18BIT,
+        };
+        uint8_t buf[8] = {0};
+        ssize_t ret;
+        struct rlc_pdu_status status = {
+                .ext.has_more = 0,
+                .ext.has_range = 1,
+                .ext.has_offset = 1,
+                .offset.start = 0x1234,
+                .offset.end = 0xabcd,
+                .range = 0xea,
+                .nack_sn = (0x5678 << 2) | 0x2,
+        };
+        struct rlc_chunk chunk = {
+                .data = buf,
+        };
+
+        rlc_status_encode(&ctx, &status, &chunk);
+
+        TEST_ASSERT_EQUAL_UINT8(0x56, buf[0]);
+        TEST_ASSERT_EQUAL_UINT8(0x78, buf[1]);
+        TEST_ASSERT_EQUAL_UINT8((0x2 << 6) | (0b011 << 3), buf[2]);
+        TEST_ASSERT_EQUAL_UINT8(0x12, buf[3]);
+        TEST_ASSERT_EQUAL_UINT8(0x34, buf[4]);
+        TEST_ASSERT_EQUAL_UINT8(0xab, buf[5]);
+        TEST_ASSERT_EQUAL_UINT8(0xcd, buf[6]);
+        TEST_ASSERT_EQUAL_UINT8(0xea, buf[7]);
+        TEST_ASSERT_EQUAL_size_t(8, chunk.size);
+}
+
+static void test_decode_status(void)
+{
+        rlc_context ctx = {
+                .type = RLC_AM,
+                .sn_width = RLC_SN_18BIT,
+        };
+        uint8_t buf[8];
+        ssize_t ret;
+        struct rlc_pdu_status status;
+        struct rlc_chunk chunk = {
+                .data = buf,
+                .size = 8,
+        };
+
+        buf[0] = 0x56;        /* NACK SN */
+        buf[1] = 0x78;        /* NACK SN */
+        buf[2] = 0x2 << 6;    /* NACK SN */
+        buf[2] |= 0b011 << 3; /* E1, E2 and E3 */
+
+        buf[3] = 0x12; /* SOstart */
+        buf[4] = 0x34; /* SOstart */
+        buf[5] = 0xab; /* SOend */
+        buf[6] = 0xcd; /* SOend */
+        buf[7] = 0xea; /* Range */
+
+        ret = rlc_status_decode(&ctx, &status, &chunk, 0);
+
+        TEST_ASSERT_EQUAL_size_t(8, (size_t)ret);
+        TEST_ASSERT_EQUAL_INT(0x1234, status.offset.start);
+        TEST_ASSERT_EQUAL_INT(0xabcd, status.offset.end);
+        TEST_ASSERT_EQUAL_INT(0xea, status.range);
+        TEST_ASSERT_EQUAL_INT((0x5678 << 2) | 0x2, status.nack_sn);
+        TEST_ASSERT_EQUAL_INT(1, status.ext.has_offset);
+        TEST_ASSERT_EQUAL_INT(1, status.ext.has_range);
+        TEST_ASSERT_EQUAL_INT(0, status.ext.has_more);
+}
+
 int main(void)
 {
         UnityBegin(__FILE__);
 
         RUN_TEST(test_encode_umd);
         RUN_TEST(test_decode_umd);
+        RUN_TEST(test_encode_status);
+        RUN_TEST(test_decode_status);
 
         return UnityEnd();
 }

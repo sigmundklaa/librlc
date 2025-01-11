@@ -245,7 +245,8 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         size_t offset;
         struct rlc_pdu_status cur;
 
-        offset = rlc_pdu_header_size(ctx, pdu);
+        offset = rlc_pdu_header_size(ctx, pdu) - 1;
+        rlc_errf("Status: %i", pdu->sn);
 
         /* Iterate over every status */
         bytes = rlc_status_decode(ctx, &cur, chunks, offset);
@@ -433,9 +434,10 @@ static struct rlc_chunk *encode_status_(struct rlc_context *ctx,
                 return NULL;
         }
 
+        (void)memset(chunk, 0, sizeof(*chunk) + size);
+
         /* Initialize chunk and add to the list */
         chunk->data = chunk + 1;
-        chunk->size = size;
         chunk->next = NULL;
 
         rlc_status_encode(ctx, status, chunk);

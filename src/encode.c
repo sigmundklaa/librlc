@@ -352,8 +352,8 @@ void rlc_status_encode(const struct rlc_context *ctx,
         }
 
         if (status->ext.has_range) {
-                bit_copy_mem_(dst->data, status->range, full_width, sn_width);
-                full_width += sn_width;
+                bit_copy_mem_(dst->data, status->range, full_width, 8);
+                full_width += 8;
         }
 
         dst->size = bytes_ceil_(full_width);
