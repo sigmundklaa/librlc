@@ -280,12 +280,12 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         status = rlc_pdu_decode(ctx, &pdu, chunks);
         if (status != 0) {
-                process_status_(ctx, &pdu, chunks);
                 return;
         }
 
         if (pdu.flags.is_status) {
                 rlc_errf("Status");
+                process_status_(ctx, &pdu, chunks);
                 return;
         }
 
