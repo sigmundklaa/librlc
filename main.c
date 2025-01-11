@@ -11,16 +11,19 @@ static rlc_errno tx_request(struct rlc_context *ctx)
         return 0;
 }
 
-static rlc_errno tx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
+static rlc_errno tx_submit(struct rlc_context *ctx,
+                           const struct rlc_chunk *chunks)
 {
         const struct rlc_chunk *cur;
+
+        (void)printf("Submit\n");
 
         for (rlc_each_node(chunks, cur, next)) {
                 (void)printf("chunk: %zu\n", cur->size);
         }
 
         rlc_rx_submit(ctx, chunks);
-        rlc_tx_avail(ctx, 7);
+        rlc_tx_avail(ctx, 45);
 
         return 0;
 }
@@ -61,6 +64,10 @@ static const struct rlc_methods methods = {
         .mem_dealloc = mem_dealloc,
 };
 
+#define FIRST_STR "F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1"
+#define SEC_STR   "S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2"
+#define THIRD_STR "T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3"
+
 int main(void)
 {
         rlc_errno status;
@@ -68,16 +75,16 @@ int main(void)
         rlc_sdu sdu;
         struct rlc_chunk chunks[3] = {
                 {
-                        .data = "First",
-                        .size = 6,
+                        .data = FIRST_STR,
+                        .size = sizeof(FIRST_STR) - 1,
                 },
                 {
-                        .data = "Sec",
-                        .size = 4,
+                        .data = SEC_STR,
+                        .size = sizeof(SEC_STR) - 1,
                 },
                 {
-                        .data = "Thir",
-                        .size = 5,
+                        .data = THIRD_STR,
+                        .size = sizeof(THIRD_STR) - 1,
                 },
         };
 
@@ -86,7 +93,7 @@ int main(void)
         link(0, 1);
         link(1, 2);
 
-        status = rlc_init(&ctx, RLC_AM, 4, 128, &methods);
+        status = rlc_init(&ctx, RLC_AM, 4, 1280, &methods);
         assert(status == 0);
 
         status = rlc_send(&ctx, &sdu, chunks);
