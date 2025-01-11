@@ -370,7 +370,7 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
 
         req_size = sn_num_bytes_(ctx->sn_width);
 
-        size = rlc_chunks_deepcopy_view(chunks, header, offset, sizeof(header));
+        size = rlc_chunks_deepcopy_view(chunks, header, sizeof(header), offset);
         if (size < req_size) {
                 if (size >= 0) {
                         return 0;
