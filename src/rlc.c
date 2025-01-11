@@ -184,8 +184,6 @@ static void sdu_dealloc_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 static void prepare_pdu_(const struct rlc_context *ctx, struct rlc_pdu *pdu)
 {
         (void)memset(pdu, 0, sizeof(*pdu));
-
-        pdu->type = ctx->type;
 }
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
@@ -276,8 +274,6 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
 
-        pdu.type = ctx->type;
-
         status = rlc_pdu_decode(ctx, &pdu, chunks);
         if (status != 0) {
                 return;
@@ -344,14 +340,14 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                  * transmitting the status, so that we can keep the information
                  * in memory until it can be relayed back. The RX buffer can
                  * however be freed to prevent excessive memory use. */
-                if (pdu.type == RLC_AM) {
+                if (ctx->type == RLC_AM) {
                         ctx->gen_status = true;
                         ctx->rx_next_highest += 1;
                 }
 
                 remove_sdu_(ctx, sdu);
                 sdu_dealloc_(ctx, sdu);
-        } else if (pdu.type == RLC_AM && pdu.flags.polled) {
+        } else if (ctx->type == RLC_AM && pdu.flags.polled) {
                 /* Send ACK before receiving any more data */
                 ctx->gen_status = true;
         }
@@ -362,7 +358,7 @@ static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 {
         size_t hsize;
 
-        if (pdu->type == RLC_UM && pdu->flags.is_first) {
+        if (ctx->type == RLC_UM && pdu->flags.is_first) {
                 /* If size plus the header can be fit as is both SN and SO can
                  * be omitted */
                 if (max_size - 1 >= pdu->size) {

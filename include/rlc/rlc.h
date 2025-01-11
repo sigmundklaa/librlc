@@ -107,8 +107,6 @@ typedef struct rlc_sdu {
 } rlc_sdu;
 
 struct rlc_pdu {
-        enum rlc_sdu_type type;
-
         size_t size;
 
         uint32_t sn;

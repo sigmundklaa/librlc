@@ -23,7 +23,6 @@ static void test_encode_umd(void)
         };
         struct rlc_pdu pdu = {
                 .sn = 0xaaa,
-                .type = RLC_UM,
                 .seg_offset = 0x5555,
                 .flags.polled = 0,
                 .flags.is_last = 1,
