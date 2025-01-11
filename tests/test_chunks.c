@@ -13,6 +13,28 @@ void tearDown(void)
 {
 }
 
+static bool chunk_cmp_(const struct rlc_chunk *c1, const struct rlc_chunk *c2)
+{
+        const struct rlc_chunk *cur1;
+        const struct rlc_chunk *cur2;
+
+        cur2 = c2;
+
+        for (rlc_each_node(c1, cur1, next)) {
+                if (cur2 == NULL || cur2->size != cur1->size) {
+                        return false;
+                }
+
+                if (memcmp(cur2->data, cur1->data, cur2->size) != 0) {
+                        return false;
+                }
+
+                cur2 = cur2->next;
+        }
+
+        return true;
+}
+
 static void test_chunks_size(void)
 {
         struct rlc_chunk chunks[] = {
@@ -100,12 +122,8 @@ static void test_chunks_copy(void)
         chunks[0].next = &chunks[1];
         chunks[1].next = &chunks[2];
 
-        /* TODO: fix */
-        chunks_copied[0].next = &chunks[1];
-        chunks_copied[1].next = &chunks[2];
-
         TEST_ASSERT_EQUAL_INT(13, rlc_chunks_copy(chunks, chunks_copied, 13));
-        TEST_ASSERT_EQUAL_MEMORY(chunks, chunks_copied, sizeof(chunks_copied));
+        TEST_ASSERT_TRUE(chunk_cmp_(chunks, chunks_copied));
 
         (void)memset(chunks_copied, 0, sizeof(chunks_copied));
 
