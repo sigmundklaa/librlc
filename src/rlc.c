@@ -201,9 +201,75 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         return 0;
 }
 
+static bool seg_overlap_(const struct rlc_segment *left,
+                         const struct rlc_segment *right)
+{
+        return right->start >= left->start && right->start <= left->end;
+}
+
+static rlc_errno seg_append_(struct rlc_context *ctx, struct rlc_sdu *sdu,
+                             struct rlc_segment seg)
+{
+        struct rlc_sdu_segment *new_seg;
+        struct rlc_sdu_segment *cur;
+        struct rlc_sdu_segment *next;
+        struct rlc_sdu_segment **lastp;
+
+        lastp = &sdu->segments;
+
+        for (rlc_each_node(sdu->segments, cur, next)) {
+                lastp = &cur->next;
+                next = cur->next;
+
+                /* Seg overlaps with the element to the left */
+                if (seg_overlap_(&cur->seg, &seg)) {
+                        /* Overlaps to the right. Since overlap on both sides,
+                         * they can be merged. */
+                        if (next != NULL && seg_overlap_(&seg, &next->seg)) {
+                                seg.end = next->seg.end;
+
+                                cur->next = next->next;
+                                do_dealloc_(ctx, next);
+                        }
+
+                        seg.start = cur->seg.start;
+                        goto entry_found;
+                }
+
+                /* If not overlapping to the left, but the offset is higher than
+                 * that of the segment to the left */
+                if (seg.start > cur->seg.end) {
+                        /* Overlap to the right, merge */
+                        if (next != NULL && seg.end >= next->seg.start) {
+                                seg.end = next->seg.end;
+
+                                goto entry_found;
+                        }
+
+                        /* Otherwise create a new entry and insert it */
+                        break;
+                }
+        }
+
+        cur = do_alloc_(ctx, sizeof(*cur));
+        if (cur == NULL) {
+                return -ENOMEM;
+        }
+
+        *lastp = cur;
+
+entry_found:
+        (void)memcpy(&cur->seg, &seg, sizeof(seg));
+
+        return 0;
+}
+
 rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_sdu *sdu,
                    struct rlc_chunk *chunks)
 {
+        rlc_errno status;
+        struct rlc_segment seg;
+
         /* Encode chunk in a sdu */
         (void)memset(sdu, 0, sizeof(*sdu));
 
@@ -212,6 +278,14 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_sdu *sdu,
         sdu->sn = ctx->tx_next++;
 
         append_sdu_(ctx, sdu);
+
+        seg.start = 0;
+        seg.end = rlc_chunks_size(chunks);
+
+        status = seg_append_(ctx, sdu, seg);
+        if (status != 0) {
+                return status;
+        }
 
         return do_tx_request_(ctx);
 }
@@ -253,6 +327,8 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         for (; bytes > 0; offset += bytes) {
                 /* register rx_next -> tx_next */
                 /* update nacked of every tx sdu */
+                rlc_errf("%u->%u (%u)", cur.offset.start, cur.offset.end,
+                         cur.nack_sn);
 
                 bytes = rlc_status_decode(ctx, &cur, chunks, offset);
         }
@@ -281,7 +357,6 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         }
 
         if (pdu.flags.is_status) {
-                rlc_errf("Status");
                 process_status_(ctx, &pdu, chunks);
                 return;
         }
@@ -387,30 +462,41 @@ static ssize_t tx_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
         return do_tx_submit_(ctx, pdu, sdu->chunks, max_size);
 }
 
-static bool serve_sdu_(const struct rlc_context *ctx, struct rlc_sdu *sdu,
+static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                        struct rlc_pdu *pdu, size_t size_avail)
 {
         size_t tot_size;
+        struct rlc_sdu_segment *segment;
 
         switch (sdu->state) {
         case RLC_READY:
-                tot_size = rlc_chunks_size(sdu->chunks);
+                segment = sdu->segs_unsent;
+                if (segment == NULL) {
+                        sdu->state = RLC_WAIT;
+                        break;
+                }
 
-                pdu->size = tot_size - sdu->tx_offset_unack;
-                pdu->seg_offset = sdu->tx_offset_unack;
+                pdu->size = segment->seg.end - segment->seg.start;
+                pdu->seg_offset = segment->seg.start;
                 pdu->flags.is_first = pdu->seg_offset == 0;
 
                 pdu_size_adjust_(ctx, pdu, size_avail);
 
-                sdu->tx_offset_unack += pdu->size;
-                if (pdu->flags.is_last || sdu->tx_offset_unack >= tot_size) {
-                        pdu->flags.is_last = 1;
-                        sdu->state = RLC_WAITACK;
+                segment->seg.start += pdu->size;
+                /* Segment done */
+                if (segment->seg.start >= segment->seg.end) {
+                        sdu->segs_unsent = segment->next;
+                        /* If last segment, set last flag and go into waiting
+                         * state */
+                        if (sdu->segs_unsent == NULL) {
+                                sdu->state = RLC_WAIT;
+                                pdu->flags.is_last = 1;
+                        }
+
+                        do_dealloc_(ctx, segment);
                 }
 
-                break;
-        case RLC_RESEND:
-                rlc_assert(ctx->type == RLC_AM);
+                pdu->flags.polled = 1;
 
                 break;
         default:

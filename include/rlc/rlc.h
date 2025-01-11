@@ -55,6 +55,11 @@ enum rlc_sn_width {
         RLC_SN_18BIT,
 };
 
+struct rlc_segment {
+        uint32_t start;
+        uint32_t end;
+};
+
 typedef struct rlc_context {
         struct {
                 uint8_t *mem;
@@ -79,6 +84,11 @@ typedef struct rlc_context {
         const struct rlc_methods *methods;
 } rlc_context;
 
+struct rlc_sdu_segment {
+        struct rlc_segment seg;
+        struct rlc_sdu_segment *next;
+};
+
 typedef struct rlc_sdu {
         enum rlc_sdu_dir {
                 RLC_TX,
@@ -87,13 +97,10 @@ typedef struct rlc_sdu {
 
         enum rlc_sdu_state {
                 RLC_READY,
-                RLC_RESEND,
-                RLC_WAITACK,
+                RLC_WAIT,
         } state;
 
         /* RLC specification state variables */
-        uint32_t tx_offset_unack; /* Last unacknowledged offset */
-        uint32_t tx_offset_ack;   /* Last acknowledged offset */
         uint32_t sn;
 
         uint32_t rx_pos;
@@ -102,6 +109,18 @@ typedef struct rlc_sdu {
 
         void *rx_buffer;
         size_t rx_buffer_size;
+
+        /* Different names for different modes */
+        union {
+                /* TX mode: unsent segments */
+                struct rlc_sdu_segment *segs_unsent;
+
+                /* RX mode: received segments */
+                struct rlc_sdu_segment *segs_received;
+
+                /* Common name for generic access */
+                struct rlc_sdu_segment *segments;
+        };
 
         struct rlc_sdu *next;
 } rlc_sdu;
@@ -125,10 +144,7 @@ struct rlc_pdu {
 
 /** @brief Optional status payload following a PDU Status header */
 struct rlc_pdu_status {
-        struct {
-                uint32_t start;
-                uint32_t end;
-        } offset;
+        struct rlc_segment offset;
 
         uint32_t range;
         uint32_t nack_sn;
