@@ -70,6 +70,22 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_pdu *pdu,
         return total_size;
 }
 
+static ssize_t tx_pdu_view_(struct rlc_context *ctx, struct rlc_pdu *pdu,
+                            struct rlc_chunk *payload, size_t max_size)
+{
+        size_t num_chunks;
+
+        num_chunks = rlc_chunks_num_view(payload, pdu->size, pdu->seg_offset);
+
+        {
+                struct rlc_chunk chunks[num_chunks];
+
+                (void)rlc_chunks_copy_view(payload, chunks, pdu->size,
+                                           pdu->seg_offset);
+                return do_tx_submit_(ctx, pdu, chunks, max_size);
+        }
+}
+
 static inline void *do_alloc_(struct rlc_context *ctx, size_t size)
 {
         const struct rlc_methods *methods = ctx->methods;
@@ -561,8 +577,8 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
 
                 pdu.sn = cur->sn;
 
-                ret = do_tx_submit_(ctx, &pdu, cur->chunks, size);
-                if (ret <= 0) { /* TODO: log err */
+                ret = tx_pdu_view_(ctx, &pdu, cur->chunks, size);
+                if (ret <= 0) {
                         rlc_errf("PDU submit failed: error %" RLC_PRI_ERRNO,
                                  (rlc_errno)ret);
                         return;
