@@ -374,7 +374,7 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
         size = rlc_chunks_deepcopy_view(chunks, header, offset, sizeof(header));
         if (size < req_size) {
                 if (size >= 0) {
-                        return -ENODATA;
+                        return 0;
                 }
 
                 return size;
