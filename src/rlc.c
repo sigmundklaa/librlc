@@ -139,7 +139,7 @@ static void remove_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu)
                         break;
                 }
 
-                lastp = &cur;
+                lastp = &(*lastp)->next;
         }
 }
 
@@ -283,14 +283,16 @@ entry_found:
         return 0;
 }
 
-rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                   struct rlc_chunk *chunks)
+rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
 {
         rlc_errno status;
         struct rlc_segment seg;
+        struct rlc_sdu *sdu;
 
-        /* Encode chunk in a sdu */
-        (void)memset(sdu, 0, sizeof(*sdu));
+        sdu = do_alloc_(ctx, sizeof(*sdu));
+        if (sdu == NULL) {
+                return -ENOMEM;
+        }
 
         sdu->dir = RLC_TX;
         sdu->chunks = chunks;

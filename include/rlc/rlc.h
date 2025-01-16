@@ -184,7 +184,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    size_t window_size, size_t buffer_size,
                    const struct rlc_methods *methods);
 
-rlc_errno rlc_send(rlc_context *ctx, rlc_sdu *sdu, struct rlc_chunk *chunks);
+rlc_errno rlc_send(rlc_context *ctx, struct rlc_chunk *chunks);
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size);
 

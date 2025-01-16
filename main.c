@@ -82,7 +82,6 @@ int main(void)
 {
         rlc_errno status;
         rlc_context ctx;
-        rlc_sdu sdu;
         struct rlc_chunk chunks[3] = {
                 {
                         .data = FIRST_STR,
@@ -107,7 +106,7 @@ int main(void)
         status = rlc_init(&ctx, RLC_AM, 4, 1280, &methods);
         assert(status == 0);
 
-        status = rlc_send(&ctx, &sdu, chunks);
+        status = rlc_send(&ctx, chunks);
         assert(status == 0);
 
         return 0;
