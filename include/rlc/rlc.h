@@ -103,24 +103,18 @@ typedef struct rlc_sdu {
         /* RLC specification state variables */
         uint32_t sn;
 
-        uint32_t rx_pos;
-
         struct rlc_chunk *chunks;
 
         void *rx_buffer;
         size_t rx_buffer_size;
 
-        /* Different names for different modes */
-        union {
-                /* TX mode: unsent segments */
-                struct rlc_sdu_segment *segs_unsent;
+        struct {
+                bool rx_last_received: 1;
+        } flags;
 
-                /* RX mode: received segments */
-                struct rlc_sdu_segment *segs_received;
-
-                /* Common name for generic access */
-                struct rlc_sdu_segment *segments;
-        };
+        /* TX mode: unsent segments */
+        /* RX mode: received segments */
+        struct rlc_sdu_segment *segments;
 
         struct rlc_sdu *next;
 } rlc_sdu;

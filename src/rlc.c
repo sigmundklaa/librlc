@@ -89,11 +89,15 @@ static ssize_t tx_pdu_view_(struct rlc_context *ctx, struct rlc_pdu *pdu,
 static inline void *do_alloc_(struct rlc_context *ctx, size_t size)
 {
         const struct rlc_methods *methods = ctx->methods;
+        void *mem;
         if (methods->mem_alloc == NULL) {
                 return NULL;
         }
 
-        return methods->mem_alloc(ctx, size);
+        mem = methods->mem_alloc(ctx, size);
+        (void)memset(mem, 0, size);
+
+        return mem;
 }
 
 static inline void do_dealloc_(struct rlc_context *ctx, void *mem)
@@ -216,9 +220,9 @@ static rlc_errno seg_append_(struct rlc_context *ctx, struct rlc_sdu *sdu,
         struct rlc_sdu_segment **lastp;
 
         lastp = &sdu->segments;
+        next = NULL;
 
         for (rlc_each_node(sdu->segments, cur, next)) {
-                lastp = &cur->next;
                 next = cur->next;
 
                 /* Seg overlaps with the element to the left */
@@ -241,14 +245,28 @@ static rlc_errno seg_append_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 if (seg.start > cur->seg.end) {
                         /* Overlap to the right, merge */
                         if (next != NULL && seg.end >= next->seg.start) {
+                                cur = next;
                                 seg.end = next->seg.end;
 
                                 goto entry_found;
                         }
 
                         /* Otherwise create a new entry and insert it */
+                        lastp = &cur->next;
+                        break;
+                } else if (seg.start < cur->seg.start) {
+                        if (seg.end >= cur->seg.start) {
+                                seg.end = cur->seg.end;
+
+                                goto entry_found;
+                        }
+
+                        /* Insert before current */
+                        next = cur;
                         break;
                 }
+
+                lastp = &cur->next;
         }
 
         cur = do_alloc_(ctx, sizeof(*cur));
@@ -257,6 +275,7 @@ static rlc_errno seg_append_(struct rlc_context *ctx, struct rlc_sdu *sdu,
         }
 
         *lastp = cur;
+        cur->next = next;
 
 entry_found:
         (void)memcpy(&cur->seg, &seg, sizeof(seg));
@@ -307,9 +326,26 @@ static void do_rx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 
         event.type = RLC_EVENT_RX_DONE;
         event.data.rx_done.data = sdu->rx_buffer;
-        event.data.rx_done.size = sdu->rx_pos;
+        event.data.rx_done.size = sdu->segments->seg.end;
 
         do_event_(ctx, &event);
+}
+
+static size_t tx_size_(struct rlc_sdu *sdu)
+{
+        size_t size;
+        struct rlc_sdu_segment *cur;
+        struct rlc_sdu_segment *last;
+
+        size = 0;
+        last = NULL;
+
+        for (rlc_each_node(sdu->segments, cur, next)) {
+                last = cur;
+        }
+
+        rlc_assert(last != NULL);
+        return last->seg.end;
 }
 
 static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
@@ -317,19 +353,46 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 {
         ssize_t bytes;
         size_t offset;
+        rlc_errno status;
         struct rlc_pdu_status cur;
+        struct rlc_sdu *sdu;
 
         offset = rlc_pdu_header_size(ctx, pdu) - 1;
         rlc_errf("Status: %i", pdu->sn);
 
         /* Iterate over every status */
         bytes = rlc_status_decode(ctx, &cur, chunks, offset);
-        for (; bytes > 0; offset += bytes) {
+        while (bytes > 0) {
                 /* register rx_next -> tx_next */
                 /* update nacked of every tx sdu */
                 rlc_errf("%u->%u (%u)", cur.offset.start, cur.offset.end,
                          cur.nack_sn);
+                if (!cur.ext.has_offset) {
+                        continue;
+                }
 
+                for (rlc_each_node(ctx->sdus, sdu, next)) {
+                        if (sdu->dir == RLC_TX && sdu->sn == cur.nack_sn) {
+                                break;
+                        }
+                }
+
+                if (sdu == NULL) {
+                        rlc_errf("Unrecognized SN: %u", cur.nack_sn);
+                        continue;
+                }
+
+                if (cur.offset.end == RLC_STATUS_SO_MAX) {
+                        cur.offset.end = tx_size_(sdu);
+                }
+
+                status = seg_append_(ctx, sdu, cur.offset);
+                if (status != 0) {
+                        rlc_errf("Unable to append seg");
+                        return;
+                }
+
+                offset += bytes;
                 bytes = rlc_status_decode(ctx, &cur, chunks, offset);
         }
 
@@ -340,6 +403,13 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 }
 
+static bool is_rx_done_(struct rlc_sdu *sdu)
+{
+        /* Last received and exactly one segment */
+        return sdu->flags.rx_last_received && sdu->segments != NULL &&
+               sdu->segments->seg.start == 0 && sdu->segments->next == NULL;
+}
+
 /**
  * @details
  * Submits the incoming packet into the RLC system
@@ -347,6 +417,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 {
         ssize_t status;
+        size_t header_size;
         struct rlc_pdu pdu;
         struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
@@ -358,6 +429,13 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         if (pdu.flags.is_status) {
                 process_status_(ctx, &pdu, chunks);
+                return;
+        }
+
+        static int i = 0;
+        i = (i + 1) % 5;
+        if (i == 4) {
+                rlc_errf("DROPPING");
                 return;
         }
 
@@ -396,20 +474,35 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 return;
         }
 
+        header_size = rlc_pdu_header_size(ctx, &pdu);
+
         /* Copy the contents of the chunks, skipping the header content */
         status = rlc_chunks_deepcopy_view(
                 chunks, (uint8_t *)sdu->rx_buffer + pdu.seg_offset,
-                sdu->rx_buffer_size - pdu.seg_offset,
-                rlc_pdu_header_size(ctx, &pdu));
+                sdu->rx_buffer_size - pdu.seg_offset, header_size);
         if (status <= 0) {
                 rlc_errf("Chunk deepcopy failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)status);
                 return;
         }
 
-        sdu->rx_pos += status;
+        status = seg_append_(ctx, sdu,
+                             (struct rlc_segment){
+                                     .start = pdu.seg_offset,
+                                     .end = pdu.seg_offset +
+                                            rlc_chunks_size(chunks) -
+                                            header_size,
+                             });
+        if (status != 0) {
+                rlc_errf("Seg append failed");
+                return;
+        }
 
         if (pdu.flags.is_last) {
+                sdu->flags.rx_last_received = 1;
+        }
+
+        if (is_rx_done_(sdu)) {
                 do_rx_done_(ctx, sdu);
 
                 /* In acknowledged mode, the SDU should be deallocated when
@@ -423,7 +516,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
                 remove_sdu_(ctx, sdu);
                 sdu_dealloc_(ctx, sdu);
-        } else if (ctx->type == RLC_AM && pdu.flags.polled) {
+        }
+
+        if (ctx->type == RLC_AM && pdu.flags.polled) {
                 /* Send ACK before receiving any more data */
                 ctx->gen_status = true;
         }
@@ -470,7 +565,7 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
         switch (sdu->state) {
         case RLC_READY:
-                segment = sdu->segs_unsent;
+                segment = sdu->segments;
                 if (segment == NULL) {
                         sdu->state = RLC_WAIT;
                         break;
@@ -485,15 +580,16 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 segment->seg.start += pdu->size;
                 /* Segment done */
                 if (segment->seg.start >= segment->seg.end) {
-                        sdu->segs_unsent = segment->next;
                         /* If last segment, set last flag and go into waiting
                          * state */
-                        if (sdu->segs_unsent == NULL) {
+                        if (segment->next == NULL) {
                                 sdu->state = RLC_WAIT;
                                 pdu->flags.is_last = 1;
-                        }
+                        } else {
+                                sdu->segments = segment->next;
 
-                        do_dealloc_(ctx, segment);
+                                do_dealloc_(ctx, segment);
+                        }
                 }
 
                 pdu->flags.polled = 1;
@@ -556,6 +652,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         struct rlc_chunk *chunk;
         struct rlc_chunk *head_chunk;
         struct rlc_chunk **chunkptr;
+        struct rlc_sdu_segment *seg;
         size_t count;
         size_t status_idx;
 
@@ -575,36 +672,53 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
                         continue;
                 }
 
-                /* Alternate between two allocated status structs, so that
-                 * we can fill the current one and encode the last one */
-                status_idx = 1 - status_idx;
-                cur_status = &status_pool[status_idx];
-
-                *cur_status = (struct rlc_pdu_status){
-                        .ext.has_offset = 1,
-                        .nack_sn = sdu->sn,
-                        .offset.start = sdu->rx_pos,
-                        .offset.end = RLC_STATUS_SO_MAX,
-                };
-
-                /* Encode the last status instead of the current one, so that
-                 * the E1 bit can be set appropriately. On the first iteration,
-                 * skip encoding as there is no last */
-                if (last_status != NULL) {
-                        last_status->ext.has_more = 1;
-
-                        chunk = encode_status_(ctx, last_status);
-                        if (chunk == NULL) {
-                                ret = -ENOMEM;
-                                goto exit;
+                for (rlc_each_node(sdu->segments, seg, next)) {
+                        /* No more missing segments */
+                        if (seg->next == NULL && sdu->flags.rx_last_received) {
+                                break;
                         }
 
-                        *chunkptr = chunk;
-                        chunkptr = &chunk->next;
-                }
+                        /* Alternate between two allocated status structs, so
+                         * that we can fill the current one and encode the last
+                         * one */
+                        status_idx = 1 - status_idx;
+                        cur_status = &status_pool[status_idx];
 
-                last_status = cur_status;
-                count += 1;
+                        *cur_status = (struct rlc_pdu_status){
+                                .ext.has_offset = 1,
+                                .nack_sn = sdu->sn,
+                        };
+
+                        if (seg->next != NULL) {
+                                /* Between two segments */
+                                cur_status->offset.start = seg->seg.end;
+                                cur_status->offset.end = seg->next->seg.start;
+                        } else {
+                                /* Last segment registered, but last segment of
+                                 * the transmission has not been received */
+                                cur_status->offset.start = seg->seg.end;
+                                cur_status->offset.end = RLC_STATUS_SO_MAX;
+                        }
+
+                        /* Encode the last status instead of the current one, so
+                         * that the E1 bit can be set appropriately. On the
+                         * first iteration, skip encoding as there is no last */
+                        if (last_status != NULL) {
+                                last_status->ext.has_more = 1;
+
+                                chunk = encode_status_(ctx, last_status);
+                                if (chunk == NULL) {
+                                        ret = -ENOMEM;
+                                        goto exit;
+                                }
+
+                                *chunkptr = chunk;
+                                chunkptr = &chunk->next;
+                        }
+
+                        last_status = cur_status;
+                        count += 1;
+                }
         }
 
         if (count > 0) {
@@ -640,12 +754,8 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         struct rlc_sdu *cur;
 
         if (should_gen_status_(ctx)) {
-                ret = gen_status_(ctx, size);
-                if (ret < 0) {
-                        return;
-                }
-
-                size -= ret;
+                (void)gen_status_(ctx, size);
+                return;
         }
 
         for (rlc_each_node(ctx->sdus, cur, next)) {

@@ -137,6 +137,8 @@ ssize_t rlc_chunks_copy_view(const struct rlc_chunk *chunks,
         for (rlc_each_node(chunks, cur, next)) {
                 last = cur->next == NULL;
 
+                (void)memset(&dst_chunks[i], 0, sizeof(dst_chunks[i]));
+
                 if (passed >= offset) {
                         /* The offset is either aligned at the chunk, or the
                          * unaligned offset has already been handled in the

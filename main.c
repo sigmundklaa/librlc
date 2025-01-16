@@ -64,9 +64,19 @@ static const struct rlc_methods methods = {
         .mem_dealloc = mem_dealloc,
 };
 
-#define FIRST_STR "F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1"
-#define SEC_STR   "S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2S2"
-#define THIRD_STR "T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3T3"
+#define FIRST_STR                                                              \
+        "FirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFi" \
+        "rOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirO" \
+        "neFirOneFirOneFirOneFirOneFirOne"
+#define SEC_STR                                                                \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"
+#define THIRD_STR                                                              \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"
 
 int main(void)
 {
@@ -92,6 +102,7 @@ int main(void)
 
         link(0, 1);
         link(1, 2);
+        (void)printf("chunk size: %zu\n", rlc_chunks_size(chunks));
 
         status = rlc_init(&ctx, RLC_AM, 4, 1280, &methods);
         assert(status == 0);
