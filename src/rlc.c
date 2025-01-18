@@ -493,6 +493,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         if (pdu.flags.is_status) {
                 process_status_(ctx, &pdu, chunks);
+
+                (void)do_tx_request_(ctx);
                 return;
         }
 
@@ -583,6 +585,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 /* Send ACK before receiving any more data */
                 ctx->gen_status = true;
         }
+
+        (void)do_tx_request_(ctx);
 }
 
 static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
@@ -826,7 +830,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 return;
         }
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, cur, next)) {
+        for (rlc_each_node(ctx->sdus, cur, next)) {
                 if (cur->dir != RLC_TX) {
                         continue;
                 }

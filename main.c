@@ -6,12 +6,38 @@
 #include <rlc/chunks.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <semaphore.h>
+#include <pthread.h>
 
 static FILE *fp;
 #define printf(...) fprintf(fp, ##__VA_ARGS__)
 
-static rlc_context ctx1;
-static rlc_context ctx2;
+struct ctx {
+        struct rlc_context rlc;
+
+        sem_t sig;
+        sem_t lock;
+        sem_t done;
+
+        uint8_t buf[1024];
+        size_t size;
+
+        struct ctx *other;
+};
+
+static struct ctx ctx1;
+static struct ctx ctx2;
+
+static void move_to_(struct ctx *c, const struct rlc_chunk *chunks)
+{
+        sem_wait(&c->lock);
+        if (chunks != NULL) {
+                c->size = rlc_chunks_deepcopy(chunks, c->buf, sizeof(c->buf));
+        } else {
+                c->size = 0;
+        }
+        sem_post(&c->sig);
+}
 
 static rlc_errno p1_tx_request(struct rlc_context *ctx)
 {
@@ -23,11 +49,13 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
                               const struct rlc_chunk *chunks)
 {
         const struct rlc_chunk *cur;
+        int status;
 
         static int i = 0;
-        i = (i + 1) % 3;
-        if (i == 2) {
+        i = (i + 1) % 7;
+        if (false && i == 6) {
                 (void)printf("p1 dropping\n");
+                rlc_tx_avail(&ctx2.rlc, 200);
                 return 0;
         }
 
@@ -37,17 +65,42 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
                 (void)printf("p1 chunk: %zu\n", cur->size);
         }
 
-        rlc_rx_submit(&ctx2, chunks);
-        rlc_tx_avail(&ctx2, 200);
-
-        rlc_tx_avail(ctx, 200);
+        move_to_(&ctx2, chunks);
 
         return 0;
 }
 
 static void p1_event(rlc_context *ctx, const struct rlc_event *event)
 {
-        assert(0);
+        if (event->type == RLC_EVENT_TX_DONE) {
+                sem_post(&ctx1.done);
+        }
+}
+
+static void *worker(void *c_arg)
+{
+        struct ctx *c = c_arg;
+        struct rlc_chunk chunk;
+
+        for (;;) {
+                if (sem_trywait(&c->done) == 0) {
+                        break;
+                } else if (sem_trywait(&c->sig) != 0) {
+                        continue;
+                }
+
+                if (c->size != 0) {
+                        chunk.data = c->buf;
+                        chunk.size = c->size;
+                        chunk.next = NULL;
+
+                        rlc_rx_submit(&c->rlc, &chunk);
+                }
+
+                sem_post(&c->lock);
+        }
+
+        return NULL;
 }
 
 static rlc_errno p2_tx_request(struct rlc_context *ctx)
@@ -67,10 +120,7 @@ static rlc_errno p2_tx_submit(struct rlc_context *ctx,
                 (void)printf("p2 chunk: %zu\n", cur->size);
         }
 
-        rlc_rx_submit(&ctx1, chunks);
-        rlc_tx_avail(&ctx1, 200);
-
-        rlc_tx_avail(ctx, 200);
+        move_to_(&ctx1, chunks);
 
         return 0;
 }
@@ -89,6 +139,8 @@ static void p2_event(rlc_context *ctx, const struct rlc_event *event)
                 (void)printf("%c", c);
         }
         (void)printf("\n");
+
+        sem_post(&ctx2.done);
 }
 
 static void *mem_alloc(struct rlc_context *ctx, size_t size)
@@ -122,16 +174,112 @@ static const struct rlc_methods p2_methods = {
 #define FIRST_STR                                                              \
         "FirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFi" \
         "rOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirO" \
+        "neFirOneFirOneFirOneFirOneFirOne"                                     \
+        "FirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFi" \
+        "rOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirO" \
+        "neFirOneFirOneFirOneFirOneFirOne"                                     \
+        "FirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFi" \
+        "FirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFi" \
+        "FirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFi" \
+        "FirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFi" \
+        "rOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirO" \
+        "neFirOneFirOneFirOneFirOneFirOne"                                     \
+        "rOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirO" \
+        "neFirOneFirOneFirOneFirOneFirOne"                                     \
+        "rOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirO" \
+        "neFirOneFirOneFirOneFirOneFirOne"                                     \
+        "rOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirOneFirO" \
         "neFirOneFirOneFirOneFirOneFirOne"
 #define SEC_STR                                                                \
         "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "SecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSe" \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
+        "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
+        "woSecTwo"                                                             \
         "cTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecTwoSecT" \
         "woSecTwo"
 #define THIRD_STR                                                              \
         "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
         "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
         "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
+        "hreeThiThreeThiThree"                                                 \
+        "hreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThree" \
+        "ThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiThreeThiT" \
         "hreeThiThreeThiThree"
+
+static void ctx_init(struct ctx *c)
+{
+        int status;
+
+        status = sem_init(&c->sig, 0, 0);
+        assert(status == 0);
+
+        status = sem_init(&c->done, 0, 0);
+        assert(status == 0);
+
+        status = sem_init(&c->lock, 0, 1);
+        assert(status == 0);
+}
 
 int main(void)
 {
@@ -160,14 +308,32 @@ int main(void)
         link(1, 2);
         (void)printf("chunk size: %zu\n", rlc_chunks_size(chunks));
 
-        status = rlc_init(&ctx1, RLC_AM, 4, 1280, &p1_methods);
+        ctx1.other = &ctx2;
+        ctx2.other = &ctx1;
+
+        ctx_init(&ctx1);
+        ctx_init(&ctx2);
+
+        pthread_t t1, t2;
+
+        status = pthread_create(&t1, NULL, worker, &ctx1);
         assert(status == 0);
 
-        status = rlc_init(&ctx2, RLC_AM, 4, 1280, &p2_methods);
+        status = pthread_create(&t2, NULL, worker, &ctx2);
         assert(status == 0);
 
-        status = rlc_send(&ctx1, chunks);
+        status = rlc_init(&ctx1.rlc, RLC_AM, 4, 1280, &p1_methods);
         assert(status == 0);
+
+        status = rlc_init(&ctx2.rlc, RLC_AM, 4, 5200, &p2_methods);
+        assert(status == 0);
+
+        status = rlc_send(&ctx1.rlc, chunks);
+        assert(status == 0);
+
+        (void)printf("Waiting\n");
+        pthread_join(t1, NULL);
+        pthread_join(t2, NULL);
 
         return 0;
 }
