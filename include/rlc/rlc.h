@@ -73,12 +73,12 @@ typedef struct rlc_context {
         size_t buffer_size;
 
         /* RLC specification state variables */
-        uint32_t rx_next;
-        uint32_t rx_next_highest;
-
         union {
                 struct {
                         uint32_t next_highest;
+
+                        uint32_t next; /* RX window base */
+                        uint32_t highest_status;
                 } rx;
                 struct {
                         uint32_t next;

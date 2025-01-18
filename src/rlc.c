@@ -348,6 +348,19 @@ static void do_rx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
         do_event_(ctx, &event);
 }
 
+static void do_rx_done_direct_(struct rlc_context *ctx,
+                               const struct rlc_chunk *chunks)
+{
+        struct rlc_event event;
+
+        rlc_inff("RX; Full SDU delivered (%zuB)", rlc_chunks_size(chunks));
+
+        event.type = RLC_EVENT_RX_DONE;
+        event.data.rx_done = *chunks;
+
+        do_event_(ctx, &event);
+}
+
 static void do_tx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         struct rlc_event event;
@@ -474,6 +487,27 @@ static bool is_rx_done_(struct rlc_sdu *sdu)
                sdu->segments->seg.start == 0 && sdu->segments->next == NULL;
 }
 
+static bool in_window_(uint32_t sn, uint32_t base, uint32_t size)
+{
+        return base <= sn && sn < base + size;
+}
+
+static uint32_t lowest_sn_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
+{
+        uint32_t lowest;
+        struct rlc_sdu *cur;
+
+        lowest = UINT32_MAX;
+
+        for (rlc_each_node(ctx->sdus, cur, next)) {
+                if (cur->sn < lowest) {
+                        lowest = cur->sn;
+                }
+        }
+
+        return lowest;
+}
+
 /**
  * @details
  * Submits the incoming packet into the RLC system
@@ -482,6 +516,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 {
         ssize_t status;
         size_t header_size;
+        uint32_t lowest;
         struct rlc_pdu pdu;
         struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
@@ -495,6 +530,17 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 process_status_(ctx, &pdu, chunks);
 
                 (void)do_tx_request_(ctx);
+                return;
+        }
+
+        if (ctx->type == RLC_TM || (pdu.flags.is_first && pdu.flags.is_last)) {
+                do_rx_done_direct_(ctx, chunks);
+
+                return;
+        } else if (!in_window_(pdu.sn, ctx->rx.next, ctx->window_size)) {
+                rlc_errf("RX; SN %" PRIu32 " outside RX window (%" PRIu32
+                         "->%zu), dropping",
+                         pdu.sn, ctx->rx.next, ctx->rx.next + ctx->window_size);
                 return;
         }
 
@@ -530,7 +576,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 return;
         }
 
-        if (!pdu.flags.is_first && pdu.seg_offset >= sdu->rx_buffer_size) {
+        if (pdu.seg_offset >= sdu->rx_buffer_size) {
                 rlc_errf("RX; Offset out of bounds: %" PRIu32 ">%zu",
                          pdu.seg_offset, sdu->rx_buffer_size);
                 return;
@@ -565,8 +611,13 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 sdu->flags.rx_last_received = 1;
         }
 
+        if (sdu->sn >= ctx->rx.next_highest) {
+                ctx->rx.next_highest = sdu->sn + 1;
+        }
+
         if (is_rx_done_(sdu)) {
                 do_rx_done_(ctx, sdu);
+                remove_sdu_(ctx, sdu);
 
                 /* In acknowledged mode, the SDU should be deallocated when
                  * transmitting the status, so that we can keep the information
@@ -574,10 +625,18 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                  * however be freed to prevent excessive memory use. */
                 if (ctx->type == RLC_AM) {
                         ctx->gen_status = true;
-                        ctx->rx_next_highest += 1;
+                        lowest = rlc_min(lowest_sn_(ctx, RLC_RX),
+                                         ctx->rx.next_highest);
+
+                        if (sdu->sn == ctx->rx.highest_status) {
+                                ctx->rx.highest_status = lowest;
+                        }
+
+                        if (sdu->sn == ctx->rx.next) {
+                                ctx->rx.next = lowest;
+                        }
                 }
 
-                remove_sdu_(ctx, sdu);
                 sdu_dealloc_(ctx, sdu);
         }
 
@@ -725,7 +784,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 
         prepare_pdu_(ctx, &pdu);
         pdu.flags.is_status = 1;
-        pdu.sn = ctx->rx_next_highest;
+        pdu.sn = ctx->rx.highest_status;
 
         count = 0;
         status_idx = 0;
