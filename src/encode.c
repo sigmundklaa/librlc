@@ -143,7 +143,7 @@ static void encode_status_header_(const struct rlc_context *ctx,
         bit_copy_mem_(dst->data, (0b0 << 1) | 0b000, 0, 4);
         full_width += 4;
 
-        sn_width = sn_num_bits_(ctx->sn_width);
+        sn_width = sn_num_bits_(ctx->conf->sn_width);
         bit_copy_mem_(dst->data, pdu->sn, full_width, sn_width);
         full_width += sn_width;
 
@@ -191,15 +191,15 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         /* Reserve necessary amount bits so that the end of the SN is aligned at
          * the end of a byte */
-        if ((ctx->type == RLC_UM && ctx->sn_width == RLC_SN_12BIT) ||
-            (ctx->type == RLC_AM && ctx->sn_width == RLC_SN_18BIT)) {
+        if ((ctx->type == RLC_UM && ctx->conf->sn_width == RLC_SN_12BIT) ||
+            (ctx->type == RLC_AM && ctx->conf->sn_width == RLC_SN_18BIT)) {
                 full_width += 2;
         }
 
         if (has_sn_(pdu, ctx->type)) {
                 bit_copy_mem_(dst->data, pdu->sn, full_width,
-                              sn_num_bits_(ctx->sn_width));
-                full_width += sn_num_bits_(ctx->sn_width);
+                              sn_num_bits_(ctx->conf->sn_width));
+                full_width += sn_num_bits_(ctx->conf->sn_width);
 
                 if (has_so_(pdu)) {
                         bit_copy_mem_(dst->data, pdu->seg_offset, full_width,
@@ -223,7 +223,7 @@ static rlc_errno decode_status_header_(const struct rlc_context *ctx,
                 return -ENOTSUP;
         }
 
-        if (ctx->sn_width == RLC_SN_12BIT) {
+        if (ctx->conf->sn_width == RLC_SN_12BIT) {
                 pdu->sn = ((header[0] & 0xf) << 8) | (header[1]);
                 pdu->flags.ext = (header[2] >> 7) & 0x1;
         } else {
@@ -250,7 +250,7 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 
         (void)memset(&pdu->flags, 0, sizeof(pdu->flags));
 
-        sn_size = sn_num_bytes_(ctx->sn_width);
+        sn_size = sn_num_bytes_(ctx->conf->sn_width);
 
         size = rlc_chunks_deepcopy(chunks, header, sizeof(header));
         if (size < sn_size) {
@@ -272,7 +272,7 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
                 from_si_(pdu, (header[0] >> 4) & 0x3);
 
                 if (has_sn_(pdu, ctx->type)) {
-                        if (ctx->sn_width == RLC_SN_12BIT) {
+                        if (ctx->conf->sn_width == RLC_SN_12BIT) {
                                 pdu->sn =
                                         ((header[0] & 0xf) << 8) | (header[1]);
                         } else {
@@ -284,7 +284,7 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
                 from_si_(pdu, (header[0] >> 6) & 0x3);
 
                 if (has_sn_(pdu, ctx->type)) {
-                        if (ctx->sn_width == RLC_SN_6BIT) {
+                        if (ctx->conf->sn_width == RLC_SN_6BIT) {
                                 pdu->sn = header[0] & 0x3f;
                         } else {
                                 pdu->sn =
@@ -313,7 +313,7 @@ size_t rlc_pdu_header_size(const struct rlc_context *ctx,
         switch (ctx->type) {
         case RLC_AM:
         case RLC_UM:
-                return sn_num_bytes_(ctx->sn_width) + (SO_SIZE_ * has_so_(pdu));
+                return sn_num_bytes_(ctx->conf->sn_width) + (SO_SIZE_ * has_so_(pdu));
         case RLC_TM:
                 return 0;
         default:
@@ -331,7 +331,7 @@ void rlc_status_encode(const struct rlc_context *ctx,
         uint8_t ext;
 
         full_width = 0;
-        sn_width = sn_num_bits_(ctx->sn_width);
+        sn_width = sn_num_bits_(ctx->conf->sn_width);
 
         bit_copy_mem_(dst->data, status->nack_sn, full_width, sn_width);
         full_width += sn_width;
@@ -368,7 +368,7 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
         ssize_t size;
         uint8_t ext;
 
-        req_size = sn_num_bytes_(ctx->sn_width);
+        req_size = sn_num_bytes_(ctx->conf->sn_width);
 
         size = rlc_chunks_deepcopy_view(chunks, header, sizeof(header), offset);
         if (size < req_size) {
@@ -379,7 +379,7 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
                 return size;
         }
 
-        if (ctx->sn_width == RLC_SN_12BIT) {
+        if (ctx->conf->sn_width == RLC_SN_12BIT) {
                 status->nack_sn = (header[0] << 4) | ((header[1] >> 4) & 0xf);
 
                 ext = (header[1] >> 1) & 0x7;
@@ -424,7 +424,7 @@ size_t rlc_status_size(const struct rlc_context *ctx,
 {
         size_t ret;
 
-        ret = sn_num_bytes_(ctx->sn_width);
+        ret = sn_num_bytes_(ctx->conf->sn_width);
         if (status->ext.has_offset) {
                 ret += (SO_WIDTH_ / 8) * 2;
         }

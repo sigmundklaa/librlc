@@ -60,6 +60,16 @@ struct rlc_segment {
         uint32_t end;
 };
 
+struct rlc_config {
+        size_t window_size;
+        size_t buffer_size;
+
+        size_t pdu_without_poll_max;
+        size_t byte_without_poll_max;
+
+        enum rlc_sn_width sn_width;
+};
+
 typedef struct rlc_context {
         struct {
                 uint8_t *mem;
@@ -67,10 +77,8 @@ typedef struct rlc_context {
         } workbuf;
 
         enum rlc_sdu_type type;
-        enum rlc_sn_width sn_width;
 
-        size_t window_size;
-        size_t buffer_size;
+        const struct rlc_config *conf;
 
         /* RLC specification state variables */
         union {
@@ -83,6 +91,9 @@ typedef struct rlc_context {
                 struct {
                         uint32_t next;
                         uint32_t next_ack;
+
+                        size_t pdu_without_poll;
+                        size_t byte_without_poll;
                 } tx;
         };
 
@@ -219,7 +230,7 @@ struct rlc_event {
         cur_++
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
-                   size_t window_size, size_t buffer_size,
+                   const struct rlc_config *conf,
                    const struct rlc_methods *methods);
 
 rlc_errno rlc_send(rlc_context *ctx, struct rlc_chunk *chunks);

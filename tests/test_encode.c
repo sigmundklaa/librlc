@@ -5,6 +5,7 @@
 
 #include <rlc/chunks.h>
 #include "encode.h"
+#include "rlc/rlc.h"
 
 void setUp(void)
 {
@@ -17,8 +18,11 @@ void tearDown(void)
 static void test_encode_umd(void)
 {
         rlc_errno status;
-        rlc_context ctx = {
+        struct rlc_config conf = {
                 .sn_width = RLC_SN_6BIT,
+        };
+        rlc_context ctx = {
+                .conf = &conf,
                 .type = RLC_UM,
         };
         struct rlc_pdu pdu = {
@@ -72,7 +76,7 @@ static void test_encode_umd(void)
         (void)memset(expect, 0, sizeof(expect));
 
         /* Test 12 bit SN */
-        ctx.sn_width = RLC_SN_12BIT;
+        conf.sn_width = RLC_SN_12BIT;
         rlc_pdu_encode(&ctx, &pdu, &chunk);
         TEST_ASSERT_EQUAL_size_t(4, chunk.size);
 
@@ -87,9 +91,12 @@ static void test_decode_umd(void)
 {
         rlc_errno status;
         uint8_t buf[4];
-        rlc_context ctx = {
-                .type = RLC_UM,
+        struct rlc_config conf = {
                 .sn_width = RLC_SN_6BIT,
+        };
+        rlc_context ctx = {
+                .conf = &conf,
+                .type = RLC_UM,
         };
         struct rlc_pdu pdu;
         struct rlc_chunk chunks[] = {
@@ -127,7 +134,7 @@ static void test_decode_umd(void)
         TEST_ASSERT_EQUAL_INT(0x5555, pdu.seg_offset);
 
         /* 12bit */
-        ctx.sn_width = RLC_SN_12BIT;
+        conf.sn_width = RLC_SN_12BIT;
         buf[0] = (0b11 << 6) | 0xa;
         buf[1] = 0xaa;
         buf[2] = 0x55;
@@ -142,9 +149,12 @@ static void test_decode_umd(void)
 
 static void test_encode_status(void)
 {
-        rlc_context ctx = {
-                .type = RLC_AM,
+        struct rlc_config conf = {
                 .sn_width = RLC_SN_18BIT,
+        };
+        rlc_context ctx = {
+                .conf = &conf,
+                .type = RLC_AM,
         };
         uint8_t buf[8] = {0};
         ssize_t ret;
@@ -176,9 +186,12 @@ static void test_encode_status(void)
 
 static void test_decode_status(void)
 {
-        rlc_context ctx = {
-                .type = RLC_AM,
+        struct rlc_config conf = {
                 .sn_width = RLC_SN_18BIT,
+        };
+        rlc_context ctx = {
+                .conf = &conf,
+                .type = RLC_AM,
         };
         uint8_t buf[8];
         ssize_t ret;

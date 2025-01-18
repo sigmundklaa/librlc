@@ -41,7 +41,7 @@ static void move_to_(struct ctx *c, const struct rlc_chunk *chunks)
 
 static rlc_errno p1_tx_request(struct rlc_context *ctx)
 {
-        rlc_tx_avail(ctx, 200);
+        // rlc_tx_avail(ctx, 200);
         return 0;
 }
 
@@ -73,6 +73,7 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
 static void p1_event(rlc_context *ctx, const struct rlc_event *event)
 {
         if (event->type == RLC_EVENT_TX_DONE) {
+                sem_post(&ctx1.done);
                 sem_post(&ctx1.done);
         }
 }
@@ -311,6 +312,14 @@ int main(void)
         ctx1.other = &ctx2;
         ctx2.other = &ctx1;
 
+        const struct rlc_config conf = {
+                .window_size = 4,
+                .buffer_size = 5200,
+                .byte_without_poll_max = 200,
+                .pdu_without_poll_max = 5,
+                .sn_width = RLC_SN_12BIT,
+        };
+
         ctx_init(&ctx1);
         ctx_init(&ctx2);
 
@@ -322,14 +331,22 @@ int main(void)
         status = pthread_create(&t2, NULL, worker, &ctx2);
         assert(status == 0);
 
-        status = rlc_init(&ctx1.rlc, RLC_AM, 4, 1280, &p1_methods);
+        status = rlc_init(&ctx1.rlc, RLC_AM, &conf, &p1_methods);
         assert(status == 0);
 
-        status = rlc_init(&ctx2.rlc, RLC_AM, 4, 5200, &p2_methods);
+        status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods);
         assert(status == 0);
 
         status = rlc_send(&ctx1.rlc, chunks);
         assert(status == 0);
+
+        for (;;) {
+                rlc_tx_avail(&ctx1.rlc, 200);
+
+                if (sem_trywait(&ctx1.done) == 0) {
+                        break;
+                }
+        }
 
         (void)printf("Waiting\n");
         pthread_join(t1, NULL);

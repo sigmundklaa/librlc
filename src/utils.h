@@ -17,6 +17,8 @@ RLC_BEGIN_DECL
 #include <unistd.h>
 #include <stdio.h>
 
+#define rlc_mod(x) x
+
 #define rlc_ascii_cmd__(c_)  "\e[" c_ "m"
 #define rlc_color_bold__(c_) rlc_ascii_cmd__("1;" c_)
 #define rlc_color__(c_)      rlc_ascii_cmd__("0;" c_)

@@ -158,13 +158,13 @@ static struct rlc_sdu *sdu_alloc_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
         sdu->dir = dir;
 
         if (sdu->dir == RLC_RX) {
-                sdu->rx_buffer = do_alloc_(ctx, ctx->buffer_size);
+                sdu->rx_buffer = do_alloc_(ctx, ctx->conf->buffer_size);
                 if (sdu->rx_buffer == NULL) {
                         do_dealloc_(ctx, sdu);
                         return NULL;
                 }
 
-                sdu->rx_buffer_size = ctx->buffer_size;
+                sdu->rx_buffer_size = ctx->conf->buffer_size;
         }
 
         return sdu;
@@ -200,16 +200,14 @@ static void prepare_pdu_(const struct rlc_context *ctx, struct rlc_pdu *pdu)
 }
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
-                   size_t window_size, size_t buffer_size,
+                   const struct rlc_config *config,
                    const struct rlc_methods *methods)
 {
         (void)memset(ctx, 0, sizeof(*ctx));
 
         ctx->type = type;
         ctx->methods = methods;
-        ctx->window_size = window_size;
-        ctx->buffer_size = buffer_size;
-        ctx->sn_width = RLC_SN_12BIT;
+        ctx->conf = config;
 
         return 0;
 }
@@ -386,7 +384,7 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
                 return;
         }
 
-        rlc_dbgf("RX AM STATUS; ACK_SN: %" PRIu32, sn);
+        rlc_dbgf("TX AM STATUS; ACK_SN: %" PRIu32, sn);
 
         lastp = &ctx->sdus;
         lowest = ctx->tx.next;
@@ -416,7 +414,7 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
         }
 
         ctx->tx.next_ack = lowest;
-        rlc_dbgf("RX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
+        rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
 }
 
 static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
@@ -437,7 +435,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         while (bytes > 0) {
                 /* register rx_next -> tx_next */
                 /* update nacked of every tx sdu */
-                rlc_dbgf("RX AM STATUS; NACK_SN: %" PRIu32 ", RANGE: %" PRIu32
+                rlc_dbgf("TX AM STATUS; NACK_SN: %" PRIu32 ", RANGE: %" PRIu32
                          "->%" PRIu32,
                          cur.nack_sn, cur.offset.start, cur.offset.end);
                 if (!cur.ext.has_offset) {
@@ -461,7 +459,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
                 status = seg_append_(ctx, sdu, cur.offset);
                 if (status != 0) {
-                        rlc_errf("RX AM STATUS; Unable to append seg "
+                        rlc_errf("TX AM STATUS; Unable to append seg "
                                  "(%" RLC_PRI_ERRNO ")",
                                  status);
                         return;
@@ -474,7 +472,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 
         if (bytes < 0) {
-                rlc_errf("RX AM STATUS; Decode failed: %" RLC_PRI_ERRNO,
+                rlc_errf("TX AM STATUS; Decode failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)bytes);
                 return;
         }
@@ -537,10 +535,11 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 do_rx_done_direct_(ctx, chunks);
 
                 return;
-        } else if (!in_window_(pdu.sn, ctx->rx.next, ctx->window_size)) {
+        } else if (!in_window_(pdu.sn, ctx->rx.next, ctx->conf->window_size)) {
                 rlc_errf("RX; SN %" PRIu32 " outside RX window (%" PRIu32
                          "->%zu), dropping",
-                         pdu.sn, ctx->rx.next, ctx->rx.next + ctx->window_size);
+                         pdu.sn, ctx->rx.next,
+                         ctx->rx.next + ctx->conf->window_size);
                 return;
         }
 
@@ -673,6 +672,27 @@ static bool should_gen_status_(const struct rlc_context *ctx)
         return ctx->gen_status;
 }
 
+/**
+ * @brief Determine if the next PDU for @p sdu should poll
+ *
+ * Returns true if:
+ * - Type == AM and
+ *   - Retransmitted (not the last segment in the list)
+ *
+ * @param ctx Context
+ * @param sdu
+ * @return bool
+ * @retval true Poll
+ * @retval false Don't poll
+ */
+static bool should_poll_(const struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        return ctx->type == RLC_AM &&
+               (sdu->next != NULL ||
+                ctx->tx.pdu_without_poll >= ctx->conf->pdu_without_poll_max ||
+                ctx->tx.byte_without_poll >= ctx->conf->byte_without_poll_max);
+}
+
 static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                        struct rlc_pdu *pdu, size_t size_avail)
 {
@@ -689,7 +709,12 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
                 pdu->sn = sdu->sn;
                 pdu->size = segment->seg.end - segment->seg.start;
-                rlc_assert(pdu->size >= 0);
+                if (pdu->size == 0) {
+                        rlc_assert(ctx->type == RLC_AM);
+
+                        sdu->state = RLC_WAIT;
+                        return false;
+                }
 
                 pdu->seg_offset = segment->seg.start;
                 pdu->flags.is_first = pdu->seg_offset == 0;
@@ -700,18 +725,30 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 /* Segment done */
                 if (segment->seg.start >= segment->seg.end) {
                         /* If last segment, set last flag and go into waiting
-                         * state */
+                         * state. The last segment is kept alive until the
+                         * SDU is deallocated, so that it can be used to
+                         * distuingish between retransmitted PDUs and
+                         * first-time-transmitted PDUs. */
                         if (segment->next == NULL) {
                                 sdu->state = RLC_WAIT;
                                 pdu->flags.is_last = 1;
+                        } else {
+                                sdu->segments = segment->next;
+
+                                do_dealloc_(ctx, segment);
                         }
-
-                        sdu->segments = segment->next;
-
-                        do_dealloc_(ctx, segment);
                 }
 
-                pdu->flags.polled = 1;
+                ctx->tx.pdu_without_poll += 1;
+                ctx->tx.byte_without_poll += pdu->size;
+
+                pdu->flags.polled = should_poll_(ctx, sdu);
+                if (pdu->flags.polled) {
+                        ctx->tx.pdu_without_poll = 0;
+                        ctx->tx.byte_without_poll = 0;
+
+                        rlc_dbgf("TX; Polling %" PRIu32 " for status", pdu->sn);
+                }
 
                 break;
         default:
@@ -760,9 +797,9 @@ static void free_chunks_(struct rlc_context *ctx, struct rlc_chunk *chunks)
         }
 }
 
-static void log_tx_status_(struct rlc_pdu_status *status)
+static void log_rx_status_(struct rlc_pdu_status *status)
 {
-        rlc_dbgf("TX AM STATUS; Detected missing; SN: "
+        rlc_dbgf("RX AM STATUS; Detected missing; SN: "
                  "%" PRIu32 ", RANGE:  %" PRIu32 "->%" PRIu32,
                  status->nack_sn, status->offset.start, status->offset.end);
 }
@@ -832,7 +869,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
                         if (last_status != NULL) {
                                 last_status->ext.has_more = 1;
 
-                                log_tx_status_(last_status);
+                                log_rx_status_(last_status);
 
                                 chunk = encode_status_(ctx, last_status);
                                 if (chunk == NULL) {
@@ -850,7 +887,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         }
 
         if (count > 0) {
-                log_tx_status_(last_status);
+                log_rx_status_(last_status);
 
                 chunk = encode_status_(ctx, last_status);
                 if (chunk == NULL) {
