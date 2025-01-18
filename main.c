@@ -10,30 +10,65 @@
 static FILE *fp;
 #define printf(...) fprintf(fp, ##__VA_ARGS__)
 
-static rlc_errno tx_request(struct rlc_context *ctx)
+static rlc_context ctx1;
+static rlc_context ctx2;
+
+static rlc_errno p1_tx_request(struct rlc_context *ctx)
 {
-        rlc_tx_avail(ctx, 17);
+        rlc_tx_avail(ctx, 200);
         return 0;
 }
 
-static rlc_errno tx_submit(struct rlc_context *ctx,
-                           const struct rlc_chunk *chunks)
+static rlc_errno p1_tx_submit(struct rlc_context *ctx,
+                              const struct rlc_chunk *chunks)
 {
         const struct rlc_chunk *cur;
 
-        (void)printf("Submit\n");
+        (void)printf("p1 Submit\n");
 
         for (rlc_each_node(chunks, cur, next)) {
-                (void)printf("chunk: %zu\n", cur->size);
+                (void)printf("p1 chunk: %zu\n", cur->size);
         }
 
-        rlc_rx_submit(ctx, chunks);
-        rlc_tx_avail(ctx, 45);
+        rlc_rx_submit(&ctx2, chunks);
+        rlc_tx_avail(&ctx2, 200);
+
+        rlc_tx_avail(ctx, 200);
 
         return 0;
 }
 
-static void event(rlc_context *ctx, const struct rlc_event *event)
+static void p1_event(rlc_context *ctx, const struct rlc_event *event)
+{
+        assert(0);
+}
+
+static rlc_errno p2_tx_request(struct rlc_context *ctx)
+{
+        rlc_tx_avail(ctx, 200);
+        return 0;
+}
+
+static rlc_errno p2_tx_submit(struct rlc_context *ctx,
+                              const struct rlc_chunk *chunks)
+{
+        const struct rlc_chunk *cur;
+
+        (void)printf("p2 Submit\n");
+
+        for (rlc_each_node(chunks, cur, next)) {
+                (void)printf("p2 chunk: %zu\n", cur->size);
+        }
+
+        rlc_rx_submit(&ctx1, chunks);
+        rlc_tx_avail(&ctx1, 200);
+
+        rlc_tx_avail(ctx, 200);
+
+        return 0;
+}
+
+static void p2_event(rlc_context *ctx, const struct rlc_event *event)
 {
         if (event->type != RLC_EVENT_RX_DONE) {
                 (void)printf("unknown %i\n", (int)event->type);
@@ -61,10 +96,18 @@ static void mem_dealloc(struct rlc_context *ctx, void *mem)
         free(mem);
 }
 
-static const struct rlc_methods methods = {
-        .tx_request = tx_request,
-        .tx_submit = tx_submit,
-        .event = event,
+static const struct rlc_methods p1_methods = {
+        .tx_request = p1_tx_request,
+        .tx_submit = p1_tx_submit,
+        .event = p1_event,
+        .mem_alloc = mem_alloc,
+        .mem_dealloc = mem_dealloc,
+};
+
+static const struct rlc_methods p2_methods = {
+        .tx_request = p2_tx_request,
+        .tx_submit = p2_tx_submit,
+        .event = p2_event,
         .mem_alloc = mem_alloc,
         .mem_dealloc = mem_dealloc,
 };
@@ -86,7 +129,6 @@ static const struct rlc_methods methods = {
 int main(void)
 {
         rlc_errno status;
-        rlc_context ctx;
         struct rlc_chunk chunks[3] = {
                 {
                         .data = FIRST_STR,
@@ -111,10 +153,13 @@ int main(void)
         link(1, 2);
         (void)printf("chunk size: %zu\n", rlc_chunks_size(chunks));
 
-        status = rlc_init(&ctx, RLC_AM, 4, 1280, &methods);
+        status = rlc_init(&ctx1, RLC_AM, 4, 1280, &p1_methods);
         assert(status == 0);
 
-        status = rlc_send(&ctx, chunks);
+        status = rlc_init(&ctx2, RLC_AM, 4, 1280, &p2_methods);
+        assert(status == 0);
+
+        status = rlc_send(&ctx1, chunks);
         assert(status == 0);
 
         return 0;

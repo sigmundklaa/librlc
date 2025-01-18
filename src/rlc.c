@@ -366,6 +366,8 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         offset = rlc_pdu_header_size(ctx, pdu) - 1;
         rlc_dbgf("RX AM STATUS; ACK_SN: %" PRIu32, pdu->sn);
 
+        /* TODO: remove SNs < ACK_SN */
+
         /* Iterate over every status */
         bytes = rlc_status_decode(ctx, &cur, chunks, offset);
         while (bytes > 0) {
@@ -400,6 +402,8 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                                  status);
                         return;
                 }
+
+                sdu->state = RLC_READY;
 
                 offset += bytes;
                 bytes = rlc_status_decode(ctx, &cur, chunks, offset);
@@ -585,6 +589,8 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 }
 
                 pdu->size = segment->seg.end - segment->seg.start;
+                rlc_assert(pdu->size >= 0);
+
                 pdu->seg_offset = segment->seg.start;
                 pdu->flags.is_first = pdu->seg_offset == 0;
 
@@ -598,11 +604,11 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                         if (segment->next == NULL) {
                                 sdu->state = RLC_WAIT;
                                 pdu->flags.is_last = 1;
-                        } else {
-                                sdu->segments = segment->next;
-
-                                do_dealloc_(ctx, segment);
                         }
+
+                        sdu->segments = segment->next;
+
+                        do_dealloc_(ctx, segment);
                 }
 
                 pdu->flags.polled = 1;
