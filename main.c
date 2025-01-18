@@ -24,6 +24,13 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
 {
         const struct rlc_chunk *cur;
 
+        static int i = 0;
+        i = (i + 1) % 3;
+        if (i == 2) {
+                (void)printf("p1 dropping\n");
+                return 0;
+        }
+
         (void)printf("p1 Submit\n");
 
         for (rlc_each_node(chunks, cur, next)) {

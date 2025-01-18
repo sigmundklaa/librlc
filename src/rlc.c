@@ -445,13 +445,6 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 return;
         }
 
-        static int i = 0;
-        i = (i + 1) % 5;
-        if (i == 4) {
-                rlc_inff("DROPPING");
-                return;
-        }
-
         /* Find assigned sdu */
         for (rlc_each_node(ctx->sdus, sdu, next)) {
                 if (sdu->dir == RLC_RX && sdu->sn == pdu.sn) {
