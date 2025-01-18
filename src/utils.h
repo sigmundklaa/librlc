@@ -16,7 +16,27 @@ RLC_BEGIN_DECL
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
-#define rlc_errf(fmt_, ...) (void)fprintf(stderr, fmt_ "\n", ##__VA_ARGS__)
+
+#define rlc_ascii_cmd__(c_)  "\e[" c_ "m"
+#define rlc_color_bold__(c_) rlc_ascii_cmd__("1;" c_)
+#define rlc_color__(c_)      rlc_ascii_cmd__("0;" c_)
+#define rlc_color_red__      rlc_color_bold__("31")
+#define rlc_color_yellow__   rlc_color_bold__("33")
+#define rlc_color_cyan__     rlc_color_bold__("36")
+#define rlc_ascii_reset__    rlc_ascii_cmd__("0")
+
+#define rlc_logf__(lvl_, color_, fmt_, ...)                                    \
+        (void)printf("[" color_ lvl_ rlc_ascii_reset__ "]: " fmt_ "\n",        \
+                     ##__VA_ARGS__)
+
+#define rlc_dbgf(fmt_, ...)                                                    \
+        rlc_logf__("DBG", rlc_color_yellow__, fmt_, ##__VA_ARGS__)
+#define rlc_inff(fmt_, ...)                                                    \
+        rlc_logf__("INF", rlc_color_cyan__, fmt_, ##__VA_ARGS__)
+#define rlc_wrnf(fmt_, ...)                                                    \
+        rlc_logf__("WRN", rlc_color_yellow__, fmt_, ##__VA_ARGS__)
+#define rlc_errf(fmt_, ...)                                                    \
+        rlc_logf__("ERR", rlc_color_red__, fmt_, ##__VA_ARGS__)
 
 static inline const void *rlc_voidptr_offset(const void *base, size_t offset)
 {

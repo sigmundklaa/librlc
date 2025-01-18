@@ -4,6 +4,11 @@
 #include <stdlib.h>
 #include <rlc/rlc.h>
 #include <rlc/chunks.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+static FILE *fp;
+#define printf(...) fprintf(fp, ##__VA_ARGS__)
 
 static rlc_errno tx_request(struct rlc_context *ctx)
 {
@@ -96,6 +101,9 @@ int main(void)
                         .size = sizeof(THIRD_STR) - 1,
                 },
         };
+
+        fp = fopen("main.txt", "ww++");
+        assert(fp != NULL);
 
 #define link(l_, r_) chunks[l_].next = &chunks[r_]
 

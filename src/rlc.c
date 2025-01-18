@@ -3,6 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <inttypes.h>
 
 #include <rlc/rlc.h>
 #include <rlc/chunks.h>
@@ -303,6 +304,9 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
         seg.start = 0;
         seg.end = rlc_chunks_size(chunks);
 
+        rlc_inff("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
+                 sdu->sn, seg.start, seg.end);
+
         status = seg_append_(ctx, sdu, seg);
         if (status != 0) {
                 return status;
@@ -360,15 +364,16 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         struct rlc_sdu *sdu;
 
         offset = rlc_pdu_header_size(ctx, pdu) - 1;
-        rlc_errf("Status: %i", pdu->sn);
+        rlc_dbgf("RX AM STATUS; ACK_SN: %" PRIu32, pdu->sn);
 
         /* Iterate over every status */
         bytes = rlc_status_decode(ctx, &cur, chunks, offset);
         while (bytes > 0) {
                 /* register rx_next -> tx_next */
                 /* update nacked of every tx sdu */
-                rlc_errf("%u->%u (%u)", cur.offset.start, cur.offset.end,
-                         cur.nack_sn);
+                rlc_dbgf("RX AM STATUS; NACK_SN: %" PRIu32 ", RANGE: %" PRIu32
+                         "->%" PRIu32,
+                         cur.nack_sn, cur.offset.start, cur.offset.end);
                 if (!cur.ext.has_offset) {
                         continue;
                 }
@@ -390,7 +395,9 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
                 status = seg_append_(ctx, sdu, cur.offset);
                 if (status != 0) {
-                        rlc_errf("Unable to append seg");
+                        rlc_errf("RX AM STATUS; Unable to append seg "
+                                 "(%" RLC_PRI_ERRNO ")",
+                                 status);
                         return;
                 }
 
@@ -399,7 +406,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 
         if (bytes < 0) {
-                rlc_errf("Status decode failed: %" RLC_PRI_ERRNO,
+                rlc_errf("RX AM STATUS; Decode failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)bytes);
                 return;
         }
@@ -437,7 +444,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         static int i = 0;
         i = (i + 1) % 5;
         if (i == 4) {
-                rlc_errf("DROPPING");
+                rlc_inff("DROPPING");
                 return;
         }
 
@@ -450,13 +457,15 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         if (sdu == NULL) {
                 if (!pdu.flags.is_first) {
-                        rlc_errf("Unrecognized SN; dropping");
+                        rlc_errf("RX; Unrecognized SN %" PRIu32 ", dropping",
+                                 pdu.sn);
                         return;
                 }
 
                 sdu = sdu_alloc_(ctx, RLC_RX);
                 if (sdu == NULL) {
-                        rlc_errf("SDU alloc failed");
+                        rlc_errf("RX; SDU alloc failed (%" RLC_PRI_ERRNO ")",
+                                 -ENOMEM);
                         return;
                 }
 
@@ -467,12 +476,13 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         }
 
         if (sdu->state != RLC_READY) {
-                rlc_errf("Received when non-ready; discarding");
+                rlc_errf("RX; Received when not ready, discarding");
                 return;
         }
 
         if (!pdu.flags.is_first && pdu.seg_offset >= sdu->rx_buffer_size) {
-                rlc_errf("Out of bounds: %i", (int)pdu.seg_offset);
+                rlc_errf("RX; Offset out of bounds: %" PRIu32 ">%zu",
+                         pdu.seg_offset, sdu->rx_buffer_size);
                 return;
         }
 
@@ -483,7 +493,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 chunks, (uint8_t *)sdu->rx_buffer + pdu.seg_offset,
                 sdu->rx_buffer_size - pdu.seg_offset, header_size);
         if (status <= 0) {
-                rlc_errf("Chunk deepcopy failed: %" RLC_PRI_ERRNO,
+                rlc_errf("RX; Unable to flatten chunks: (%" RLC_PRI_ERRNO ")",
                          (rlc_errno)status);
                 return;
         }
@@ -496,7 +506,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                                             header_size,
                              });
         if (status != 0) {
-                rlc_errf("Seg append failed");
+                rlc_errf("RX; Unable to append segment (%" RLC_PRI_ERRNO ")",
+                         (rlc_errno)status);
                 return;
         }
 
@@ -643,6 +654,13 @@ static void free_chunks_(struct rlc_context *ctx, struct rlc_chunk *chunks)
         }
 }
 
+static void log_tx_status_(struct rlc_pdu_status *status)
+{
+        rlc_dbgf("TX AM STATUS; Detected missing; SN: "
+                 "%" PRIu32 ", RANGE:  %" PRIu32 "->%" PRIu32,
+                 status->nack_sn, status->offset.start, status->offset.end);
+}
+
 static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 {
         ssize_t ret;
@@ -708,6 +726,8 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
                         if (last_status != NULL) {
                                 last_status->ext.has_more = 1;
 
+                                log_tx_status_(last_status);
+
                                 chunk = encode_status_(ctx, last_status);
                                 if (chunk == NULL) {
                                         ret = -ENOMEM;
@@ -724,6 +744,8 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         }
 
         if (count > 0) {
+                log_tx_status_(last_status);
+
                 chunk = encode_status_(ctx, last_status);
                 if (chunk == NULL) {
                         ret = -ENOMEM;
@@ -772,6 +794,10 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 }
 
                 pdu.sn = cur->sn;
+
+                rlc_dbgf("TX PDU; SN: %" PRIu32 ", range: %" PRIu32 "->"
+                         "%zu",
+                         pdu.sn, pdu.seg_offset, pdu.seg_offset + pdu.size);
 
                 ret = tx_pdu_view_(ctx, &pdu, cur->chunks, size);
                 if (ret <= 0) {
