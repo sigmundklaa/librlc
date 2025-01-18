@@ -21,6 +21,7 @@ RLC_BEGIN_DECL
 #define rlc_color_bold__(c_) rlc_ascii_cmd__("1;" c_)
 #define rlc_color__(c_)      rlc_ascii_cmd__("0;" c_)
 #define rlc_color_red__      rlc_color_bold__("31")
+#define rlc_color_green__    rlc_color_bold__("32")
 #define rlc_color_yellow__   rlc_color_bold__("33")
 #define rlc_color_cyan__     rlc_color_bold__("36")
 #define rlc_ascii_reset__    rlc_ascii_cmd__("0")
@@ -30,9 +31,9 @@ RLC_BEGIN_DECL
                      ##__VA_ARGS__)
 
 #define rlc_dbgf(fmt_, ...)                                                    \
-        rlc_logf__("DBG", rlc_color_yellow__, fmt_, ##__VA_ARGS__)
+        rlc_logf__("DBG", rlc_color_cyan__, fmt_, ##__VA_ARGS__)
 #define rlc_inff(fmt_, ...)                                                    \
-        rlc_logf__("INF", rlc_color_cyan__, fmt_, ##__VA_ARGS__)
+        rlc_logf__("INF", rlc_color_green__, fmt_, ##__VA_ARGS__)
 #define rlc_wrnf(fmt_, ...)                                                    \
         rlc_logf__("WRN", rlc_color_yellow__, fmt_, ##__VA_ARGS__)
 #define rlc_errf(fmt_, ...)                                                    \

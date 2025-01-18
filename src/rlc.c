@@ -776,7 +776,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         struct rlc_pdu pdu;
         struct rlc_sdu *cur;
 
-        if (should_gen_status_(ctx)) {
+        if (ctx->type == RLC_AM && should_gen_status_(ctx)) {
                 (void)gen_status_(ctx, size);
                 return;
         }
