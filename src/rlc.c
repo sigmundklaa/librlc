@@ -140,7 +140,7 @@ static void remove_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu)
                         break;
                 }
 
-                lastp = &(*lastp)->next;
+                lastp = &sdu->next;
         }
 }
 
@@ -182,7 +182,15 @@ static void sdu_dealloc_rx_buffer_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 
 static void sdu_dealloc_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
+        struct rlc_sdu_segment *seg;
+
         sdu_dealloc_rx_buffer_(ctx, sdu);
+
+        for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments, seg,
+                                next)) {
+                do_dealloc_(ctx, seg);
+        }
+
         do_dealloc_(ctx, sdu);
 }
 
@@ -297,7 +305,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
 
         sdu->dir = RLC_TX;
         sdu->chunks = chunks;
-        sdu->sn = ctx->tx_next++;
+        sdu->sn = ctx->tx.next++;
 
         append_sdu_(ctx, sdu);
 
@@ -330,6 +338,9 @@ static void do_rx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         struct rlc_event event;
 
+        rlc_inff("RX; SDU %" PRIu32 " received (%" PRIu32 "B)", sdu->sn,
+                 sdu->segments->seg.end);
+
         event.type = RLC_EVENT_RX_DONE;
         event.data.rx_done.data = sdu->rx_buffer;
         event.data.rx_done.size = sdu->segments->seg.end;
@@ -337,21 +348,62 @@ static void do_rx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
         do_event_(ctx, &event);
 }
 
-static size_t tx_size_(struct rlc_sdu *sdu)
+static void do_tx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
-        size_t size;
-        struct rlc_sdu_segment *cur;
-        struct rlc_sdu_segment *last;
+        struct rlc_event event;
 
-        size = 0;
-        last = NULL;
+        rlc_inff("TX; SDU %" PRIu32 " transmitted (%zuB)", sdu->sn,
+                 rlc_chunks_size(sdu->chunks));
 
-        for (rlc_each_node(sdu->segments, cur, next)) {
-                last = cur;
+        event.type = RLC_EVENT_TX_DONE;
+        event.data.tx_done = sdu->chunks;
+
+        do_event_(ctx, &event);
+}
+
+static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
+{
+        struct rlc_sdu *sdu;
+        struct rlc_sdu *next;
+        struct rlc_sdu **lastp;
+        struct rlc_sdu **tmp;
+        uint32_t lowest;
+
+        if (ctx->tx.next_ack >= sn) {
+                return;
         }
 
-        rlc_assert(last != NULL);
-        return last->seg.end;
+        rlc_dbgf("RX AM STATUS; ACK_SN: %" PRIu32, sn);
+
+        lastp = &ctx->sdus;
+        lowest = ctx->tx.next;
+        next = NULL;
+
+        for (sdu = ctx->sdus; sdu != NULL; sdu = next) {
+                /* Can't do standard iteration since the SDU can be deallocated
+                 * while iterating, so attempting to access sdu->next would be
+                 * undefined behaviour after that. */
+                next = sdu->next;
+
+                if (sdu->dir == RLC_TX) {
+                        if (sdu->sn < sn) {
+                                do_tx_done_(ctx, sdu);
+                                sdu_dealloc_(ctx, sdu);
+
+                                *lastp = next;
+
+                                continue;
+                        } else if (sdu->sn < lowest) {
+                                /* Set to the lowest non-acked SN */
+                                lowest = sdu->sn;
+                        }
+                }
+
+                lastp = &sdu->next;
+        }
+
+        ctx->tx.next_ack = lowest;
+        rlc_dbgf("RX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
 }
 
 static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
@@ -364,9 +416,8 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         struct rlc_sdu *sdu;
 
         offset = rlc_pdu_header_size(ctx, pdu) - 1;
-        rlc_dbgf("RX AM STATUS; ACK_SN: %" PRIu32, pdu->sn);
 
-        /* TODO: remove SNs < ACK_SN */
+        am_tx_next_ack_update_(ctx, pdu->sn);
 
         /* Iterate over every status */
         bytes = rlc_status_decode(ctx, &cur, chunks, offset);
@@ -392,7 +443,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
 
                 if (cur.offset.end == RLC_STATUS_SO_MAX) {
-                        cur.offset.end = tx_size_(sdu);
+                        cur.offset.end = rlc_chunks_size(sdu->chunks);
                 }
 
                 status = seg_append_(ctx, sdu, cur.offset);
@@ -768,13 +819,14 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         const void *data;
         struct rlc_pdu pdu;
         struct rlc_sdu *cur;
+        struct rlc_sdu *tmp;
 
         if (ctx->type == RLC_AM && should_gen_status_(ctx)) {
                 (void)gen_status_(ctx, size);
                 return;
         }
 
-        for (rlc_each_node(ctx->sdus, cur, next)) {
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, cur, next)) {
                 if (cur->dir != RLC_TX) {
                         continue;
                 }

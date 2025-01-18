@@ -73,9 +73,18 @@ typedef struct rlc_context {
         size_t buffer_size;
 
         /* RLC specification state variables */
-        uint32_t tx_next;
         uint32_t rx_next;
         uint32_t rx_next_highest;
+
+        union {
+                struct {
+                        uint32_t next_highest;
+                } rx;
+                struct {
+                        uint32_t next;
+                        uint32_t next_ack;
+                } tx;
+        };
 
         /* Generate status PDU on next available opportunity. AM only*/
         bool gen_status;
@@ -163,10 +172,13 @@ struct rlc_event {
         enum rlc_event_type {
                 RLC_EVENT_RX_DONE,
                 RLC_EVENT_RX_FAIL,
+
+                RLC_EVENT_TX_DONE,
         } type;
 
         union {
                 struct rlc_chunk rx_done;
+                struct rlc_chunk *tx_done;
         } data;
 };
 
@@ -174,6 +186,32 @@ struct rlc_event {
         tptr_ = start_;                                                        \
         tptr_ != NULL;                                                         \
         tptr_ = tptr_->prop_name_
+
+#define rlc_concat3__(x, y, z) x##y##z
+#define rlc_ens_safe__(name_)  rlc_concat3__(rlc_ens_, name_, __LINE__)
+
+/**
+ * @brief Iterate over each node in a linked list, ensuring that it is still
+ * safe to iterate even if the current node is removed from the list during
+ * iteration.
+ *
+ * To do this two temporary variables are used during the iteration, which
+ * requires the caller to pass @p type_ in as an argument
+ *
+ * @param type_ Type of item being iterated over
+ * @param start_ Head of linked list
+ * @param tptr_ Target pointer; pointer holding the current item
+ * @param prop_name_ Property name of the next entry in @p type_
+ */
+#define rlc_each_node_safe(type_, start_, tptr_, prop_name_)                   \
+        type_ *rlc_ens_safe__(cur__) = start_,                                 \
+              *rlc_ens_safe__(next__) =                                        \
+                      start_ == NULL ? NULL : start_->prop_name_;              \
+        (tptr_ = rlc_ens_safe__(cur__)) != NULL;                               \
+        rlc_ens_safe__(cur__) = rlc_ens_safe__(next__),                        \
+        rlc_ens_safe__(next__) = rlc_ens_safe__(next__) == NULL                \
+                                         ? NULL                                \
+                                         : rlc_ens_safe__(next__)->prop_name_
 
 #define rlc_each_item(arr_, cur_, len_)                                        \
         cur_ = &arr_[0];                                                       \
