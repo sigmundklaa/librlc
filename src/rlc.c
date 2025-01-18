@@ -304,7 +304,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
         seg.start = 0;
         seg.end = rlc_chunks_size(chunks);
 
-        rlc_inff("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
+        rlc_dbgf("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
                  sdu->sn, seg.start, seg.end);
 
         status = seg_append_(ctx, sdu, seg);
@@ -559,14 +559,6 @@ static bool should_gen_status_(const struct rlc_context *ctx)
         return ctx->gen_status;
 }
 
-static ssize_t tx_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                       struct rlc_pdu *pdu, size_t max_size)
-{
-        pdu->sn = sdu->sn;
-
-        return do_tx_submit_(ctx, pdu, sdu->chunks, max_size);
-}
-
 static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                        struct rlc_pdu *pdu, size_t size_avail)
 {
@@ -581,6 +573,7 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                         break;
                 }
 
+                pdu->sn = sdu->sn;
                 pdu->size = segment->seg.end - segment->seg.start;
                 rlc_assert(pdu->size >= 0);
 
@@ -791,8 +784,6 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 if (!serve_sdu_(ctx, cur, &pdu, size)) {
                         continue;
                 }
-
-                pdu.sn = cur->sn;
 
                 rlc_dbgf("TX PDU; SN: %" PRIu32 ", range: %" PRIu32 "->"
                          "%zu",
