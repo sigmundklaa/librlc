@@ -401,18 +401,13 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
         lowest = ctx->tx.next;
         next = NULL;
 
-        for (sdu = ctx->sdus; sdu != NULL; sdu = next) {
-                /* Can't do standard iteration since the SDU can be deallocated
-                 * while iterating, so attempting to access sdu->next would be
-                 * undefined behaviour after that. */
-                next = sdu->next;
-
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir == RLC_TX) {
                         if (sdu->sn < sn) {
+                                *lastp = sdu->next;
+
                                 do_tx_done_(ctx, sdu);
                                 sdu_dealloc_(ctx, sdu);
-
-                                *lastp = next;
 
                                 continue;
                         } else if (sdu->sn < lowest) {
@@ -956,7 +951,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 return;
         }
 
-        for (rlc_each_node(ctx->sdus, cur, next)) {
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, cur, next)) {
                 if (cur->dir != RLC_TX) {
                         continue;
                 }
@@ -977,7 +972,11 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                                  (rlc_errno)ret);
                 }
 
-                break;
+                if (ctx->type != RLC_AM && pdu.flags.is_last) {
+                        do_tx_done_(ctx, cur);
+                        remove_sdu_(ctx, cur);
+                        do_dealloc_(ctx, cur);
+                }
 
                 size -= ret;
                 if (size == 0) {
