@@ -7,6 +7,8 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
+#include <rlc/plat.h>
+
 #ifdef __cplusplus
 #define RLC_BEGIN_DECL extern "C" {
 #define RLC_END_DECL   }
@@ -96,6 +98,8 @@ typedef struct rlc_context {
                         size_t byte_without_poll;
                 } tx;
         };
+
+        rlc_lock lock;
 
         /* Generate status PDU on next available opportunity. AM only*/
         bool gen_status;
@@ -238,6 +242,26 @@ rlc_errno rlc_send(rlc_context *ctx, struct rlc_chunk *chunks);
 void rlc_tx_avail(struct rlc_context *ctx, size_t size);
 
 void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks);
+
+static inline void rlc_lock_init(rlc_lock *lock)
+{
+        rlc_plat_lock_init(lock);
+}
+
+static inline void rlc_lock_deinit(rlc_lock *lock)
+{
+        rlc_plat_lock_deinit(lock);
+}
+
+static inline void rlc_lock_acquire(rlc_lock *lock)
+{
+        rlc_plat_lock_acquire(lock);
+}
+
+static inline void rlc_lock_release(rlc_lock *lock)
+{
+        rlc_plat_lock_release(lock);
+}
 
 RLC_END_DECL
 

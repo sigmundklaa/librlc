@@ -5,6 +5,7 @@
 #include <rlc/rlc.h>
 #include <rlc/chunks.h>
 #include <fcntl.h>
+#include <string.h>
 #include <unistd.h>
 #include <semaphore.h>
 #include <pthread.h>
@@ -27,6 +28,9 @@ struct ctx {
 
 static struct ctx ctx1;
 static struct ctx ctx2;
+
+static uint8_t correct_[6000];
+static uint8_t received_[6000];
 
 static void move_to_(struct ctx *c, const struct rlc_chunk *chunks)
 {
@@ -52,10 +56,9 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
         int status;
 
         static int i = 0;
-        i = (i + 1) % 7;
-        if (false && i == 6) {
+        i = (i + 1) % 11;
+        if (i == 4 && rlc_chunks_size(chunks) >= 20) {
                 (void)printf("p1 dropping\n");
-                rlc_tx_avail(&ctx2.rlc, 200);
                 return 0;
         }
 
@@ -106,7 +109,7 @@ static void *worker(void *c_arg)
 
 static rlc_errno p2_tx_request(struct rlc_context *ctx)
 {
-        rlc_tx_avail(ctx, 200);
+        // rlc_tx_avail(ctx, 200);
         return 0;
 }
 
@@ -140,6 +143,11 @@ static void p2_event(rlc_context *ctx, const struct rlc_event *event)
                 (void)printf("%c", c);
         }
         (void)printf("\n");
+
+        ssize_t sz = rlc_chunks_deepcopy(&event->data.rx_done, received_,
+                                         sizeof(received_));
+        assert(sz > 0 && memcmp(correct_, received_, sz) == 0);
+        (void)printf("Done\n");
 
         sem_post(&ctx2.done);
 }
@@ -312,11 +320,14 @@ int main(void)
         ctx1.other = &ctx2;
         ctx2.other = &ctx1;
 
+        ssize_t size = rlc_chunks_deepcopy(chunks, correct_, sizeof(correct_));
+        assert(size == (ssize_t)rlc_chunks_size(chunks));
+
         const struct rlc_config conf = {
-                .window_size = 4,
+                .window_size = 40,
                 .buffer_size = 5200,
-                .byte_without_poll_max = 200,
-                .pdu_without_poll_max = 5,
+                .byte_without_poll_max = 1500,
+                .pdu_without_poll_max = 50,
                 .sn_width = RLC_SN_12BIT,
         };
 
@@ -342,13 +353,13 @@ int main(void)
 
         for (;;) {
                 rlc_tx_avail(&ctx1.rlc, 200);
+                rlc_tx_avail(&ctx2.rlc, 200);
 
                 if (sem_trywait(&ctx1.done) == 0) {
                         break;
                 }
         }
 
-        (void)printf("Waiting\n");
         pthread_join(t1, NULL);
         pthread_join(t2, NULL);
 

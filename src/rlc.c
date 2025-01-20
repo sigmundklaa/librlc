@@ -6,6 +6,7 @@
 #include <inttypes.h>
 
 #include <rlc/rlc.h>
+#include <rlc/plat.h>
 #include <rlc/chunks.h>
 
 #include "utils.h"
@@ -209,6 +210,8 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         ctx->methods = methods;
         ctx->conf = config;
 
+        rlc_lock_init(&ctx->lock);
+
         return 0;
 }
 
@@ -250,12 +253,16 @@ static rlc_errno seg_append_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 /* If not overlapping to the left, but the offset is higher than
                  * that of the segment to the left */
                 if (seg.start > cur->seg.end) {
-                        /* Overlap to the right, merge */
-                        if (next != NULL && seg.end >= next->seg.start) {
-                                cur = next;
-                                seg.end = next->seg.end;
+                        if (next != NULL) {
+                                if (seg.start >= next->seg.end) {
+                                        continue;
+                                } else if (seg.end >= next->seg.start) {
+                                        /* Overlap to the right, merge */
+                                        cur = next;
+                                        seg.end = next->seg.end;
 
-                                goto entry_found;
+                                        goto entry_found;
+                                }
                         }
 
                         /* Otherwise create a new entry and insert it */
@@ -305,6 +312,8 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
         sdu->chunks = chunks;
         sdu->sn = ctx->tx.next++;
 
+        rlc_lock_acquire(&ctx->lock);
+
         append_sdu_(ctx, sdu);
 
         seg.start = 0;
@@ -317,6 +326,8 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
         if (status != 0) {
                 return status;
         }
+
+        rlc_lock_release(&ctx->lock);
 
         return do_tx_request_(ctx);
 }
@@ -519,28 +530,30 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
 
+        rlc_lock_acquire(&ctx->lock);
+
         status = rlc_pdu_decode(ctx, &pdu, chunks);
         if (status != 0) {
-                return;
+                goto exit;
         }
 
         if (pdu.flags.is_status) {
                 process_status_(ctx, &pdu, chunks);
 
                 (void)do_tx_request_(ctx);
-                return;
+                goto exit;
         }
 
         if (ctx->type == RLC_TM || (pdu.flags.is_first && pdu.flags.is_last)) {
                 do_rx_done_direct_(ctx, chunks);
 
-                return;
+                goto exit;
         } else if (!in_window_(pdu.sn, ctx->rx.next, ctx->conf->window_size)) {
                 rlc_errf("RX; SN %" PRIu32 " outside RX window (%" PRIu32
                          "->%zu), dropping",
                          pdu.sn, ctx->rx.next,
                          ctx->rx.next + ctx->conf->window_size);
-                return;
+                goto exit;
         }
 
         /* Find assigned sdu */
@@ -554,14 +567,14 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 if (!pdu.flags.is_first) {
                         rlc_errf("RX; Unrecognized SN %" PRIu32 ", dropping",
                                  pdu.sn);
-                        return;
+                        goto exit;
                 }
 
                 sdu = sdu_alloc_(ctx, RLC_RX);
                 if (sdu == NULL) {
                         rlc_errf("RX; SDU alloc failed (%" RLC_PRI_ERRNO ")",
                                  -ENOMEM);
-                        return;
+                        goto exit;
                 }
 
                 sdu->state = RLC_READY;
@@ -572,16 +585,20 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         if (sdu->state != RLC_READY) {
                 rlc_errf("RX; Received when not ready, discarding");
-                return;
+                goto exit;
         }
 
         if (pdu.seg_offset >= sdu->rx_buffer_size) {
                 rlc_errf("RX; Offset out of bounds: %" PRIu32 ">%zu",
                          pdu.seg_offset, sdu->rx_buffer_size);
-                return;
+                goto exit;
         }
 
         header_size = rlc_pdu_header_size(ctx, &pdu);
+
+        rlc_dbgf("RX; SN: %" PRIu32 ", RANGE: %" PRIu32 "->%zu", pdu.sn,
+                 pdu.seg_offset,
+                 pdu.seg_offset + rlc_chunks_size(chunks) - header_size);
 
         /* Copy the contents of the chunks, skipping the header content */
         status = rlc_chunks_deepcopy_view(
@@ -590,7 +607,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         if (status <= 0) {
                 rlc_errf("RX; Unable to flatten chunks: (%" RLC_PRI_ERRNO ")",
                          (rlc_errno)status);
-                return;
+                goto exit;
         }
 
         status = seg_append_(ctx, sdu,
@@ -603,7 +620,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         if (status != 0) {
                 rlc_errf("RX; Unable to append segment (%" RLC_PRI_ERRNO ")",
                          (rlc_errno)status);
-                return;
+                goto exit;
         }
 
         if (pdu.flags.is_last) {
@@ -645,6 +662,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         }
 
         (void)do_tx_request_(ctx);
+
+exit:
+        rlc_lock_release(&ctx->lock);
 }
 
 static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
@@ -678,6 +698,9 @@ static bool should_gen_status_(const struct rlc_context *ctx)
  * Returns true if:
  * - Type == AM and
  *   - Retransmitted (not the last segment in the list)
+ *   - Bytes without poll exceeded threshhold
+ *   - PDU without poll exceeded threshhold
+ *   - Last segment
  *
  * @param ctx Context
  * @param sdu
@@ -690,7 +713,9 @@ static bool should_poll_(const struct rlc_context *ctx, struct rlc_sdu *sdu)
         return ctx->type == RLC_AM &&
                (sdu->next != NULL ||
                 ctx->tx.pdu_without_poll >= ctx->conf->pdu_without_poll_max ||
-                ctx->tx.byte_without_poll >= ctx->conf->byte_without_poll_max);
+                ctx->tx.byte_without_poll >= ctx->conf->byte_without_poll_max ||
+                (sdu->segments->next == NULL &&
+                 sdu->segments->seg.start >= sdu->segments->seg.end));
 }
 
 static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
@@ -746,6 +771,8 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 if (pdu->flags.polled) {
                         ctx->tx.pdu_without_poll = 0;
                         ctx->tx.byte_without_poll = 0;
+
+                        sdu->state = RLC_WAIT;
 
                         rlc_dbgf("TX; Polling %" PRIu32 " for status", pdu->sn);
                 }
@@ -921,8 +948,11 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         struct rlc_sdu *cur;
         struct rlc_sdu *tmp;
 
+        rlc_lock_acquire(&ctx->lock);
+
         if (ctx->type == RLC_AM && should_gen_status_(ctx)) {
                 (void)gen_status_(ctx, size);
+                rlc_lock_release(&ctx->lock);
                 return;
         }
 
@@ -945,12 +975,15 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 if (ret <= 0) {
                         rlc_errf("PDU submit failed: error %" RLC_PRI_ERRNO,
                                  (rlc_errno)ret);
-                        return;
                 }
+
+                break;
 
                 size -= ret;
                 if (size == 0) {
                         break;
                 }
         }
+
+        rlc_lock_release(&ctx->lock);
 }

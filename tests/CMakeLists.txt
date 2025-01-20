@@ -3,15 +3,29 @@ add_custom_target(tests)
 
 find_package(unity REQUIRED)
 
+function(remove_sources target)
+    set_source_files_properties(
+        ${ARGN}
+        TARGET_DIRECTORY
+            ${target}
+        PROPERTIES
+            HEADER_FILE_ONLY ON
+    )
+endfunction()
+
+
 function(add_test src_file)
     string(REPLACE . _ test_name_suffix ${src_file})
     set(test_name test-${test_name_suffix})
 
+    cmake_parse_arguments(ADD_TEST "" "" "REPLACE" ${ARGN})
+
     add_executable(${test_name} ${src_file})
     target_link_libraries(
         ${test_name}
+        PUBLIC
+            rlc
         PRIVATE
-            librlc
             unity
     )
     target_include_directories(
@@ -19,6 +33,16 @@ function(add_test src_file)
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../src
     )
+
+    if(ADD_TEST_REPLACE)
+        list(
+            TRANSFORM
+                ADD_TEST_REPLACE
+            PREPEND
+                ${CMAKE_CURRENT_SOURCE_DIR}/../src/
+        )
+        remove_sources(${test_name} ${ADD_TEST_REPLACE})
+    endif()
 
     set_property(
         TARGET
@@ -45,3 +69,5 @@ add_custom_target(
 
 add_test(test_chunks.c)
 add_test(test_encode.c)
+
+add_test(test_rlc.c REPLACE rlc.c)
