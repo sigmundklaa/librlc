@@ -131,6 +131,7 @@ static void *worker_(void *arg)
                 pfd = &((struct pollfd *)pfds.mem)[0];
                 if (pfd->revents & POLLIN) {
                         /* Reset set of fds being watched */
+                        rlc_dbgf("Timer thread reloaded");
                         (void)read(pfd->fd, &dummy, sizeof(dummy));
 
                         rlc_lock_release(&lock_);
@@ -141,6 +142,7 @@ static void *worker_(void *arg)
                         pfd = &((struct pollfd *)pfds.mem)[i];
 
                         if (pfd->revents & POLLIN) {
+                                rlc_dbgf("Timer alarm");
                                 (void)read(pfd->fd, &dummy, sizeof(dummy));
 
                                 rlc_lock_release(&lock_);
@@ -226,6 +228,8 @@ static void trigger_reset_(void)
 
         size = write(event_fd_, &dumb, sizeof(dumb));
         rlc_assert(size == sizeof(dumb));
+
+        rlc_dbgf("Triggering reset");
 }
 
 void rlc_linux_timer_api_init(void)
@@ -243,6 +247,7 @@ void rlc_linux_timer_api_init(void)
         status = pthread_create(&thread_h_, NULL, worker_, NULL);
         if (status != 0) {
                 rlc_panicf(status, "Unable to create thread");
+                return;
         }
 }
 
