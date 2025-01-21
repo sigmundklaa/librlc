@@ -6,7 +6,3 @@ target_sources(
         chunk.c
         encode.c
 )
-
-add_subdirectory(plat)
-
-target_link_libraries(rlc INTERFACE librlc-linux)

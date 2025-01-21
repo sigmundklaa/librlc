@@ -4,8 +4,7 @@
 
 #include <rlc/rlc.h>
 #include <rlc/chunks.h>
-
-#include "utils.h"
+#include <rlc/utils.h>
 
 size_t rlc_chunks_size(const struct rlc_chunk *chunks)
 {

@@ -3,6 +3,7 @@
 #define RLC_CHUNKS_H__
 
 #include <rlc/rlc.h>
+#include <rlc/utils.h>
 
 size_t rlc_chunks_size(const struct rlc_chunk *chunks);
 

@@ -4,9 +4,9 @@
 #include <errno.h>
 
 #include <rlc/chunks.h>
+#include <rlc/utils.h>
 
 #include "encode.h"
-#include "utils.h"
 
 #define SO_WIDTH_ (16)
 #define SO_SIZE_  (SO_WIDTH_ / 8)

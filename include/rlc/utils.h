@@ -4,18 +4,29 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <inttypes.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <stdio.h>
 
-#include <rlc/rlc.h>
+#ifdef __cplusplus
+#define RLC_BEGIN_DECL extern "C" {
+#define RLC_END_DECL   }
+#else
+#define RLC_BEGIN_DECL
+#define RLC_END_DECL
+#endif
 
 RLC_BEGIN_DECL
+
+typedef int32_t rlc_errno;
+#define RLC_PRI_ERRNO PRIi32
 
 #define rlc_max(a, b)   (((a) > (b)) ? (a) : (b))
 #define rlc_min(a, b)   (((a) < (b)) ? (a) : (b))
 #define rlc_assert(...) assert(__VA_ARGS__)
-
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
 
 #define rlc_mod(x) x
 
@@ -41,10 +52,12 @@ RLC_BEGIN_DECL
 #define rlc_errf(fmt_, ...)                                                    \
         rlc_logf__("ERR", rlc_color_red__, fmt_, ##__VA_ARGS__)
 
-static inline const void *rlc_voidptr_offset(const void *base, size_t offset)
-{
-        return (const void *)((uint8_t *)base + offset);
-}
+#define rlc_panicf(status_, fmt_, ...)                                         \
+        do {                                                                   \
+                rlc_errf(fmt_ " (paniced with status %" RLC_PRI_ERRNO ")",     \
+                         ##__VA_ARGS__, status_);                              \
+                exit(status_);                                                 \
+        } while (0)
 
 RLC_END_DECL
 

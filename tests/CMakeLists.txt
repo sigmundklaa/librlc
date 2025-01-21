@@ -71,3 +71,4 @@ add_test(test_chunks.c)
 add_test(test_encode.c)
 
 add_test(test_rlc.c REPLACE rlc.c)
+add_test(test_timer.c)

@@ -1,8 +1,7 @@
 
 #include <rlc/rlc.h>
 #include <rlc/plat.h>
-
-#include "../utils.h"
+#include <rlc/utils.h>
 
 void rlc_plat_lock_init(rlc_lock *lock)
 {

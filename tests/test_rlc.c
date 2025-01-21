@@ -1,5 +1,6 @@
 
 #include <unity/unity.h>
+#include <stdlib.h>
 
 #include "../src/rlc.c"
 

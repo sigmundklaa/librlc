@@ -9,7 +9,6 @@
 #include <rlc/plat.h>
 #include <rlc/chunks.h>
 
-#include "utils.h"
 #include "encode.h"
 
 static const char *rlc_sdu_type_str(enum rlc_sdu_type type)

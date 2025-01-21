@@ -15,3 +15,26 @@ endif()
 
 add_executable(rlcexe main.c)
 target_link_libraries(rlcexe PRIVATE rlc)
+
+macro(rlc_plat_define name)
+    set(kwargs "SOURCES")
+    cmake_parse_arguments(RLC_PLAT_DEFINE "" "" "${kwargs}" ${ARGN})
+
+    add_library(${name} INTERFACE)
+
+    if(RLC_PLAT_DEFINE_SOURCES)
+        target_sources(${name} INTERFACE ${RLC_PLAT_DEFINE_SOURCES})
+    endif()
+
+    target_include_directories(${name}
+        INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+endmacro()
+
+function(rlc_plat_use name)
+    target_link_libraries(rlc PUBLIC ${name})
+endfunction()
+
+add_subdirectory(platform)
+
+rlc_plat_use(rlc-linux)

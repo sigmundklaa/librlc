@@ -57,7 +57,7 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
 
         static int i = 0;
         i = (i + 1) % 11;
-        if (i == 4 && rlc_chunks_size(chunks) >= 20) {
+        if (ctx->type == RLC_AM && i == 4 && rlc_chunks_size(chunks) >= 20) {
                 (void)printf("p1 dropping\n");
                 return 0;
         }
@@ -326,7 +326,7 @@ int main(void)
         const struct rlc_config conf = {
                 .window_size = 40,
                 .buffer_size = 5200,
-                .byte_without_poll_max = 1500,
+                .byte_without_poll_max = 50,
                 .pdu_without_poll_max = 50,
                 .sn_width = RLC_SN_12BIT,
         };
@@ -342,18 +342,21 @@ int main(void)
         status = pthread_create(&t2, NULL, worker, &ctx2);
         assert(status == 0);
 
-        status = rlc_init(&ctx1.rlc, RLC_AM, &conf, &p1_methods);
+        status = rlc_init(&ctx1.rlc, RLC_UM, &conf, &p1_methods);
         assert(status == 0);
 
-        status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods);
+        status = rlc_init(&ctx2.rlc, RLC_UM, &conf, &p2_methods);
         assert(status == 0);
 
         status = rlc_send(&ctx1.rlc, chunks);
         assert(status == 0);
 
         for (;;) {
-                rlc_tx_avail(&ctx1.rlc, 200);
-                rlc_tx_avail(&ctx2.rlc, 200);
+                static int done1 = 0;
+                static int done2 = 0;
+
+                rlc_tx_avail(&ctx1.rlc, 20);
+                rlc_tx_avail(&ctx2.rlc, 20);
 
                 if (sem_trywait(&ctx1.done) == 0) {
                         break;
