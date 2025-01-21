@@ -6,6 +6,7 @@
 #include <inttypes.h>
 
 #include <rlc/rlc.h>
+#include <rlc/timer.h>
 #include <rlc/plat.h>
 #include <rlc/chunks.h>
 
@@ -199,6 +200,26 @@ static void prepare_pdu_(const struct rlc_context *ctx, struct rlc_pdu *pdu)
         (void)memset(pdu, 0, sizeof(*pdu));
 }
 
+static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
+{
+        rlc_errno status;
+        struct rlc_context *ctx;
+        struct rlc_sdu *sdu;
+        uint32_t lowest;
+
+        rlc_lock_acquire(&ctx->lock);
+
+        (void)timer;
+        ctx = ctx_arg;
+
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->sn >= ctx->rx.next_status_trigger) {
+                }
+        }
+
+        rlc_lock_release(&ctx->lock);
+}
+
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *config,
                    const struct rlc_methods *methods)
@@ -210,6 +231,13 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         ctx->conf = config;
 
         rlc_lock_init(&ctx->lock);
+
+        if (ctx->type == RLC_AM || ctx->type == RLC_UM) {
+                ctx->t_reassembly = rlc_timer_install(alarm_reassembly_, ctx);
+                if (!rlc_timer_okay(ctx->t_reassembly)) {
+                        return -ENOTSUP;
+                }
+        }
 
         return 0;
 }

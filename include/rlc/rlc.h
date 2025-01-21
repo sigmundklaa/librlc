@@ -53,6 +53,8 @@ struct rlc_config {
         size_t pdu_without_poll_max;
         size_t byte_without_poll_max;
 
+        uint32_t time_reassembly_us;
+
         enum rlc_sn_width sn_width;
 };
 
@@ -73,6 +75,7 @@ typedef struct rlc_context {
 
                         uint32_t next; /* RX window base */
                         uint32_t highest_status;
+                        uint32_t next_status_trigger;
                 } rx;
                 struct {
                         uint32_t next;
@@ -82,6 +85,7 @@ typedef struct rlc_context {
                         size_t byte_without_poll;
                 } tx;
         };
+        rlc_timer t_reassembly;
 
         rlc_lock lock;
 
