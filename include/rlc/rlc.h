@@ -71,10 +71,25 @@ typedef struct rlc_context {
         /* RLC specification state variables */
         union {
                 struct {
+                        /* RX_NEXT holds the value of the SN following the last
+                         * in-sequence completely received SDU, and serves as
+                         * the lower edge of the receiving window. Initially
+                         * set to 0, updated whenever SN=RX_NEXT is received */
+                        uint32_t next;
+
+                        /* RX_NEXT_HIGHEST holds the value of the SN following
+                         * the SN of the SDU with the highest SN among received
+                         * SDUs. */
                         uint32_t next_highest;
 
-                        uint32_t next; /* RX window base */
+                        /* RX_HIGHEST_STATUS holds the highest possible value
+                         * of the SN which can be indicated by ACK_SN when
+                         * constructing status PDU. */
                         uint32_t highest_status;
+
+                        /* RX_NEXT_STATUS_TRIGGER holds the value of the SN
+                         * following the SN of the SDU which triggered
+                         * reassembly. */
                         uint32_t next_status_trigger;
                 } rx;
                 struct {
@@ -114,6 +129,7 @@ typedef struct rlc_sdu {
 
         /* RLC specification state variables */
         uint32_t sn;
+        unsigned int retx_count; /* Number of retransmissions */
 
         struct rlc_chunk *chunks;
 
@@ -181,6 +197,9 @@ struct rlc_event {
 
         union {
                 struct rlc_chunk rx_done;
+                struct {
+                        uint32_t sn;
+                } rx_fail;
                 struct rlc_chunk *tx_done;
         } data;
 };

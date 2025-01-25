@@ -200,6 +200,74 @@ static void prepare_pdu_(const struct rlc_context *ctx, struct rlc_pdu *pdu)
         (void)memset(pdu, 0, sizeof(*pdu));
 }
 
+/**
+ * @brief Check if loss has been detected yet on a receiving SDU
+ *
+ * A loss is detected when an SDU contains more than one segments. If all
+ * segments are continous from 0 a loss is not detected. This means that if
+ * either:
+ * - The SDU only has one segment or
+ * - The first segment does not start at 0
+ * a loss is detected.
+ *
+ * @param sdu
+ * @return bool
+ * @retval true Loss has been detected
+ * @retval false Loss has not been detected
+ */
+static bool loss_detected_(struct rlc_sdu *sdu)
+{
+        return sdu->segments->next != NULL || sdu->segments->seg.start != 0;
+}
+
+static struct rlc_sdu *get_sdu_(struct rlc_context *ctx, uint32_t sn,
+                                enum rlc_sdu_dir dir)
+{
+        struct rlc_sdu *sdu;
+
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir == dir && sdu->sn == sn) {
+                        return sdu;
+                }
+        }
+
+        return NULL;
+}
+
+/* Section 5.2.3.2.4, "when t-Reassembly expires" */
+static bool should_restart_reassembly_(struct rlc_context *ctx)
+{
+        struct rlc_sdu *sdu;
+
+        if (ctx->rx.next_highest > ctx->rx.next + 1) {
+                return true;
+        }
+
+        if (ctx->rx.next_highest == ctx->rx.next + 1) {
+                sdu = get_sdu_(ctx, ctx->rx.next, RLC_RX);
+
+                if (sdu != NULL && loss_detected_(sdu)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void do_event_(struct rlc_context *ctx, struct rlc_event *event);
+
+static void do_rx_drop_(struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        struct rlc_event event;
+
+        rlc_dbgf("Dropping SN=%" PRIu32, sdu->sn);
+
+        event.type = RLC_EVENT_RX_FAIL;
+        event.data.rx_fail.sn = sdu->sn;
+
+        do_event_(ctx, &event);
+}
+
 static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
 {
         rlc_errno status;
@@ -207,14 +275,52 @@ static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
         struct rlc_sdu *sdu;
         uint32_t lowest;
 
-        rlc_lock_acquire(&ctx->lock);
-
-        (void)timer;
         ctx = ctx_arg;
 
+        rlc_lock_acquire(&ctx->lock);
+
+        /* Ensure timer has not been stopped while in the process of firing.
+         * This is assuming that the stopping function holds the lock of the
+         * context. */
+        if (!rlc_timer_active(timer)) {
+                rlc_lock_release(&ctx->lock);
+                return;
+        }
+
+        lowest = ctx->rx.next_highest;
+
+        /* Find the SDU with the lowest SN that is >= RX_Next_status_trigger,
+         * and set the highest status to that SN */
         for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->sn >= ctx->rx.next_status_trigger) {
+                if (sdu->sn >= ctx->rx.next_status_trigger &&
+                    sdu->sn < lowest) {
+                        lowest = sdu->sn;
                 }
+        }
+
+        ctx->rx.highest_status = lowest;
+
+        /* Actions to take for SDUs that are unable to be reassembled does
+         * not seem to be specified in the standard. Here, we assume that
+         * when highest_status is updated, the next STATUS PDU will send
+         * ACK_SN=RX_HIGHEST_STATUS. The transmitting side will then no
+         * longer attempt to retransmit parts of the SDUs with SN<ACK_SN,
+         * meaning that SDUs with SN<RX_HIGHEST_STATUS will never be
+         * received in full. We therefore discard these SDUs when
+         * RX_HIGHEST_STATUS is updated. */
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
+                if (sdu->dir == RLC_RX && sdu->sn < ctx->rx.highest_status) {
+                        do_rx_drop_(ctx, sdu);
+                        remove_sdu_(ctx, sdu);
+                        sdu_dealloc_(ctx, sdu);
+                }
+        }
+
+        /* If there are any more SDUs which are awaiting more bytes, restart */
+        if (should_restart_reassembly_(ctx)) {
+                ctx->rx.next_status_trigger = ctx->rx.next_highest;
+
+                rlc_timer_start(timer, ctx->conf->time_reassembly_us);
         }
 
         rlc_lock_release(&ctx->lock);
@@ -539,6 +645,53 @@ static uint32_t lowest_sn_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
         return lowest;
 }
 
+/* Section 5.2.3.2.3, "if t-Reassembly is not running" */
+static bool should_start_reassembly_(struct rlc_context *ctx)
+{
+        struct rlc_sdu *sdu;
+
+        if (ctx->rx.next_highest > ctx->rx.next + 1) {
+                return true;
+        }
+
+        if (ctx->rx.next_highest == ctx->rx.next + 1) {
+                sdu = get_sdu_(ctx, ctx->rx.next, RLC_RX);
+
+                if (sdu != NULL && loss_detected_(sdu)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+/* Section 5.2.3.2.3, "if t-Reassembly is running" */
+static bool should_stop_reassembly_(struct rlc_context *ctx)
+{
+        struct rlc_sdu *sdu;
+
+        if (ctx->rx.next_status_trigger == ctx->rx.next) {
+                return true;
+        }
+
+        if (ctx->rx.next_status_trigger == ctx->rx.next + 1) {
+                sdu = get_sdu_(ctx, ctx->rx.next, RLC_RX);
+
+                if (sdu != NULL && !loss_detected_(sdu)) {
+                        return true;
+                }
+        }
+
+        if (!in_window_(ctx->rx.next_status_trigger, ctx->rx.next,
+                        ctx->conf->window_size) &&
+            ctx->rx.next_status_trigger !=
+                    ctx->rx.next + ctx->conf->window_size) {
+                return true;
+        }
+
+        return false;
+}
+
 /**
  * @details
  * Submits the incoming packet into the RLC system
@@ -564,6 +717,11 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
                 (void)do_tx_request_(ctx);
                 goto exit;
+        }
+
+        if (ctx->type == RLC_AM && pdu.flags.polled) {
+                /* Send ACK before receiving any more data */
+                ctx->gen_status = true;
         }
 
         if (ctx->type == RLC_TM || (pdu.flags.is_first && pdu.flags.is_last)) {
@@ -678,9 +836,20 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 sdu_dealloc_(ctx, sdu);
         }
 
-        if (ctx->type == RLC_AM && pdu.flags.polled) {
-                /* Send ACK before receiving any more data */
-                ctx->gen_status = true;
+        if (ctx->type == RLC_AM) {
+                if (rlc_timer_active(ctx->t_reassembly) &&
+                    should_stop_reassembly_(ctx)) {
+                        rlc_timer_stop(ctx->t_reassembly);
+                }
+
+                /* This case includes the case of being stopped in the above
+                 * case. */
+                if (!rlc_timer_active(ctx->t_reassembly) &&
+                    should_start_reassembly_(ctx)) {
+                        ctx->rx.next_status_trigger = ctx->rx.next_highest;
+                        rlc_timer_start(ctx->t_reassembly,
+                                        ctx->conf->time_reassembly_us);
+                }
         }
 
         (void)do_tx_request_(ctx);
