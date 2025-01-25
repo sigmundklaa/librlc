@@ -19,6 +19,7 @@ struct timer_info {
         enum {
                 TIMER_STALE,
                 TIMER_ACTIVE,
+                TIMER_FIRING,
         } state;
 
         struct timer_info *next;
@@ -71,20 +72,23 @@ static void pfd_push(struct dyn_array *arr, int fd)
         pfd->revents = 0;
 }
 
-static void timer_alarm_(int fd)
+static struct timer_info *timer_from_fd_(int fd)
 {
         struct timer_info *t;
 
         for (rlc_each_node(timer_list_, t, next)) {
                 if (t->fd == fd) {
-                        rlc_assert(t->cb != NULL);
-
-                        t->state = TIMER_STALE;
-                        t->cb(t->id, t->args);
-
-                        return;
+                        return t;
                 }
         }
+
+        return NULL;
+}
+
+static void timer_alarm_(struct timer_info *t)
+{
+        rlc_assert(t->cb != NULL);
+        t->cb(t->id, t->args);
 }
 
 static void *worker_(void *arg)
@@ -145,9 +149,25 @@ static void *worker_(void *arg)
                                 rlc_dbgf("Timer alarm");
                                 (void)read(pfd->fd, &dummy, sizeof(dummy));
 
+                                cur = timer_from_fd_(pfd->fd);
+                                if (cur == NULL) {
+                                        rlc_errf("Unrecognized timer fd: %i",
+                                                 pfd->fd);
+                                        continue;
+                                }
+
+                                cur->state = TIMER_FIRING;
                                 rlc_lock_release(&lock_);
-                                timer_alarm_(pfd->fd);
+
+                                timer_alarm_(cur);
                                 rlc_lock_acquire(&lock_);
+
+                                /* If state has not been changed by
+                                 * a call within the callback, then make
+                                 * the timer go stale. */
+                                if (cur->state == TIMER_FIRING) {
+                                        cur->state = TIMER_STALE;
+                                }
                         }
                 }
 
@@ -392,7 +412,7 @@ bool rlc_plat_timer_active(rlc_timer timer)
 
         rlc_lock_acquire(&lock_);
         t = timer_get_(timer);
-        ret = t != NULL && t->state == TIMER_ACTIVE;
+        ret = t != NULL && t->state != TIMER_STALE;
         rlc_lock_release(&lock_);
 
         return ret;
