@@ -56,10 +56,16 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
         int status;
 
         static int i = 0;
-        i = (i + 1) % 11;
-        if (ctx->type == RLC_AM && i == 4 && rlc_chunks_size(chunks) >= 20) {
-                (void)printf("p1 dropping\n");
-                return 0;
+        uint8_t buf[1];
+        if (ctx->type == RLC_AM) {
+                rlc_chunks_deepcopy(chunks, buf, 1);
+                if (true || !(buf[0] & (1 << 6))) {
+                        i = (i + 1) % 11;
+                        if (i == 4) {
+                                (void)printf("p1 dropping\n");
+                                return 0;
+                        }
+                }
         }
 
         (void)printf("p1 Submit\n");
@@ -75,6 +81,8 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
 
 static void p1_event(rlc_context *ctx, const struct rlc_event *event)
 {
+        (void)printf("p1 event: %i\n", (int)event->type);
+
         if (event->type == RLC_EVENT_TX_DONE) {
                 sem_post(&ctx1.done);
                 sem_post(&ctx1.done);
@@ -131,8 +139,15 @@ static rlc_errno p2_tx_submit(struct rlc_context *ctx,
 
 static void p2_event(rlc_context *ctx, const struct rlc_event *event)
 {
-        if (event->type != RLC_EVENT_RX_DONE) {
-                (void)printf("unknown %i\n", (int)event->type);
+        switch (event->type) {
+        case RLC_EVENT_RX_DONE:
+                break;
+        case RLC_EVENT_RX_FAIL:
+                (void)printf("SN dropped: %i\n", (int)event->data.rx_fail.sn);
+                return;
+        default:
+                (void)printf("Unknown event p2\n");
+                return;
         }
 
         (void)printf("size: %zu\n", event->data.rx_done.size);
@@ -308,7 +323,7 @@ int main(void)
                 },
         };
 
-        fp = fopen("main.txt", "ww++");
+        fp = fopen("main.txt", "w+");
         assert(fp != NULL);
 
 #define link(l_, r_) chunks[l_].next = &chunks[r_]
@@ -320,15 +335,19 @@ int main(void)
         ctx1.other = &ctx2;
         ctx2.other = &ctx1;
 
+        rlc_plat_init();
+
         ssize_t size = rlc_chunks_deepcopy(chunks, correct_, sizeof(correct_));
         assert(size == (ssize_t)rlc_chunks_size(chunks));
 
         const struct rlc_config conf = {
                 .window_size = 40,
                 .buffer_size = 5200,
-                .byte_without_poll_max = 50,
-                .pdu_without_poll_max = 50,
+                .byte_without_poll_max = 500,
+                .pdu_without_poll_max = 500,
                 .sn_width = RLC_SN_12BIT,
+                .time_reassembly_us = 5000,
+                .time_poll_retransmit_us = 500,
         };
 
         ctx_init(&ctx1);
@@ -342,10 +361,10 @@ int main(void)
         status = pthread_create(&t2, NULL, worker, &ctx2);
         assert(status == 0);
 
-        status = rlc_init(&ctx1.rlc, RLC_UM, &conf, &p1_methods);
+        status = rlc_init(&ctx1.rlc, RLC_AM, &conf, &p1_methods);
         assert(status == 0);
 
-        status = rlc_init(&ctx2.rlc, RLC_UM, &conf, &p2_methods);
+        status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods);
         assert(status == 0);
 
         status = rlc_send(&ctx1.rlc, chunks);
@@ -356,12 +375,16 @@ int main(void)
                 static int done2 = 0;
 
                 rlc_tx_avail(&ctx1.rlc, 20);
-                rlc_tx_avail(&ctx2.rlc, 20);
+                rlc_tx_avail(&ctx2.rlc, 50);
 
                 if (sem_trywait(&ctx1.done) == 0) {
                         break;
                 }
+
+                // sleep(1);
         }
+
+        exit(0);
 
         pthread_join(t1, NULL);
         pthread_join(t2, NULL);

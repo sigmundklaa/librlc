@@ -54,6 +54,7 @@ struct rlc_config {
         size_t byte_without_poll_max;
 
         uint32_t time_reassembly_us;
+        uint32_t time_poll_retransmit_us;
 
         enum rlc_sn_width sn_width;
 };
@@ -101,6 +102,11 @@ typedef struct rlc_context {
                 } tx;
         };
         rlc_timer t_reassembly;
+        rlc_timer t_poll_retransmit;
+
+        uint32_t poll_sn;
+        
+        bool force_poll;
 
         rlc_lock lock;
 
