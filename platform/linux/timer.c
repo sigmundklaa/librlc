@@ -10,17 +10,20 @@
 #include <rlc/rlc.h>
 #include <rlc/lock.h>
 
+enum timer_state {
+        TIMER_STALE,
+        TIMER_ACTIVE,
+        TIMER_FIRING,
+};
+
 struct timer_info {
         void (*cb)(rlc_timer, void *);
         void *args;
 
         int fd;
         rlc_timer id;
-        enum {
-                TIMER_STALE,
-                TIMER_ACTIVE,
-                TIMER_FIRING,
-        } state;
+        enum timer_state state;
+        enum timer_state next_state;
 
         struct timer_info *next;
 };
@@ -87,7 +90,10 @@ static struct timer_info *timer_from_fd_(int fd)
 
 static void timer_alarm_(struct timer_info *t)
 {
-        rlc_assert(t->cb != NULL);
+        if (t->cb == NULL) {
+                return;
+        }
+
         t->cb(t->id, t->args);
 }
 
@@ -114,6 +120,8 @@ static void *worker_(void *arg)
                 rlc_lock_acquire(&lock_);
 
                 for (rlc_each_node(timer_list_, cur, next)) {
+                        cur->state = cur->next_state;
+
                         if (cur->state != TIMER_ACTIVE) {
                                 continue;
                         }
@@ -157,6 +165,8 @@ static void *worker_(void *arg)
                                 }
 
                                 cur->state = TIMER_FIRING;
+                                cur->next_state = TIMER_FIRING;
+
                                 rlc_lock_release(&lock_);
 
                                 timer_alarm_(cur);
@@ -165,8 +175,8 @@ static void *worker_(void *arg)
                                 /* If state has not been changed by
                                  * a call within the callback, then make
                                  * the timer go stale. */
-                                if (cur->state == TIMER_FIRING) {
-                                        cur->state = TIMER_STALE;
+                                if (cur->next_state == TIMER_FIRING) {
+                                        cur->next_state = TIMER_STALE;
                                 }
                         }
                 }
@@ -192,7 +202,7 @@ static struct timer_info *timer_add_(void (*cb)(rlc_timer, void *), void *args)
         t->cb = cb;
         t->args = args;
         t->id = next_id_++;
-        t->state = TIMER_STALE;
+        t->next_state = TIMER_STALE;
         t->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
 
         if (t->fd < 0) {
@@ -320,7 +330,7 @@ static rlc_errno timer_restart_(struct timer_info *t, uint32_t delay_us)
         uint64_t dummy;
         size_t drain_size;
 
-        t->state = TIMER_ACTIVE;
+        t->next_state = TIMER_ACTIVE;
 
         to_itimerspec_(&spec, delay_us);
 
@@ -347,7 +357,7 @@ rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
                 return -EINVAL;
         }
 
-        if (t->state != TIMER_STALE) {
+        if (t->state != TIMER_STALE || t->next_state != TIMER_STALE) {
                 rlc_lock_release(&lock_);
                 return -EBUSY;
         }
@@ -398,7 +408,7 @@ rlc_errno rlc_plat_timer_stop(rlc_timer timer)
                 status = -errno;
         }
 
-        t->state = TIMER_STALE;
+        t->next_state = TIMER_STALE;
 
         rlc_lock_release(&lock_);
 
@@ -412,7 +422,8 @@ bool rlc_plat_timer_active(rlc_timer timer)
 
         rlc_lock_acquire(&lock_);
         t = timer_get_(timer);
-        ret = t != NULL && t->state != TIMER_STALE;
+        /* Use a counter/id to track changes */
+        ret = t != NULL && t->state == t->next_state;
         rlc_lock_release(&lock_);
 
         return ret;
