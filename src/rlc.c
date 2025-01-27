@@ -11,6 +11,9 @@
 #include <rlc/chunks.h>
 
 #include "encode.h"
+#include "event.h"
+#include "sdu.h"
+#include "methods.h"
 
 static const char *rlc_sdu_type_str(enum rlc_sdu_type type)
 {
@@ -27,16 +30,6 @@ static const char *rlc_sdu_type_str(enum rlc_sdu_type type)
         }
 }
 
-static inline rlc_errno do_tx_request_(struct rlc_context *ctx)
-{
-        const struct rlc_methods *methods = ctx->methods;
-        if (methods->tx_request == NULL) {
-                return -ENOTSUP;
-        }
-
-        return methods->tx_request(ctx);
-}
-
 static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              struct rlc_chunk *payload, size_t max_size)
 {
@@ -44,12 +37,6 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_pdu *pdu,
         ssize_t total_size;
         uint8_t header[rlc_pdu_header_size(ctx, pdu)];
         struct rlc_chunk chunk;
-        const struct rlc_methods *methods;
-
-        methods = ctx->methods;
-        if (methods->tx_submit == NULL) {
-                return -ENOTSUP;
-        }
 
         /* Size is set by encode */
         chunk.data = header;
@@ -64,7 +51,7 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_pdu *pdu,
                 return -ENOSPC;
         }
 
-        status = methods->tx_submit(ctx, &chunk);
+        status = rlc_tx_submit(ctx, &chunk);
         if (status != 0) {
                 return status;
         }
@@ -88,150 +75,15 @@ static ssize_t tx_pdu_view_(struct rlc_context *ctx, struct rlc_pdu *pdu,
         }
 }
 
-static inline void *do_alloc_(struct rlc_context *ctx, size_t size)
+static bool in_window_(uint32_t sn, uint32_t base, uint32_t size)
 {
-        const struct rlc_methods *methods = ctx->methods;
-        void *mem;
-        if (methods->mem_alloc == NULL) {
-                return NULL;
-        }
-
-        mem = methods->mem_alloc(ctx, size);
-        (void)memset(mem, 0, size);
-
-        return mem;
-}
-
-static inline void do_dealloc_(struct rlc_context *ctx, void *mem)
-{
-        const struct rlc_methods *methods = ctx->methods;
-        if (methods->mem_dealloc == NULL) {
-                return;
-        }
-
-        methods->mem_dealloc(ctx, mem);
-}
-
-static void append_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu)
-{
-        struct rlc_sdu *cur;
-        struct rlc_sdu **lastp;
-
-        lastp = &ctx->sdus;
-
-        for (rlc_each_node(ctx->sdus, cur, next)) {
-                lastp = &cur->next;
-        }
-
-        *lastp = sdu;
-}
-
-static void remove_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu)
-{
-        struct rlc_sdu *cur;
-        struct rlc_sdu **lastp;
-
-        lastp = &ctx->sdus;
-
-        for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur == sdu) {
-                        *lastp = sdu->next;
-
-                        sdu->next = NULL;
-                        break;
-                }
-
-                lastp = &sdu->next;
-        }
-}
-
-static struct rlc_sdu *sdu_alloc_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
-{
-        struct rlc_sdu *sdu;
-
-        sdu = do_alloc_(ctx, sizeof(*sdu));
-        if (sdu == NULL) {
-                return NULL;
-        }
-
-        (void)memset(sdu, 0, sizeof(*sdu));
-
-        sdu->dir = dir;
-
-        if (sdu->dir == RLC_RX) {
-                sdu->rx_buffer = do_alloc_(ctx, ctx->conf->buffer_size);
-                if (sdu->rx_buffer == NULL) {
-                        do_dealloc_(ctx, sdu);
-                        return NULL;
-                }
-
-                sdu->rx_buffer_size = ctx->conf->buffer_size;
-        }
-
-        return sdu;
-}
-
-static void sdu_dealloc_rx_buffer_(struct rlc_context *ctx, struct rlc_sdu *sdu)
-{
-        if (sdu->dir != RLC_RX || sdu->rx_buffer == NULL) {
-                return;
-        }
-
-        do_dealloc_(ctx, sdu->rx_buffer);
-        sdu->rx_buffer = NULL;
-}
-
-static void sdu_dealloc_(struct rlc_context *ctx, struct rlc_sdu *sdu)
-{
-        struct rlc_sdu_segment *seg;
-
-        sdu_dealloc_rx_buffer_(ctx, sdu);
-
-        for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments, seg,
-                                next)) {
-                do_dealloc_(ctx, seg);
-        }
-
-        do_dealloc_(ctx, sdu);
+        return base <= sn && sn < base + size;
 }
 
 static void prepare_pdu_(const struct rlc_context *ctx, struct rlc_pdu *pdu)
 {
+        (void)ctx;
         (void)memset(pdu, 0, sizeof(*pdu));
-}
-
-/**
- * @brief Check if loss has been detected yet on a receiving SDU
- *
- * A loss is detected when an SDU contains more than one segments. If all
- * segments are continous from 0 a loss is not detected. This means that if
- * either:
- * - The SDU only has more than one segment or
- * - The first segment does not start at 0
- * a loss is detected.
- *
- * @param sdu
- * @return bool
- * @retval true Loss has been detected
- * @retval false Loss has not been detected
- */
-static bool loss_detected_(struct rlc_sdu *sdu)
-{
-        return sdu->segments->next != NULL || sdu->segments->seg.start != 0;
-}
-
-static struct rlc_sdu *get_sdu_(struct rlc_context *ctx, uint32_t sn,
-                                enum rlc_sdu_dir dir)
-{
-        struct rlc_sdu *sdu;
-
-        for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->dir == dir && sdu->sn == sn) {
-                        return sdu;
-                }
-        }
-
-        return NULL;
 }
 
 /* Section 5.2.3.2.4, "when t-Reassembly expires" */
@@ -244,9 +96,9 @@ static bool should_restart_reassembly_(struct rlc_context *ctx)
         }
 
         if (ctx->rx.next_highest == ctx->rx.next + 1) {
-                sdu = get_sdu_(ctx, ctx->rx.next, RLC_RX);
+                sdu = rlc_sdu_get(ctx, ctx->rx.next, RLC_RX);
 
-                if (sdu != NULL && loss_detected_(sdu)) {
+                if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
                 }
         }
@@ -254,18 +106,51 @@ static bool should_restart_reassembly_(struct rlc_context *ctx)
         return false;
 }
 
-static void do_event_(struct rlc_context *ctx, struct rlc_event *event);
-
-static void do_rx_drop_(struct rlc_context *ctx, struct rlc_sdu *sdu)
+/* Section 5.2.3.2.3, "if t-Reassembly is not running" */
+static bool should_start_reassembly_(struct rlc_context *ctx)
 {
-        struct rlc_event event;
+        struct rlc_sdu *sdu;
 
-        rlc_wrnf("Dropping SN=%" PRIu32, sdu->sn);
+        if (ctx->rx.next_highest > ctx->rx.next + 1) {
+                return true;
+        }
 
-        event.type = RLC_EVENT_RX_FAIL;
-        event.data.rx_fail.sn = sdu->sn;
+        if (ctx->rx.next_highest == ctx->rx.next + 1) {
+                sdu = rlc_sdu_get(ctx, ctx->rx.next, RLC_RX);
 
-        do_event_(ctx, &event);
+                if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+/* Section 5.2.3.2.3, "if t-Reassembly is running" */
+static bool should_stop_reassembly_(struct rlc_context *ctx)
+{
+        struct rlc_sdu *sdu;
+
+        if (ctx->rx.next_status_trigger == ctx->rx.next) {
+                return true;
+        }
+
+        if (ctx->rx.next_status_trigger == ctx->rx.next + 1) {
+                sdu = rlc_sdu_get(ctx, ctx->rx.next, RLC_RX);
+
+                if (sdu != NULL && !rlc_sdu_loss_detected(sdu)) {
+                        return true;
+                }
+        }
+
+        if (!in_window_(ctx->rx.next_status_trigger, ctx->rx.next,
+                        ctx->conf->window_size) &&
+            ctx->rx.next_status_trigger !=
+                    ctx->rx.next + ctx->conf->window_size) {
+                return true;
+        }
+
+        return false;
 }
 
 static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
@@ -310,9 +195,9 @@ static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
          * RX_HIGHEST_STATUS is updated. */
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir == RLC_RX && sdu->sn < ctx->rx.highest_status) {
-                        do_rx_drop_(ctx, sdu);
-                        remove_sdu_(ctx, sdu);
-                        sdu_dealloc_(ctx, sdu);
+                        rlc_event_rx_drop(ctx, sdu);
+                        rlc_sdu_remove(ctx, sdu);
+                        rlc_sdu_dealloc(ctx, sdu);
                 }
         }
 
@@ -373,106 +258,23 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         return 0;
 }
 
-static bool seg_overlap_(const struct rlc_segment *left,
-                         const struct rlc_segment *right)
-{
-        return right->start >= left->start && right->start <= left->end;
-}
-
-static rlc_errno seg_append_(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                             struct rlc_segment seg)
-{
-        struct rlc_sdu_segment *new_seg;
-        struct rlc_sdu_segment *cur;
-        struct rlc_sdu_segment *next;
-        struct rlc_sdu_segment **lastp;
-
-        lastp = &sdu->segments;
-        next = NULL;
-
-        for (rlc_each_node(sdu->segments, cur, next)) {
-                next = cur->next;
-
-                /* Seg overlaps with the element to the left */
-                if (seg_overlap_(&cur->seg, &seg)) {
-                        /* Overlaps to the right. Since overlap on both sides,
-                         * they can be merged. */
-                        if (next != NULL && seg_overlap_(&seg, &next->seg)) {
-                                seg.end = next->seg.end;
-
-                                cur->next = next->next;
-                                do_dealloc_(ctx, next);
-                        }
-
-                        seg.start = cur->seg.start;
-                        goto entry_found;
-                }
-
-                /* If not overlapping to the left, but the offset is higher than
-                 * that of the segment to the left */
-                if (seg.start > cur->seg.end) {
-                        if (next != NULL) {
-                                if (seg.start >= next->seg.end) {
-                                        continue;
-                                } else if (seg.end >= next->seg.start) {
-                                        /* Overlap to the right, merge */
-                                        cur = next;
-                                        seg.end = next->seg.end;
-
-                                        goto entry_found;
-                                }
-                        }
-
-                        /* Otherwise create a new entry and insert it */
-                        lastp = &cur->next;
-                        break;
-                } else if (seg.start < cur->seg.start) {
-                        if (seg.end >= cur->seg.start) {
-                                seg.end = cur->seg.end;
-
-                                goto entry_found;
-                        }
-
-                        /* Insert before current */
-                        next = cur;
-                        break;
-                }
-
-                lastp = &cur->next;
-        }
-
-        cur = do_alloc_(ctx, sizeof(*cur));
-        if (cur == NULL) {
-                return -ENOMEM;
-        }
-
-        *lastp = cur;
-        cur->next = next;
-
-entry_found:
-        (void)memcpy(&cur->seg, &seg, sizeof(seg));
-
-        return 0;
-}
-
 rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
 {
         rlc_errno status;
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
 
-        sdu = do_alloc_(ctx, sizeof(*sdu));
+        sdu = rlc_sdu_alloc(ctx, RLC_TX);
         if (sdu == NULL) {
                 return -ENOMEM;
         }
 
-        sdu->dir = RLC_TX;
         sdu->chunks = chunks;
         sdu->sn = ctx->tx.next++;
 
         rlc_lock_acquire(&ctx->lock);
 
-        append_sdu_(ctx, sdu);
+        rlc_sdu_append(ctx, sdu);
 
         seg.start = 0;
         seg.end = rlc_chunks_size(chunks);
@@ -480,65 +282,14 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
         rlc_dbgf("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
                  sdu->sn, seg.start, seg.end);
 
-        status = seg_append_(ctx, sdu, seg);
+        status = rlc_sdu_seg_append(ctx, sdu, seg);
         if (status != 0) {
                 return status;
         }
 
         rlc_lock_release(&ctx->lock);
 
-        return do_tx_request_(ctx);
-}
-
-static void do_event_(struct rlc_context *ctx, struct rlc_event *event)
-{
-        const struct rlc_methods *methods = ctx->methods;
-        if (methods->event == NULL) {
-                rlc_assert(0);
-                return;
-        }
-
-        methods->event(ctx, event);
-}
-
-static void do_rx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
-{
-        struct rlc_event event;
-
-        rlc_inff("RX; SDU %" PRIu32 " received (%" PRIu32 "B)", sdu->sn,
-                 sdu->segments->seg.end);
-
-        event.type = RLC_EVENT_RX_DONE;
-        event.data.rx_done.data = sdu->rx_buffer;
-        event.data.rx_done.size = sdu->segments->seg.end;
-
-        do_event_(ctx, &event);
-}
-
-static void do_rx_done_direct_(struct rlc_context *ctx,
-                               const struct rlc_chunk *chunks)
-{
-        struct rlc_event event;
-
-        rlc_inff("RX; Full SDU delivered (%zuB)", rlc_chunks_size(chunks));
-
-        event.type = RLC_EVENT_RX_DONE;
-        event.data.rx_done = *chunks;
-
-        do_event_(ctx, &event);
-}
-
-static void do_tx_done_(struct rlc_context *ctx, struct rlc_sdu *sdu)
-{
-        struct rlc_event event;
-
-        rlc_inff("TX; SDU %" PRIu32 " transmitted (%zuB)", sdu->sn,
-                 rlc_chunks_size(sdu->chunks));
-
-        event.type = RLC_EVENT_TX_DONE;
-        event.data.tx_done = sdu->chunks;
-
-        do_event_(ctx, &event);
+        return rlc_tx_request(ctx);
 }
 
 static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
@@ -563,8 +314,8 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
                         if (sdu->sn < sn) {
                                 *lastp = sdu->next;
 
-                                do_tx_done_(ctx, sdu);
-                                sdu_dealloc_(ctx, sdu);
+                                rlc_event_tx_done(ctx, sdu);
+                                rlc_sdu_dealloc(ctx, sdu);
 
                                 continue;
                         } else if (sdu->sn < lowest) {
@@ -578,6 +329,12 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
 
         ctx->tx.next_ack = lowest;
         rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
+}
+
+static void stop_poll_retransmit_(struct rlc_context *ctx)
+{
+        rlc_dbgf("Stopping t-PollRetransmit");
+        (void)rlc_timer_stop(ctx->t_poll_retransmit);
 }
 
 static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
@@ -594,8 +351,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         am_tx_next_ack_update_(ctx, pdu->sn);
 
         if (pdu->sn > ctx->poll_sn) {
-                rlc_errf("Stopping poll");
-                (void)rlc_timer_stop(ctx->t_poll_retransmit);
+                stop_poll_retransmit_(ctx);
         }
 
         /* Iterate over every status */
@@ -620,15 +376,14 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
 
                 if (sdu->sn == ctx->poll_sn) {
-                        rlc_errf("Stopping poll");
-                        (void)rlc_timer_stop(ctx->t_poll_retransmit);
+                        stop_poll_retransmit_(ctx);
                 }
 
                 if (cur.offset.end == RLC_STATUS_SO_MAX) {
                         cur.offset.end = rlc_chunks_size(sdu->chunks);
                 }
 
-                status = seg_append_(ctx, sdu, cur.offset);
+                status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
                 if (status != 0) {
                         rlc_errf("TX AM STATUS; Unable to append seg "
                                  "(%" RLC_PRI_ERRNO ")",
@@ -649,19 +404,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 }
 
-static bool is_rx_done_(struct rlc_sdu *sdu)
-{
-        /* Last received and exactly one segment */
-        return sdu->flags.rx_last_received && sdu->segments != NULL &&
-               sdu->segments->seg.start == 0 && sdu->segments->next == NULL;
-}
-
-static bool in_window_(uint32_t sn, uint32_t base, uint32_t size)
-{
-        return base <= sn && sn < base + size;
-}
-
-static uint32_t lowest_sn_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
+static uint32_t lowest_sn_not_recv_(struct rlc_context *ctx)
 {
         uint32_t lowest;
         struct rlc_sdu *cur;
@@ -669,7 +412,8 @@ static uint32_t lowest_sn_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
         lowest = UINT32_MAX;
 
         for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->sn < lowest) {
+                if (cur->dir == RLC_RX && cur->sn < lowest &&
+                    !rlc_sdu_is_rx_done(cur)) {
                         lowest = cur->sn;
                 }
         }
@@ -677,57 +421,6 @@ static uint32_t lowest_sn_(struct rlc_context *ctx, enum rlc_sdu_dir dir)
         return lowest;
 }
 
-/* Section 5.2.3.2.3, "if t-Reassembly is not running" */
-static bool should_start_reassembly_(struct rlc_context *ctx)
-{
-        struct rlc_sdu *sdu;
-
-        if (ctx->rx.next_highest > ctx->rx.next + 1) {
-                return true;
-        }
-
-        if (ctx->rx.next_highest == ctx->rx.next + 1) {
-                sdu = get_sdu_(ctx, ctx->rx.next, RLC_RX);
-
-                if (sdu != NULL && loss_detected_(sdu)) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
-/* Section 5.2.3.2.3, "if t-Reassembly is running" */
-static bool should_stop_reassembly_(struct rlc_context *ctx)
-{
-        struct rlc_sdu *sdu;
-
-        if (ctx->rx.next_status_trigger == ctx->rx.next) {
-                return true;
-        }
-
-        if (ctx->rx.next_status_trigger == ctx->rx.next + 1) {
-                sdu = get_sdu_(ctx, ctx->rx.next, RLC_RX);
-
-                if (sdu != NULL && !loss_detected_(sdu)) {
-                        return true;
-                }
-        }
-
-        if (!in_window_(ctx->rx.next_status_trigger, ctx->rx.next,
-                        ctx->conf->window_size) &&
-            ctx->rx.next_status_trigger !=
-                    ctx->rx.next + ctx->conf->window_size) {
-                return true;
-        }
-
-        return false;
-}
-
-/**
- * @details
- * Submits the incoming packet into the RLC system
- */
 void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 {
         ssize_t status;
@@ -747,7 +440,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         if (pdu.flags.is_status) {
                 process_status_(ctx, &pdu, chunks);
 
-                (void)do_tx_request_(ctx);
+                (void)rlc_tx_request(ctx);
                 goto exit;
         }
 
@@ -757,7 +450,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         }
 
         if (ctx->type == RLC_TM || (pdu.flags.is_first && pdu.flags.is_last)) {
-                do_rx_done_direct_(ctx, chunks);
+                rlc_event_rx_done_direct(ctx, chunks);
 
                 goto exit;
         } else if (!in_window_(pdu.sn, ctx->rx.next, ctx->conf->window_size)) {
@@ -768,12 +461,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 goto exit;
         }
 
-        /* Find assigned sdu */
-        for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->dir == RLC_RX && sdu->sn == pdu.sn) {
-                        break;
-                }
-        }
+        sdu = rlc_sdu_get(ctx, pdu.sn, RLC_RX);
 
         if (sdu == NULL) {
                 if (!pdu.flags.is_first) {
@@ -782,7 +470,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                         goto exit;
                 }
 
-                sdu = sdu_alloc_(ctx, RLC_RX);
+                sdu = rlc_sdu_alloc(ctx, RLC_RX);
                 if (sdu == NULL) {
                         rlc_errf("RX; SDU alloc failed (%" RLC_PRI_ERRNO ")",
                                  -ENOMEM);
@@ -792,7 +480,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 sdu->state = RLC_READY;
                 sdu->sn = pdu.sn;
 
-                append_sdu_(ctx, sdu);
+                rlc_sdu_append(ctx, sdu);
         }
 
         if (sdu->state != RLC_READY) {
@@ -822,13 +510,13 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 goto exit;
         }
 
-        status = seg_append_(ctx, sdu,
-                             (struct rlc_segment){
-                                     .start = pdu.seg_offset,
-                                     .end = pdu.seg_offset +
-                                            rlc_chunks_size(chunks) -
-                                            header_size,
-                             });
+        status = rlc_sdu_seg_append(ctx, sdu,
+                                    (struct rlc_segment){
+                                            .start = pdu.seg_offset,
+                                            .end = pdu.seg_offset +
+                                                   rlc_chunks_size(chunks) -
+                                                   header_size,
+                                    });
         if (status != 0) {
                 rlc_errf("RX; Unable to append segment (%" RLC_PRI_ERRNO ")",
                          (rlc_errno)status);
@@ -843,9 +531,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 ctx->rx.next_highest = sdu->sn + 1;
         }
 
-        if (is_rx_done_(sdu)) {
-                do_rx_done_(ctx, sdu);
-                remove_sdu_(ctx, sdu);
+        if (rlc_sdu_is_rx_done(sdu)) {
+                rlc_event_rx_done(ctx, sdu);
+                rlc_sdu_remove(ctx, sdu);
 
                 /* In acknowledged mode, the SDU should be deallocated when
                  * transmitting the status, so that we can keep the information
@@ -853,7 +541,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                  * however be freed to prevent excessive memory use. */
                 if (ctx->type == RLC_AM) {
                         ctx->gen_status = true;
-                        lowest = rlc_min(lowest_sn_(ctx, RLC_RX),
+                        lowest = rlc_min(lowest_sn_not_recv_(ctx),
                                          ctx->rx.next_highest);
 
                         if (sdu->sn == ctx->rx.highest_status) {
@@ -865,7 +553,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                         }
                 }
 
-                sdu_dealloc_(ctx, sdu);
+                rlc_sdu_dealloc(ctx, sdu);
         }
 
         if (ctx->type == RLC_AM) {
@@ -887,12 +575,22 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 }
         }
 
-        (void)do_tx_request_(ctx);
+        (void)rlc_tx_request(ctx);
 
 exit:
         rlc_lock_release(&ctx->lock);
 }
 
+/**
+ * @brief Adjust the size of @p pdu to fit within @p max_size
+ *
+ * In UM mode, this may set the is_last flag if the SN can be omitted
+ * altogether
+ *
+ * @param ctx
+ * @param pdu
+ * @param max_size
+ */
 static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
                              size_t max_size)
 {
@@ -911,11 +609,6 @@ static void pdu_size_adjust_(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         if (pdu->size + hsize > max_size) {
                 pdu->size -= pdu->size + hsize - max_size;
         }
-}
-
-static bool should_gen_status_(const struct rlc_context *ctx)
-{
-        return ctx->gen_status;
 }
 
 /**
@@ -951,86 +644,76 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
         struct rlc_sdu_segment *segment;
         struct rlc_sdu *cur;
 
-        switch (sdu->state) {
-        case RLC_READY:
-                segment = sdu->segments;
-                if (segment == NULL) {
-                        sdu->state = RLC_WAIT;
-                        break;
-                }
+        segment = sdu->segments;
+        rlc_assert(segment != NULL);
 
-                pdu->sn = sdu->sn;
-                pdu->size = segment->seg.end - segment->seg.start;
-                if (pdu->size == 0) {
-                        rlc_assert(ctx->type == RLC_AM);
+        pdu->sn = sdu->sn;
+        pdu->size = segment->seg.end - segment->seg.start;
+        if (pdu->size == 0) {
+                rlc_assert(ctx->type == RLC_AM);
 
-                        sdu->state = RLC_WAIT;
-                        return false;
-                }
-
-                pdu->seg_offset = segment->seg.start;
-                pdu->flags.is_first = pdu->seg_offset == 0;
-
-                pdu_size_adjust_(ctx, pdu, size_avail);
-
-                segment->seg.start += pdu->size;
-                /* Segment done */
-                if (segment->seg.start >= segment->seg.end) {
-                        /* If last segment, set last flag and go into waiting
-                         * state. The last segment is kept alive until the
-                         * SDU is deallocated, so that it can be used to
-                         * distuingish between retransmitted PDUs and
-                         * first-time-transmitted PDUs. */
-                        if (segment->next == NULL) {
-                                sdu->state = RLC_WAIT;
-                                pdu->flags.is_last = 1;
-                        } else {
-                                sdu->segments = segment->next;
-
-                                do_dealloc_(ctx, segment);
-                        }
-                }
-
-                ctx->tx.pdu_without_poll += 1;
-                ctx->tx.byte_without_poll += pdu->size;
-
-                pdu->flags.polled = should_poll_(ctx, sdu);
-                if (pdu->flags.polled) {
-                        ctx->tx.pdu_without_poll = 0;
-                        ctx->tx.byte_without_poll = 0;
-
-                        /* Set POLL_SN to the highest SN of the PDUs submitted
-                         * to the lower layer */
-                        for (rlc_each_node(ctx->sdus, cur, next)) {
-                                if (cur->dir == RLC_TX &&
-                                    (cur->segments->seg.start != 0 ||
-                                     cur->segments->next != NULL) &&
-                                    cur->sn > ctx->poll_sn) {
-                                        ctx->poll_sn = cur->sn;
-                                }
-                        }
-
-                        ctx->force_poll = false;
-
-                        sdu->state = RLC_WAIT;
-                        (void)rlc_timer_restart(
-                                ctx->t_poll_retransmit,
-                                ctx->conf->time_poll_retransmit_us);
-                        rlc_errf("Restarting poll");
-
-                        rlc_dbgf("TX; Polling %" PRIu32 " for status", pdu->sn);
-                }
-
-                break;
-        default:
+                sdu->state = RLC_WAIT;
                 return false;
+        }
+
+        pdu->seg_offset = segment->seg.start;
+        pdu->flags.is_first = pdu->seg_offset == 0;
+
+        pdu_size_adjust_(ctx, pdu, size_avail);
+
+        segment->seg.start += pdu->size;
+        /* Segment done */
+        if (segment->seg.start >= segment->seg.end) {
+                /* If last segment, set last flag and go into waiting
+                 * state. The last segment is kept alive until the
+                 * SDU is deallocated, so that it can be used to
+                 * distuingish between retransmitted PDUs and
+                 * first-time-transmitted PDUs. */
+                if (segment->next == NULL) {
+                        sdu->state = RLC_WAIT;
+                        pdu->flags.is_last = 1;
+                } else {
+                        sdu->segments = segment->next;
+
+                        rlc_dealloc(ctx, segment);
+                }
+        }
+
+        ctx->tx.pdu_without_poll += 1;
+        ctx->tx.byte_without_poll += pdu->size;
+
+        pdu->flags.polled = should_poll_(ctx, sdu);
+        if (pdu->flags.polled) {
+                ctx->tx.pdu_without_poll = 0;
+                ctx->tx.byte_without_poll = 0;
+
+                /* Set POLL_SN to the highest SN of the PDUs submitted
+                 * to the lower layer */
+                for (rlc_each_node(ctx->sdus, cur, next)) {
+                        if (cur->dir == RLC_TX &&
+                            (cur->segments->seg.start != 0 ||
+                             cur->segments->next != NULL) &&
+                            cur->sn > ctx->poll_sn) {
+                                ctx->poll_sn = cur->sn;
+                        }
+                }
+
+                ctx->force_poll = false;
+
+                sdu->state = RLC_WAIT;
+
+                rlc_dbgf("Starting t-PollRetransmit");
+                (void)rlc_timer_restart(ctx->t_poll_retransmit,
+                                        ctx->conf->time_poll_retransmit_us);
+
+                rlc_dbgf("TX; Polling %" PRIu32 " for status", pdu->sn);
         }
 
         return true;
 }
 
-static struct rlc_chunk *encode_status_(struct rlc_context *ctx,
-                                        struct rlc_pdu_status *status)
+static struct rlc_chunk *chunk_encode_status_(struct rlc_context *ctx,
+                                              struct rlc_pdu_status *status)
 {
         struct rlc_chunk *chunk;
         size_t size;
@@ -1038,7 +721,7 @@ static struct rlc_chunk *encode_status_(struct rlc_context *ctx,
 
         size = rlc_status_size(ctx, status);
 
-        chunk = do_alloc_(ctx, sizeof(*chunk) + size);
+        chunk = rlc_alloc(ctx, sizeof(*chunk) + size);
         if (chunk == NULL) {
                 return NULL;
         }
@@ -1063,7 +746,7 @@ static void free_chunks_(struct rlc_context *ctx, struct rlc_chunk *chunks)
 
         while (cur != NULL) {
                 next = cur->next;
-                do_dealloc_(ctx, cur);
+                rlc_dealloc(ctx, cur);
                 cur = next;
         }
 }
@@ -1075,6 +758,7 @@ static void log_rx_status_(struct rlc_pdu_status *status)
                  status->nack_sn, status->offset.start, status->offset.end);
 }
 
+/** @brief Generate and submit status PDU to lower layer */
 static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 {
         ssize_t ret;
@@ -1142,7 +826,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 
                                 log_rx_status_(last_status);
 
-                                chunk = encode_status_(ctx, last_status);
+                                chunk = chunk_encode_status_(ctx, last_status);
                                 if (chunk == NULL) {
                                         ret = -ENOMEM;
                                         goto exit;
@@ -1160,7 +844,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         if (count > 0) {
                 log_rx_status_(last_status);
 
-                chunk = encode_status_(ctx, last_status);
+                chunk = chunk_encode_status_(ctx, last_status);
                 if (chunk == NULL) {
                         ret = -ENOMEM;
                         goto exit;
@@ -1182,21 +866,88 @@ exit:
         return ret;
 }
 
-/**
- * @brief Check if parts of @p sdu has been submitted to the lower layer
- *
- * An SDU has been submitted to a lower layer if:
- * * it contains more than one segment or
- * * its only segment does not start at 0
- *
- * @param sdu
- * @return bool
- * @retval true Not yet been submitted to lower layer
- * @retval false Been submitted to lower layer
- */
-static bool sdu_submitted_(struct rlc_sdu *sdu)
+static bool should_gen_status_(const struct rlc_context *ctx)
 {
-        return sdu->segments->next != NULL || sdu->segments->seg.start != 0;
+        return ctx->gen_status;
+}
+
+static struct rlc_sdu *highest_sn_submitted_(struct rlc_context *ctx)
+{
+        struct rlc_sdu *cur;
+        struct rlc_sdu *highest;
+
+        highest = NULL;
+
+        for (rlc_each_node(ctx->sdus, cur, next)) {
+                if (cur->dir != RLC_TX) {
+                        continue;
+                }
+
+                if (rlc_sdu_submitted(cur) &&
+                    (highest == NULL || cur->sn > highest->sn)) {
+                        highest = cur;
+                }
+        }
+
+        return highest;
+}
+
+static void force_retransmit_(struct rlc_context *ctx, size_t max_size)
+{
+        rlc_errno status;
+        ssize_t bytes;
+        struct rlc_pdu pdu;
+        struct rlc_sdu *highest_sn;
+        struct rlc_sdu_segment *last;
+        struct rlc_sdu_segment *tmp_seg;
+        struct rlc_segment seg;
+        size_t header_size;
+
+        prepare_pdu_(ctx, &pdu);
+
+        header_size = rlc_pdu_header_size(ctx, &pdu);
+        if (header_size > max_size) {
+                rlc_errf("Transmit window can not fit minimal header; needs "
+                         "%zu, has %zu",
+                         header_size, max_size);
+                return;
+        }
+
+        max_size -= header_size;
+
+        highest_sn = highest_sn_submitted_(ctx);
+        if (highest_sn == NULL) {
+                rlc_errf("No viable SDU to retransmit poll with");
+                return;
+        }
+
+        last = NULL;
+        for (rlc_each_node(highest_sn->segments, tmp_seg, next)) {
+                last = tmp_seg;
+        }
+
+        rlc_assert(last != NULL);
+
+        seg.end = last->seg.start;
+        seg.start = seg.end - rlc_min(seg.end, max_size);
+
+        status = rlc_sdu_seg_append(ctx, highest_sn, seg);
+        if (status != 0) {
+                rlc_errf("Unable to forcibly re-append segment to SDU");
+                return;
+        }
+
+        if (!serve_sdu_(ctx, highest_sn, &pdu, max_size)) {
+                rlc_errf("Unable to serve SDU");
+                return;
+        }
+
+        bytes = tx_pdu_view_(ctx, &pdu, highest_sn->chunks, max_size);
+        if (bytes < 0) {
+                rlc_errf("Unable to transmit PDU view: %" RLC_PRI_ERRNO,
+                         (rlc_errno)status);
+                return;
+        }
 }
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size)
@@ -1221,7 +972,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         }
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, cur, next)) {
-                if (cur->dir != RLC_TX) {
+                if (cur->dir != RLC_TX || cur->state != RLC_READY) {
                         continue;
                 }
 
@@ -1242,9 +993,9 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 }
 
                 if (ctx->type != RLC_AM && pdu.flags.is_last) {
-                        do_tx_done_(ctx, cur);
-                        remove_sdu_(ctx, cur);
-                        do_dealloc_(ctx, cur);
+                        rlc_event_tx_done(ctx, cur);
+                        rlc_sdu_remove(ctx, cur);
+                        rlc_dealloc(ctx, cur);
                 }
 
                 size -= ret;
@@ -1255,44 +1006,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
 
         /* Handle expiry of t-PollRetransmit (section 5.3.3.4) */
         if (ctx->type == RLC_AM && ctx->force_poll && size > 0) {
-                highest_sn = NULL;
-
-                for (rlc_each_node(ctx->sdus, cur, next)) {
-                        if (cur->dir != RLC_TX) {
-                                continue;
-                        }
-
-                        if (sdu_submitted_(cur) &&
-                            (highest_sn == NULL || cur->sn > highest_sn->sn)) {
-                                highest_sn = cur;
-                        }
-                }
-
-                if (highest_sn != NULL) {
-                        /* TODO: clean this shit up */
-                        last_seg = NULL;
-                        for (rlc_each_node(highest_sn->segments, tmp_seg,
-                                           next)) {
-                                last_seg = tmp_seg;
-                        }
-
-                        status = seg_append_(
-                                ctx, highest_sn,
-                                (struct rlc_segment){
-                                        .start = last_seg->seg.start -
-                                                 rlc_min(last_seg->seg.start,
-                                                         size),
-                                        .end = last_seg->seg.start,
-                                });
-                        if (status == 0) {
-                                highest_sn->state = RLC_READY;
-                                serve_sdu_(ctx, highest_sn, &pdu, size);
-                                tx_pdu_view_(ctx, &pdu, highest_sn->chunks,
-                                             size);
-                        }
-                } else {
-                        rlc_errf("No viable SDU to retransmit poll with");
-                }
+                force_retransmit_(ctx, size);
         }
 
         rlc_lock_release(&ctx->lock);

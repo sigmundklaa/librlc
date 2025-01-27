@@ -5,4 +5,6 @@ target_sources(
         rlc.c
         chunk.c
         encode.c
+        event.c
+        sdu.c
 )
