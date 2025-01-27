@@ -256,6 +256,8 @@ static void trigger_reset_(void)
         uint64_t dumb;
         int size;
 
+        dumb = 0;
+
         size = write(event_fd_, &dumb, sizeof(dumb));
         rlc_assert(size == sizeof(dumb));
 
