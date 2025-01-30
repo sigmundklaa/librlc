@@ -105,7 +105,7 @@ typedef struct rlc_context {
         rlc_timer t_poll_retransmit;
 
         uint32_t poll_sn;
-        
+
         bool force_poll;
 
         rlc_lock lock;
@@ -115,6 +115,8 @@ typedef struct rlc_context {
 
         struct rlc_sdu *sdus;
         const struct rlc_methods *methods;
+
+        void *user_data;
 } rlc_context;
 
 struct rlc_sdu_segment {
@@ -248,13 +250,18 @@ struct rlc_event {
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *conf,
-                   const struct rlc_methods *methods);
+                   const struct rlc_methods *methods, void *user_data);
 
 rlc_errno rlc_send(rlc_context *ctx, struct rlc_chunk *chunks);
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size);
 
 void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks);
+
+static inline void *rlc_user_data(struct rlc_context *ctx)
+{
+        return ctx->user_data;
+}
 
 RLC_END_DECL
 

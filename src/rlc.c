@@ -232,13 +232,14 @@ static void alarm_poll_retransmit_(rlc_timer timer, void *ctx_arg)
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *config,
-                   const struct rlc_methods *methods)
+                   const struct rlc_methods *methods, void *user_data)
 {
         (void)memset(ctx, 0, sizeof(*ctx));
 
         ctx->type = type;
         ctx->methods = methods;
         ctx->conf = config;
+        ctx->user_data = user_data;
 
         rlc_lock_init(&ctx->lock);
 
