@@ -401,6 +401,7 @@ rlc_errno rlc_plat_timer_stop(rlc_timer timer)
 
         t = timer_get_(timer);
         if (t == NULL) {
+                rlc_lock_release(&lock_);
                 return -EINVAL;
         }
 
