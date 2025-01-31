@@ -253,13 +253,13 @@ static void timer_del_(rlc_timer id)
 
 static void trigger_reset_(void)
 {
-        uint64_t dumb;
+        uint64_t count;
         int size;
 
-        dumb = 0;
+        count = 1;
 
-        size = write(event_fd_, &dumb, sizeof(dumb));
-        rlc_assert(size == sizeof(dumb));
+        size = write(event_fd_, &count, sizeof(count));
+        rlc_assert(size == sizeof(count));
 
         rlc_dbgf("Triggering reset");
 }
@@ -270,7 +270,7 @@ void rlc_linux_timer_api_init(void)
 
         rlc_lock_init(&lock_);
 
-        event_fd_ = eventfd(0, 0);
+        event_fd_ = eventfd(0, EFD_SEMAPHORE);
         if (event_fd_ < 0) {
                 rlc_panicf(errno, "Unable to create eventfd");
                 return;
