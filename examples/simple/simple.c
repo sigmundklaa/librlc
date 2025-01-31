@@ -129,13 +129,30 @@ static void client_init(struct client *cl, struct client *other)
 }
 
 #define MESSAGE                                                                \
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do "     \
-        "eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim " \
-        "ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut "  \
-        "aliquip ex ea commodo consequat. Duis aute irure dolor in "           \
-        "reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla " \
-        "pariatur. Excepteur sint occaecat cupidatat non proident, sunt in "   \
-        "culpa qui officia deserunt mollit anim id est laborum."
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "            \
+        "Pellentesque in ornare risus, et rutrum magna. In aliquet sapien "    \
+        "diam, ac facilisis est semper quis. Morbi elementum enim vitae "      \
+        "condimentum gravida. Maecenas eget velit sollicitudin, condimentum "  \
+        "ante ac, bibendum velit. Sed mollis cursus ipsum in sollicitudin. "   \
+        "Sed ultricies eleifend ultrices. Cras id ex et orci ornare "          \
+        "fermentum et non sapien. Mauris rutrum, lorem id pellentesque "       \
+        "faucibus, enim metus pulvinar diam, sit amet sollicitudin ligula "    \
+        "risus id est. Donec vestibulum mi quis fermentum bibendum. Donec "    \
+        "imperdiet, arcu vel viverra congue, quam nunc egestas quam, quis "    \
+        "finibus odio ex non est. In quis enim metus. Morbi gravida, metus "   \
+        "vel euismod malesuada, nisl purus fermentum dui, dignissim lobortis " \
+        "metus diam nec elit. Duis pulvinar fringilla tellus vitae "           \
+        "fringilla. Proin rutrum, diam in malesuada varius, felis tortor "     \
+        "aliquet dolor, a vehicula mauris urna sit amet nisi. Proin eu dolor " \
+        "leo. Donec maximus diam ac lectus scelerisque tincidunt. Proin id "   \
+        "iaculis mauris, et hendrerit enim. Mauris lacinia in lectus at "      \
+        "cursus. Nulla commodo dolor arcu, sed varius sem euismod vel. "       \
+        "Curabitur tempus bibendum nibh vel tristique. Cras facilisis elit "   \
+        "vitae turpis feugiat, sit amet efficitur nibh condimentum. Cras "     \
+        "gravida iaculis placerat. Vivamus consectetur posuere dui, eu "       \
+        "interdum nunc scelerisque quis. Maecenas eu nunc consectetur, "       \
+        "pretium risus id, interdum lectus. Cras tellus magna, placerat vel "  \
+        "dui nec, viverra posuere fusce. "
 
 int main(void)
 {
