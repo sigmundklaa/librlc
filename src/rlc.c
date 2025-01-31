@@ -162,6 +162,8 @@ static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
 
         ctx = ctx_arg;
 
+        rlc_dbgf("Reassembly alarm");
+
         rlc_lock_acquire(&ctx->lock);
 
         /* Ensure timer has not been stopped while in the process of firing.
@@ -642,6 +644,7 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
                        struct rlc_pdu *pdu, size_t size_avail)
 {
         size_t tot_size;
+        rlc_errno status;
         struct rlc_sdu_segment *segment;
         struct rlc_sdu *cur;
 
@@ -703,9 +706,15 @@ static bool serve_sdu_(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
                 sdu->state = RLC_WAIT;
 
-                rlc_dbgf("Starting t-PollRetransmit");
-                (void)rlc_timer_restart(ctx->t_poll_retransmit,
-                                        ctx->conf->time_poll_retransmit_us);
+                status = rlc_timer_restart(ctx->t_poll_retransmit,
+                                           ctx->conf->time_poll_retransmit_us);
+                if (status == 0) {
+                        rlc_dbgf("Started t-PollRetransmit");
+                } else {
+                        rlc_errf("Unable to start t-PollRetransmit: "
+                                 "%" RLC_PRI_ERRNO,
+                                 status);
+                }
 
                 rlc_dbgf("TX; Polling %" PRIu32 " for status", pdu->sn);
         }
@@ -860,6 +869,10 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         ctx->gen_status = false;
 
         ret = do_tx_submit_(ctx, &pdu, head_chunk, max_size);
+        if (ret < 0) {
+                rlc_errf("Submitting status failed: %" RLC_PRI_ERRNO,
+                         (rlc_errno)ret);
+        }
 
 exit:
         free_chunks_(ctx, head_chunk);
