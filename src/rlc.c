@@ -215,6 +215,7 @@ static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
 
 static void alarm_poll_retransmit_(rlc_timer timer, void *ctx_arg)
 {
+        rlc_errno status;
         struct rlc_context *ctx;
 
         ctx = ctx_arg;
@@ -228,6 +229,8 @@ static void alarm_poll_retransmit_(rlc_timer timer, void *ctx_arg)
         }
 
         ctx->force_poll = true;
+
+        (void)rlc_tx_request(ctx);
 
         rlc_lock_release(&ctx->lock);
 }
@@ -443,7 +446,6 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         if (pdu.flags.is_status) {
                 process_status_(ctx, &pdu, chunks);
 
-                (void)rlc_tx_request(ctx);
                 goto exit;
         }
 
@@ -543,7 +545,6 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                  * in memory until it can be relayed back. The RX buffer can
                  * however be freed to prevent excessive memory use. */
                 if (ctx->type == RLC_AM) {
-                        ctx->gen_status = true;
                         lowest = rlc_min(lowest_sn_not_recv_(ctx),
                                          ctx->rx.next_highest);
 
@@ -578,9 +579,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 }
         }
 
+exit:
         (void)rlc_tx_request(ctx);
 
-exit:
         rlc_lock_release(&ctx->lock);
 }
 
