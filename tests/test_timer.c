@@ -36,13 +36,13 @@ static void test_timer(void)
         timer1 = rlc_timer_install(cb_one, (void *)0x1234);
         TEST_ASSERT_TRUE(rlc_timer_okay(timer1));
 
-        status = rlc_timer_start(timer1, 2e5);
+        status = rlc_timer_start(timer1, 2e6);
         TEST_ASSERT_EQUAL(0, status);
 
         timer2 = rlc_timer_install(cb_two, (void *)0x5679);
         TEST_ASSERT_TRUE(rlc_timer_okay(timer2));
 
-        status = rlc_timer_start(timer2, 5e5);
+        status = rlc_timer_start(timer2, 3e6);
         TEST_ASSERT_EQUAL(0, status);
 }
 

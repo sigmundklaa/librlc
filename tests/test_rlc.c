@@ -2,7 +2,7 @@
 #include <unity/unity.h>
 #include <stdlib.h>
 
-#include "../src/rlc.c"
+#include "../src/sdu.h"
 
 void setUp(void)
 {
@@ -35,11 +35,11 @@ static void test_seg_append(void)
         };
         struct rlc_sdu sdu = {0};
 
-        status = seg_append_(&ctx, &sdu,
-                             (struct rlc_segment){
-                                     .start = 0,
-                                     .end = 128,
-                             });
+        status = rlc_sdu_seg_append(&ctx, &sdu,
+                                    (struct rlc_segment){
+                                            .start = 0,
+                                            .end = 128,
+                                    });
         TEST_ASSERT_EQUAL(0, status);
         TEST_ASSERT_NOT_NULL(sdu.segments);
         TEST_ASSERT_NULL(sdu.segments->next);
@@ -47,24 +47,24 @@ static void test_seg_append(void)
         TEST_ASSERT_EQUAL(0, sdu.segments->seg.start);
         TEST_ASSERT_EQUAL(128, sdu.segments->seg.end);
 
-        status = seg_append_(&ctx, &sdu,
-                             (struct rlc_segment){.start = 150, .end = 190});
+        status = rlc_sdu_seg_append(
+                &ctx, &sdu, (struct rlc_segment){.start = 150, .end = 190});
         TEST_ASSERT_EQUAL(0, status);
         TEST_ASSERT_NOT_NULL(sdu.segments->next);
 
         TEST_ASSERT_EQUAL(150, sdu.segments->next->seg.start);
         TEST_ASSERT_EQUAL(190, sdu.segments->next->seg.end);
 
-        status = seg_append_(&ctx, &sdu,
-                             (struct rlc_segment){.start = 210, .end = 240});
+        status = rlc_sdu_seg_append(
+                &ctx, &sdu, (struct rlc_segment){.start = 210, .end = 240});
         TEST_ASSERT_EQUAL(0, status);
         TEST_ASSERT_NOT_NULL(sdu.segments->next->next);
 
         TEST_ASSERT_EQUAL(210, sdu.segments->next->next->seg.start);
         TEST_ASSERT_EQUAL(240, sdu.segments->next->next->seg.end);
 
-        status = seg_append_(&ctx, &sdu,
-                             (struct rlc_segment){.start = 200, .end = 205});
+        status = rlc_sdu_seg_append(
+                &ctx, &sdu, (struct rlc_segment){.start = 200, .end = 205});
         TEST_ASSERT_EQUAL(0, status);
         TEST_ASSERT_NOT_NULL(sdu.segments->next->next);
         TEST_ASSERT_NOT_NULL(sdu.segments->next->next->next);
@@ -72,8 +72,8 @@ static void test_seg_append(void)
         TEST_ASSERT_EQUAL(200, sdu.segments->next->next->seg.start);
         TEST_ASSERT_EQUAL(205, sdu.segments->next->next->seg.end);
 
-        status = seg_append_(&ctx, &sdu,
-                             (struct rlc_segment){.start = 190, .end = 195});
+        status = rlc_sdu_seg_append(
+                &ctx, &sdu, (struct rlc_segment){.start = 190, .end = 195});
         TEST_ASSERT_EQUAL(0, status);
         TEST_ASSERT_NOT_NULL(sdu.segments->next);
 
