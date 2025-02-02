@@ -130,34 +130,32 @@ struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir)
 
         sdu->dir = dir;
 
-        if (sdu->dir == RLC_RX) {
-                sdu->rx_buffer = rlc_alloc(ctx, ctx->conf->buffer_size);
-                if (sdu->rx_buffer == NULL) {
-                        rlc_dealloc(ctx, sdu);
-                        return NULL;
-                }
-
-                sdu->rx_buffer_size = ctx->conf->buffer_size;
+        sdu->buffer = rlc_alloc(ctx, ctx->conf->buffer_size);
+        if (sdu->buffer == NULL) {
+                rlc_dealloc(ctx, sdu);
+                return NULL;
         }
+
+        sdu->buffer_size = ctx->conf->buffer_size;
 
         return sdu;
 }
 
-void rlc_sdu_dealloc_rx_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu)
+void rlc_sdu_dealloc_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
-        if (sdu->dir != RLC_RX || sdu->rx_buffer == NULL) {
+        if (sdu->buffer == NULL) {
                 return;
         }
 
-        rlc_dealloc(ctx, sdu->rx_buffer);
-        sdu->rx_buffer = NULL;
+        rlc_dealloc(ctx, sdu->buffer);
+        sdu->buffer = NULL;
 }
 
 void rlc_sdu_dealloc(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         struct rlc_sdu_segment *seg;
 
-        rlc_sdu_dealloc_rx_buffer(ctx, sdu);
+        rlc_sdu_dealloc_buffer(ctx, sdu);
 
         for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments, seg,
                                 next)) {

@@ -73,7 +73,7 @@ void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu);
 
 struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir);
 
-void rlc_sdu_dealloc_rx_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu);
+void rlc_sdu_dealloc_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu);
 
 void rlc_sdu_dealloc(struct rlc_context *ctx, struct rlc_sdu *sdu);
 

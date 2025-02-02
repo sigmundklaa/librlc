@@ -60,11 +60,6 @@ struct rlc_config {
 };
 
 typedef struct rlc_context {
-        struct {
-                uint8_t *mem;
-                size_t size;
-        } workbuf;
-
         enum rlc_sdu_type type;
 
         const struct rlc_config *conf;
@@ -139,10 +134,8 @@ typedef struct rlc_sdu {
         uint32_t sn;
         unsigned int retx_count; /* Number of retransmissions */
 
-        struct rlc_chunk *chunks;
-
-        void *rx_buffer;
-        size_t rx_buffer_size;
+        void *buffer;
+        size_t buffer_size;
 
         struct {
                 bool rx_last_received: 1;
@@ -204,11 +197,8 @@ struct rlc_event {
         } type;
 
         union {
-                struct rlc_chunk rx_done;
-                struct {
-                        uint32_t sn;
-                } rx_fail;
-                struct rlc_chunk *tx_done;
+                const struct rlc_chunk *rx_done;
+                const struct rlc_chunk *tx_done;
         } data;
 };
 

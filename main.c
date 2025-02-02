@@ -59,7 +59,7 @@ static rlc_errno p1_tx_submit(struct rlc_context *ctx,
         uint8_t buf[1];
         if (ctx->type == RLC_AM) {
                 rlc_chunks_deepcopy(chunks, buf, 1);
-                if (true || !(buf[0] & (1 << 6))) {
+                if (!(buf[0] & (1 << 6))) {
                         i = (i + 1) % 11;
                         if (i == 4) {
                                 (void)printf("p1 dropping\n");
@@ -143,23 +143,23 @@ static void p2_event(rlc_context *ctx, const struct rlc_event *event)
         case RLC_EVENT_RX_DONE:
                 break;
         case RLC_EVENT_RX_FAIL:
-                (void)printf("SN dropped: %i\n", (int)event->data.rx_fail.sn);
+                (void)printf("SDU dropped\n");
                 return;
         default:
                 (void)printf("Unknown event p2\n");
                 return;
         }
 
-        (void)printf("size: %zu\n", event->data.rx_done.size);
+        (void)printf("size: %zu\n", event->data.rx_done->size);
 
         char c;
-        for (int i = 0; i < event->data.rx_done.size; i++) {
-                c = *((char *)event->data.rx_done.data + i);
+        for (int i = 0; i < event->data.rx_done->size; i++) {
+                c = *((char *)event->data.rx_done->data + i);
                 (void)printf("%c", c);
         }
         (void)printf("\n");
 
-        ssize_t sz = rlc_chunks_deepcopy(&event->data.rx_done, received_,
+        ssize_t sz = rlc_chunks_deepcopy(event->data.rx_done, received_,
                                          sizeof(received_));
         assert(sz > 0 && memcmp(correct_, received_, sz) == 0);
         (void)printf("Done\n");
@@ -361,10 +361,10 @@ int main(void)
         status = pthread_create(&t2, NULL, worker, &ctx2);
         assert(status == 0);
 
-        status = rlc_init(&ctx1.rlc, RLC_AM, &conf, &p1_methods);
+        status = rlc_init(&ctx1.rlc, RLC_AM, &conf, &p1_methods, NULL);
         assert(status == 0);
 
-        status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods);
+        status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods, NULL);
         assert(status == 0);
 
         status = rlc_send(&ctx1.rlc, chunks);
@@ -374,8 +374,8 @@ int main(void)
                 static int done1 = 0;
                 static int done2 = 0;
 
-                rlc_tx_avail(&ctx1.rlc, 20);
-                rlc_tx_avail(&ctx2.rlc, 50);
+                rlc_tx_avail(&ctx1.rlc, 100);
+                rlc_tx_avail(&ctx2.rlc, 100);
 
                 if (sem_trywait(&ctx1.done) == 0) {
                         break;

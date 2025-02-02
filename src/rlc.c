@@ -60,19 +60,20 @@ static ssize_t do_tx_submit_(struct rlc_context *ctx, struct rlc_pdu *pdu,
 }
 
 static ssize_t tx_pdu_view_(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                            struct rlc_chunk *payload, size_t max_size)
+                            struct rlc_sdu *sdu, size_t max_size)
 {
         size_t num_chunks;
+        struct rlc_chunk chunk;
 
-        num_chunks = rlc_chunks_num_view(payload, pdu->size, pdu->seg_offset);
-
-        {
-                struct rlc_chunk chunks[num_chunks];
-
-                (void)rlc_chunks_copy_view(payload, chunks, pdu->size,
-                                           pdu->seg_offset);
-                return do_tx_submit_(ctx, pdu, chunks, max_size);
+        if (pdu->seg_offset + pdu->size > sdu->buffer_size) {
+                return -ENODATA;
         }
+
+        chunk.next = NULL;
+        chunk.data = (uint8_t *)sdu->buffer + pdu->seg_offset;
+        chunk.size = pdu->size;
+
+        return do_tx_submit_(ctx, pdu, &chunk, max_size);
 }
 
 static bool in_window_(uint32_t sn, uint32_t base, uint32_t size)
@@ -269,13 +270,22 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
         rlc_errno status;
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
+        size_t size;
+
+        size = rlc_chunks_size(chunks);
 
         sdu = rlc_sdu_alloc(ctx, RLC_TX);
         if (sdu == NULL) {
                 return -ENOMEM;
         }
 
-        sdu->chunks = chunks;
+        sdu->buffer_size = rlc_chunks_deepcopy(chunks, sdu->buffer, size);
+
+        if (sdu->buffer_size != size) {
+                (void)rlc_sdu_dealloc(ctx, sdu);
+                return -ENOSPC;
+        }
+
         sdu->sn = ctx->tx.next++;
 
         rlc_lock_acquire(&ctx->lock);
@@ -386,7 +396,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
 
                 if (cur.offset.end == RLC_STATUS_SO_MAX) {
-                        cur.offset.end = rlc_chunks_size(sdu->chunks);
+                        cur.offset.end = sdu->buffer_size;
                 }
 
                 status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
@@ -493,9 +503,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 goto exit;
         }
 
-        if (pdu.seg_offset >= sdu->rx_buffer_size) {
+        if (pdu.seg_offset >= sdu->buffer_size) {
                 rlc_errf("RX; Offset out of bounds: %" PRIu32 ">%zu",
-                         pdu.seg_offset, sdu->rx_buffer_size);
+                         pdu.seg_offset, sdu->buffer_size);
                 goto exit;
         }
 
@@ -507,8 +517,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         /* Copy the contents of the chunks, skipping the header content */
         status = rlc_chunks_deepcopy_view(
-                chunks, (uint8_t *)sdu->rx_buffer + pdu.seg_offset,
-                sdu->rx_buffer_size - pdu.seg_offset, header_size);
+                chunks, (uint8_t *)sdu->buffer + pdu.seg_offset,
+                sdu->buffer_size - pdu.seg_offset, header_size);
         if (status <= 0) {
                 rlc_errf("RX; Unable to flatten chunks: (%" RLC_PRI_ERRNO ")",
                          (rlc_errno)status);
@@ -957,7 +967,7 @@ static void force_retransmit_(struct rlc_context *ctx, size_t max_size)
                 return;
         }
 
-        bytes = tx_pdu_view_(ctx, &pdu, highest_sn->chunks, max_size);
+        bytes = tx_pdu_view_(ctx, &pdu, highest_sn, max_size);
         if (bytes < 0) {
                 rlc_errf("Unable to transmit PDU view: %" RLC_PRI_ERRNO,
                          (rlc_errno)status);
@@ -1001,7 +1011,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                          "%zu",
                          pdu.sn, pdu.seg_offset, pdu.seg_offset + pdu.size);
 
-                ret = tx_pdu_view_(ctx, &pdu, cur->chunks, size);
+                ret = tx_pdu_view_(ctx, &pdu, cur, size);
                 if (ret <= 0) {
                         rlc_errf("PDU submit failed: error %" RLC_PRI_ERRNO,
                                  (rlc_errno)ret);
