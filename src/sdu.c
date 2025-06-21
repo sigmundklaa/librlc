@@ -115,7 +115,7 @@ void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu)
                         break;
                 }
 
-                lastp = &sdu->next;
+                lastp = &cur->next;
         }
 }
 
