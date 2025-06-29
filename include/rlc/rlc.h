@@ -65,37 +65,35 @@ typedef struct rlc_context {
         const struct rlc_config *conf;
 
         /* RLC specification state variables */
-        union {
-                struct {
-                        /* RX_NEXT holds the value of the SN following the last
-                         * in-sequence completely received SDU, and serves as
-                         * the lower edge of the receiving window. Initially
-                         * set to 0, updated whenever SN=RX_NEXT is received */
-                        uint32_t next;
+        struct {
+                /* RX_NEXT holds the value of the SN following the last
+                 * in-sequence completely received SDU, and serves as
+                 * the lower edge of the receiving window. Initially
+                 * set to 0, updated whenever SN=RX_NEXT is received */
+                uint32_t next;
 
-                        /* RX_NEXT_HIGHEST holds the value of the SN following
-                         * the SN of the SDU with the highest SN among received
-                         * SDUs. */
-                        uint32_t next_highest;
+                /* RX_NEXT_HIGHEST holds the value of the SN following
+                 * the SN of the SDU with the highest SN among received
+                 * SDUs. */
+                uint32_t next_highest;
 
-                        /* RX_HIGHEST_STATUS holds the highest possible value
-                         * of the SN which can be indicated by ACK_SN when
-                         * constructing status PDU. */
-                        uint32_t highest_status;
+                /* RX_HIGHEST_STATUS holds the highest possible value
+                 * of the SN which can be indicated by ACK_SN when
+                 * constructing status PDU. */
+                uint32_t highest_status;
 
-                        /* RX_NEXT_STATUS_TRIGGER holds the value of the SN
-                         * following the SN of the SDU which triggered
-                         * reassembly. */
-                        uint32_t next_status_trigger;
-                } rx;
-                struct {
-                        uint32_t next;
-                        uint32_t next_ack;
+                /* RX_NEXT_STATUS_TRIGGER holds the value of the SN
+                 * following the SN of the SDU which triggered
+                 * reassembly. */
+                uint32_t next_status_trigger;
+        } rx;
+        struct {
+                uint32_t next;
+                uint32_t next_ack;
 
-                        size_t pdu_without_poll;
-                        size_t byte_without_poll;
-                } tx;
-        };
+                size_t pdu_without_poll;
+                size_t byte_without_poll;
+        } tx;
         rlc_timer t_reassembly;
         rlc_timer t_poll_retransmit;
 
