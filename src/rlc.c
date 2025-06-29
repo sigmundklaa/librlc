@@ -376,9 +376,6 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 rlc_dbgf("TX AM STATUS; NACK_SN: %" PRIu32 ", RANGE: %" PRIu32
                          "->%" PRIu32,
                          cur.nack_sn, cur.offset.start, cur.offset.end);
-                if (!cur.ext.has_offset) {
-                        continue;
-                }
 
                 for (rlc_each_node(ctx->sdus, sdu, next)) {
                         if (sdu->dir == RLC_TX && sdu->sn == cur.nack_sn) {
@@ -395,19 +392,26 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                         stop_poll_retransmit_(ctx);
                 }
 
-                if (cur.offset.end == RLC_STATUS_SO_MAX) {
-                        cur.offset.end = sdu->buffer_size;
-                }
+                /* TODO: NACK ranges */
+                if (cur.ext.has_offset) {
+                        if (cur.offset.end == RLC_STATUS_SO_MAX) {
+                                cur.offset.end = sdu->buffer_size;
+                        }
 
-                status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
-                if (status != 0) {
-                        rlc_errf("TX AM STATUS; Unable to append seg "
-                                 "(%" RLC_PRI_ERRNO ")",
-                                 status);
-                        return;
-                }
+                        status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
+                        if (status != 0) {
+                                rlc_errf("TX AM STATUS; Unable to append seg "
+                                         "(%" RLC_PRI_ERRNO ")",
+                                         status);
+                                return;
+                        }
 
-                sdu->state = RLC_READY;
+                        rlc_dbgf("Marking SDU %" PRIu32
+                                 " for retransmission (%" PRIu32 "->%" PRIu32
+                                 ")",
+                                 sdu->sn, cur.offset.start, cur.offset.end);
+                        sdu->state = RLC_READY;
+                }
 
                 offset += bytes;
                 bytes = rlc_status_decode(ctx, &cur, chunks, offset);
