@@ -458,6 +458,27 @@ static uint32_t lowest_sn_not_recv_(struct rlc_context *ctx)
         return lowest;
 }
 
+static void am_rx_highest_status_update_(struct rlc_context *ctx, uint32_t next)
+{
+        struct rlc_sdu *sdu;
+
+        ctx->rx.highest_status = next;
+
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
+                if (sdu->dir != RLC_RX) {
+                        continue;
+                }
+
+                if (sdu->sn < next) {
+                        rlc_dbgf("Removing SDU: state %i", sdu->state);
+                        assert(sdu->state == RLC_DONE);
+
+                        rlc_sdu_remove(ctx, sdu);
+                        rlc_sdu_dealloc(ctx, sdu);
+                }
+        }
+}
+
 void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 {
         ssize_t status;
@@ -569,7 +590,6 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         if (rlc_sdu_is_rx_done(sdu)) {
                 rlc_event_rx_done(ctx, sdu);
-                rlc_sdu_remove(ctx, sdu);
 
                 /* In acknowledged mode, the SDU should be deallocated when
                  * transmitting the status, so that we can keep the information
@@ -579,16 +599,20 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                         lowest = rlc_min(lowest_sn_not_recv_(ctx),
                                          ctx->rx.next_highest);
 
-                        if (sdu->sn == ctx->rx.highest_status) {
-                                ctx->rx.highest_status = lowest;
-                        }
-
                         if (sdu->sn == ctx->rx.next) {
                                 ctx->rx.next = lowest;
                         }
-                }
 
-                rlc_sdu_dealloc(ctx, sdu);
+                        sdu->state = RLC_DONE;
+
+                        if (sdu->sn == ctx->rx.highest_status) {
+                                /* After this call, SDU can not be used */
+                                am_rx_highest_status_update_(ctx, lowest);
+                        }
+                } else {
+                        rlc_sdu_remove(ctx, sdu);
+                        rlc_sdu_dealloc(ctx, sdu);
+                }
         }
 
         if (ctx->type == RLC_AM) {

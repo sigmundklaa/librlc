@@ -126,6 +126,7 @@ typedef struct rlc_sdu {
         enum rlc_sdu_state {
                 RLC_READY,
                 RLC_WAIT,
+                RLC_DONE,
         } state;
 
         /* RLC specification state variables */
