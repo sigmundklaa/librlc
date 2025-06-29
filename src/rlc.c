@@ -510,20 +510,17 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 rlc_event_rx_done_direct(ctx, chunks);
 
                 goto exit;
-        } else if (!in_window_(pdu.sn, ctx->rx.next, ctx->conf->window_size)) {
-                rlc_errf("RX; SN %" PRIu32 " outside RX window (%" PRIu32
-                         "->%zu), dropping",
-                         pdu.sn, ctx->rx.next,
-                         ctx->rx.next + ctx->conf->window_size);
-                goto exit;
         }
 
         sdu = rlc_sdu_get(ctx, pdu.sn, RLC_RX);
 
         if (sdu == NULL) {
-                if (!pdu.flags.is_first) {
-                        rlc_errf("RX; Unrecognized SN %" PRIu32 ", dropping",
-                                 pdu.sn);
+                if (!in_window_(pdu.sn, ctx->rx.next, ctx->conf->window_size)) {
+                        rlc_errf("RX; SN %" PRIu32
+                                 " outside RX window (%" PRIu32 "->%zu" PRIu32
+                                 "), dropping (highest_status=%" PRIu32 ")",
+                                 pdu.sn, ctx->rx.next, ctx->conf->window_size,
+                                 ctx->rx.highest_status);
                         goto exit;
                 }
 
