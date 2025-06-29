@@ -413,6 +413,27 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 bytes = rlc_status_decode(ctx, &cur, chunks, offset);
         }
 
+        /* Mark every SDU not known to the RX side for retransmission */
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir != RLC_TX || sdu->state == RLC_READY) {
+                        continue;
+                }
+
+                cur.offset.start = 0;
+                cur.offset.end = sdu->buffer_size;
+
+                status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
+
+                if (status != 0) {
+                        rlc_errf("TX AM STATUS; Unable to append seg "
+                                 "(%" RLC_PRI_ERRNO ")",
+                                 status);
+                        return;
+                }
+
+                sdu->state = RLC_READY;
+        }
+
         if (bytes < 0) {
                 rlc_errf("TX AM STATUS; Decode failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)bytes);
