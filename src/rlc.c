@@ -506,7 +506,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 ctx->gen_status = true;
         }
 
-        if (ctx->type == RLC_TM || (pdu.flags.is_first && pdu.flags.is_last)) {
+        if (ctx->type == RLC_TM) {
                 rlc_event_rx_done_direct(ctx, chunks);
 
                 goto exit;
