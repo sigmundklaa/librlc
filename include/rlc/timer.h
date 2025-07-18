@@ -7,6 +7,17 @@
 
 RLC_BEGIN_DECL
 
+struct rlc_context;
+typedef void (*rlc_timer_cb)(void *);
+
+/**
+ * @brief Invoke timer alarm callback
+ *
+ * This is called by platform code
+ */
+void rlc_timer_alarm(rlc_timer timer, struct rlc_context *ctx, rlc_timer_cb cb,
+                     void *args);
+
 static inline bool rlc_timer_okay(rlc_timer timer)
 {
         return rlc_plat_timer_okay(timer);

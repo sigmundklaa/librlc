@@ -315,15 +315,17 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
         struct rlc_sdu **lastp;
         uint32_t lowest;
 
+        rlc_dbgf("TX AM STATUS; ACK_SN: %" PRIu32, sn);
+
         if (ctx->tx.next_ack >= sn) {
+                rlc_wrnf("TX AM STATUS; Dropping as next_ack>=ack_sn (%" PRIu32
+                         ">=%" PRIu32 ")",
+                         ctx->tx.next_ack, sn);
                 return;
         }
 
-        rlc_dbgf("TX AM STATUS; ACK_SN: %" PRIu32, sn);
-
         lastp = &ctx->sdus;
         lowest = ctx->tx.next;
-        next = NULL;
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir == RLC_TX) {
@@ -365,6 +367,9 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         offset = rlc_pdu_header_size(ctx, pdu) - 1;
 
         am_tx_next_ack_update_(ctx, pdu->sn);
+
+        rlc_dbgf("Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32,
+                 pdu->sn, ctx->poll_sn);
 
         if (pdu->sn > ctx->poll_sn) {
                 stop_poll_retransmit_(ctx);
@@ -520,7 +525,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         if (sdu == NULL) {
                 if (!in_window_(pdu.sn, ctx->rx.next, ctx->conf->window_size)) {
-                        rlc_errf("RX; SN %" PRIu32
+                        rlc_wrnf("RX; SN %" PRIu32
                                  " outside RX window (%" PRIu32 "->%zu" PRIu32
                                  "), dropping (highest_status=%" PRIu32 ")",
                                  pdu.sn, ctx->rx.next, ctx->conf->window_size,
@@ -590,6 +595,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         }
 
         if (rlc_sdu_is_rx_done(sdu)) {
+                rlc_inff("RX; SN: %" PRIu32 " completed", sdu->sn);
+
                 rlc_event_rx_done(ctx, sdu);
 
                 /* In acknowledged mode, the SDU should be deallocated when
@@ -845,6 +852,9 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         pdu.flags.is_status = 1;
         pdu.sn = ctx->rx.highest_status;
 
+        rlc_dbgf("Generating status report with highest_status=%" PRIu32,
+                 ctx->rx.highest_status);
+
         count = 0;
         status_idx = 0;
         head_chunk = NULL;
@@ -852,6 +862,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 
         last_status = NULL;
 
+        /* TODO: Every state=DONE should generate a nack range */
         for (rlc_each_node(ctx->sdus, sdu, next)) {
                 if (sdu->dir != RLC_RX) {
                         continue;
@@ -1035,6 +1046,8 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         struct rlc_sdu_segment *tmp_seg;
 
         rlc_lock_acquire(&ctx->lock);
+
+        rlc_dbgf("TX availability for context %p", ctx);
 
         if (ctx->type == RLC_AM && should_gen_status_(ctx)) {
                 (void)gen_status_(ctx, size);

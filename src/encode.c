@@ -313,7 +313,8 @@ size_t rlc_pdu_header_size(const struct rlc_context *ctx,
         switch (ctx->type) {
         case RLC_AM:
         case RLC_UM:
-                return sn_num_bytes_(ctx->conf->sn_width) + (SO_SIZE_ * has_so_(pdu));
+                return sn_num_bytes_(ctx->conf->sn_width) +
+                       (SO_SIZE_ * has_so_(pdu));
         case RLC_TM:
                 return 0;
         default:

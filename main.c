@@ -20,6 +20,9 @@ struct ctx {
         sem_t lock;
         sem_t done;
 
+        int done_count;
+        sem_t done_fully;
+
         uint8_t buf[1024];
         size_t size;
 
@@ -85,7 +88,6 @@ static void p1_event(rlc_context *ctx, const struct rlc_event *event)
 
         if (event->type == RLC_EVENT_TX_DONE) {
                 sem_post(&ctx1.done);
-                sem_post(&ctx1.done);
         }
 }
 
@@ -95,7 +97,7 @@ static void *worker(void *c_arg)
         struct rlc_chunk chunk;
 
         for (;;) {
-                if (sem_trywait(&c->done) == 0) {
+                if (sem_trywait(&c->done_fully) == 0) {
                         break;
                 } else if (sem_trywait(&c->sig) != 0) {
                         continue;
@@ -144,9 +146,11 @@ static void p2_event(rlc_context *ctx, const struct rlc_event *event)
                 break;
         case RLC_EVENT_RX_FAIL:
                 (void)printf("SDU dropped\n");
+                assert(0);
                 return;
         default:
                 (void)printf("Unknown event p2\n");
+                assert(0);
                 return;
         }
 
@@ -303,6 +307,9 @@ static void ctx_init(struct ctx *c)
 
         status = sem_init(&c->lock, 0, 1);
         assert(status == 0);
+
+        status = sem_init(&c->done_fully, 0, 0);
+        assert(status == 0);
 }
 
 int main(void)
@@ -367,22 +374,26 @@ int main(void)
         status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods, NULL);
         assert(status == 0);
 
-        status = rlc_send(&ctx1.rlc, chunks);
-        assert(status == 0);
+        for (int i = 0; i < 300; i++) {
+                status = rlc_send(&ctx1.rlc, chunks);
+                assert(status == 0);
 
-        for (;;) {
-                static int done1 = 0;
-                static int done2 = 0;
+                for (;;) {
+                        static int done1 = 0;
+                        static int done2 = 0;
 
-                rlc_tx_avail(&ctx1.rlc, 100);
-                rlc_tx_avail(&ctx2.rlc, 100);
+                        rlc_tx_avail(&ctx1.rlc, 100);
+                        rlc_tx_avail(&ctx2.rlc, 100);
 
-                if (sem_trywait(&ctx1.done) == 0) {
-                        break;
+                        if (sem_trywait(&ctx1.done) == 0) {
+                                sem_wait(&ctx2.done);
+                                break;
+                        }
                 }
-
-                // sleep(1);
         }
+
+        sem_post(&ctx1.done_fully);
+        sem_post(&ctx2.done_fully);
 
         exit(0);
 
