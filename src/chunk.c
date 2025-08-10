@@ -6,6 +6,15 @@
 #include <rlc/chunks.h>
 #include <rlc/utils.h>
 
+struct rlc_chunk rlc_chunk_create(void *mem, size_t size)
+{
+        return (struct rlc_chunk){
+                .data = mem,
+                .size = size,
+                .next = NULL,
+        };
+}
+
 size_t rlc_chunks_size(const struct rlc_chunk *chunks)
 {
         const struct rlc_chunk *cur;

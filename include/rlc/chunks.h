@@ -5,6 +5,8 @@
 #include <rlc/rlc.h>
 #include <rlc/utils.h>
 
+struct rlc_chunk rlc_chunk_create(void *mem, size_t size);
+
 size_t rlc_chunks_size(const struct rlc_chunk *chunks);
 
 size_t rlc_chunks_num_view(const struct rlc_chunk *chunks, size_t size,
