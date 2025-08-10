@@ -155,26 +155,13 @@ static bool should_stop_reassembly_(struct rlc_context *ctx)
         return false;
 }
 
-static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
+static void alarm_reassembly_(rlc_timer timer, struct rlc_context *ctx)
 {
         rlc_errno status;
-        struct rlc_context *ctx;
         struct rlc_sdu *sdu;
         uint32_t lowest;
 
-        ctx = ctx_arg;
-
         rlc_dbgf("Reassembly alarm");
-
-        rlc_lock_acquire(&ctx->lock);
-
-        /* Ensure timer has not been stopped while in the process of firing.
-         * This is assuming that the stopping function holds the lock of the
-         * context. */
-        if (!rlc_timer_active(timer)) {
-                rlc_lock_release(&ctx->lock);
-                return;
-        }
 
         lowest = ctx->rx.next_highest;
 
@@ -211,30 +198,17 @@ static void alarm_reassembly_(rlc_timer timer, void *ctx_arg)
 
                 rlc_timer_start(timer, ctx->conf->time_reassembly_us);
         }
-
-        rlc_lock_release(&ctx->lock);
 }
 
-static void alarm_poll_retransmit_(rlc_timer timer, void *ctx_arg)
+static void alarm_poll_retransmit_(rlc_timer timer, struct rlc_context *ctx)
 {
         rlc_errno status;
-        struct rlc_context *ctx;
-
-        ctx = ctx_arg;
 
         rlc_dbgf("Retransmitting poll");
-
-        rlc_lock_acquire(&ctx->lock);
-        if (!rlc_timer_active(timer)) {
-                rlc_lock_release(&ctx->lock);
-                return;
-        }
 
         ctx->force_poll = true;
 
         (void)rlc_tx_request(ctx);
-
-        rlc_lock_release(&ctx->lock);
 }
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,

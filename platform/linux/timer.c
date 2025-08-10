@@ -17,8 +17,8 @@ enum timer_state {
 };
 
 struct timer_info {
-        void (*cb)(rlc_timer, void *);
-        void *args;
+        rlc_timer_cb cb;
+        struct rlc_context *ctx;
 
         int fd;
         rlc_timer id;
@@ -94,7 +94,7 @@ static void timer_alarm_(struct timer_info *t)
                 return;
         }
 
-        t->cb(t->id, t->args);
+        rlc_timer_alarm(t->id, t->ctx, t->cb);
 }
 
 static void *worker_(void *arg)
@@ -187,7 +187,7 @@ static void *worker_(void *arg)
         return NULL;
 }
 
-static struct timer_info *timer_add_(void (*cb)(rlc_timer, void *), void *args)
+static struct timer_info *timer_add_(rlc_timer_cb cb, struct rlc_context *ctx)
 {
         struct timer_info *t;
         struct timer_info *cur;
@@ -199,8 +199,8 @@ static struct timer_info *timer_add_(void (*cb)(rlc_timer, void *), void *args)
         }
 
         t->next = NULL;
+        t->ctx = ctx;
         t->cb = cb;
-        t->args = args;
         t->id = next_id_++;
         t->next_state = TIMER_STALE;
         t->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
@@ -288,13 +288,13 @@ bool rlc_plat_timer_okay(rlc_timer timer)
         return timer != -1;
 }
 
-rlc_timer rlc_plat_timer_install(void (*cb)(rlc_timer, void *), void *args)
+rlc_timer rlc_plat_timer_install(rlc_timer_cb cb, struct rlc_context *ctx)
 {
         struct timer_info *t;
         rlc_timer id;
 
         rlc_lock_acquire(&lock_);
-        t = timer_add_(cb, args);
+        t = timer_add_(cb, ctx);
 
         if (t == NULL) {
                 id = -1;
