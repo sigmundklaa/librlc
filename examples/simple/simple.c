@@ -1,12 +1,16 @@
 
-#include <rlc/rlc.h>
-#include <rlc/utils.h>
+#include <string.h>
+#include <errno.h>
 #include <semaphore.h>
 #include <stdlib.h>
 
+#include <rlc/rlc.h>
+#include <rlc/utils.h>
+#include <rlc/buf.h>
+
 #define MTU (50)
 
-#define PACKET_LOSS_RATE (50)
+#define PACKET_LOSS_RATE (75)
 
 struct client {
         sem_t sem;
@@ -158,7 +162,7 @@ int main(void)
 {
         static struct client client1;
         static struct client client2;
-        struct rlc_chunk chunk;
+        struct rlc_buf *buf;
 
         rlc_plat_init();
 
@@ -167,12 +171,15 @@ int main(void)
         client_init(&client1, &client2);
         client_init(&client2, &client1);
 
-        chunk.next = NULL;
-        chunk.data = MESSAGE;
-        chunk.size = sizeof(MESSAGE);
+        buf = rlc_buf_alloc(&client1.ctx, sizeof(MESSAGE));
+        if (buf == NULL) {
+                rlc_panicf(ENOMEM, "main()");
+        }
+
+        (void)memcpy(buf->mem, MESSAGE, buf->size);
 
         for (;;) {
-                (void)rlc_send(&client1.ctx, &chunk);
+                (void)rlc_send(&client1.ctx, buf);
 
                 sleep(1);
         }

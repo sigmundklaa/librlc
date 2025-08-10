@@ -1,4 +1,6 @@
 
+#include <rlc/buf.h>
+
 #include <string.h>
 
 #include "sdu.h"
@@ -119,7 +121,8 @@ void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu)
         }
 }
 
-struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir)
+struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir,
+                              struct rlc_buf *buf)
 {
         struct rlc_sdu *sdu;
 
@@ -130,13 +133,8 @@ struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir)
 
         sdu->dir = dir;
 
-        sdu->buffer = rlc_alloc(ctx, ctx->conf->buffer_size);
-        if (sdu->buffer == NULL) {
-                rlc_dealloc(ctx, sdu);
-                return NULL;
-        }
-
-        sdu->buffer_size = ctx->conf->buffer_size;
+        rlc_buf_incref(buf);
+        sdu->buffer = buf;
 
         return sdu;
 }
@@ -147,7 +145,7 @@ void rlc_sdu_dealloc_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu)
                 return;
         }
 
-        rlc_dealloc(ctx, sdu->buffer);
+        rlc_buf_decref(sdu->buffer, ctx);
         sdu->buffer = NULL;
 }
 

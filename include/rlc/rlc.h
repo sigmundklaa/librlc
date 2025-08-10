@@ -133,8 +133,7 @@ typedef struct rlc_sdu {
         uint32_t sn;
         unsigned int retx_count; /* Number of retransmissions */
 
-        void *buffer;
-        size_t buffer_size;
+        struct rlc_buf *buffer;
 
         struct {
                 bool rx_last_received: 1;
@@ -196,8 +195,8 @@ struct rlc_event {
         } type;
 
         union {
-                const struct rlc_chunk *rx_done;
-                const struct rlc_chunk *tx_done;
+                struct rlc_buf *rx_done;
+                struct rlc_buf *tx_done;
         } data;
 };
 
@@ -241,7 +240,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *conf,
                    const struct rlc_methods *methods, void *user_data);
 
-rlc_errno rlc_send(rlc_context *ctx, struct rlc_chunk *chunks);
+rlc_errno rlc_send(rlc_context *ctx, struct rlc_buf *buf);
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size);
 

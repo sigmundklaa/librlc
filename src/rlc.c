@@ -9,6 +9,7 @@
 #include <rlc/timer.h>
 #include <rlc/plat.h>
 #include <rlc/chunks.h>
+#include <rlc/buf.h>
 
 #include "encode.h"
 #include "event.h"
@@ -65,12 +66,12 @@ static ssize_t tx_pdu_view_(struct rlc_context *ctx, struct rlc_pdu *pdu,
         size_t num_chunks;
         struct rlc_chunk chunk;
 
-        if (pdu->seg_offset + pdu->size > sdu->buffer_size) {
+        if (pdu->seg_offset + pdu->size > sdu->buffer->size) {
                 return -ENODATA;
         }
 
         chunk.next = NULL;
-        chunk.data = (uint8_t *)sdu->buffer + pdu->seg_offset;
+        chunk.data = (uint8_t *)sdu->buffer->mem + pdu->seg_offset;
         chunk.size = pdu->size;
 
         return do_tx_submit_(ctx, pdu, &chunk, max_size);
@@ -265,25 +266,15 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         return 0;
 }
 
-rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
+rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
 {
         rlc_errno status;
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
-        size_t size;
 
-        size = rlc_chunks_size(chunks);
-
-        sdu = rlc_sdu_alloc(ctx, RLC_TX);
+        sdu = rlc_sdu_alloc(ctx, RLC_TX, buf);
         if (sdu == NULL) {
                 return -ENOMEM;
-        }
-
-        sdu->buffer_size = rlc_chunks_deepcopy(chunks, sdu->buffer, size);
-
-        if (sdu->buffer_size != size) {
-                (void)rlc_sdu_dealloc(ctx, sdu);
-                return -ENOSPC;
         }
 
         sdu->sn = ctx->tx.next++;
@@ -293,7 +284,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_chunk *chunks)
         rlc_sdu_append(ctx, sdu);
 
         seg.start = 0;
-        seg.end = rlc_chunks_size(chunks);
+        seg.end = sdu->buffer->size;
 
         rlc_dbgf("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
                  sdu->sn, seg.start, seg.end);
@@ -400,7 +391,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 /* TODO: NACK ranges */
                 if (cur.ext.has_offset) {
                         if (cur.offset.end == RLC_STATUS_SO_MAX) {
-                                cur.offset.end = sdu->buffer_size;
+                                cur.offset.end = sdu->buffer->size;
                         }
 
                         status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
@@ -429,7 +420,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
 
                 cur.offset.start = 0;
-                cur.offset.end = sdu->buffer_size;
+                cur.offset.end = sdu->buffer->size;
 
                 status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
 
@@ -533,7 +524,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                         goto exit;
                 }
 
-                sdu = rlc_sdu_alloc(ctx, RLC_RX);
+                sdu = rlc_sdu_alloc(ctx, RLC_RX,
+                                    rlc_buf_alloc(ctx, ctx->conf->buffer_size));
                 if (sdu == NULL) {
                         rlc_errf("RX; SDU alloc failed (%" RLC_PRI_ERRNO ")",
                                  -ENOMEM);
@@ -551,9 +543,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 goto exit;
         }
 
-        if (pdu.seg_offset >= sdu->buffer_size) {
+        if (pdu.seg_offset >= sdu->buffer->size) {
                 rlc_errf("RX; Offset out of bounds: %" PRIu32 ">%zu",
-                         pdu.seg_offset, sdu->buffer_size);
+                         pdu.seg_offset, sdu->buffer->size);
                 goto exit;
         }
 
@@ -565,8 +557,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         /* Copy the contents of the chunks, skipping the header content */
         status = rlc_chunks_deepcopy_view(
-                chunks, (uint8_t *)sdu->buffer + pdu.seg_offset,
-                sdu->buffer_size - pdu.seg_offset, header_size);
+                chunks, (uint8_t *)sdu->buffer->mem + pdu.seg_offset,
+                sdu->buffer->size - pdu.seg_offset, header_size);
         if (status <= 0) {
                 rlc_errf("RX; Unable to flatten chunks: (%" RLC_PRI_ERRNO ")",
                          (rlc_errno)status);
