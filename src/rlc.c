@@ -459,6 +459,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         size_t header_size;
         uint32_t lowest;
         struct rlc_pdu pdu;
+        struct rlc_segment segment;
         struct rlc_sdu *sdu;
         struct rlc_chunk *cur_chunk;
 
@@ -539,13 +540,12 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 goto exit;
         }
 
-        status = rlc_sdu_seg_append(ctx, sdu,
-                                    (struct rlc_segment){
-                                            .start = pdu.seg_offset,
-                                            .end = pdu.seg_offset +
-                                                   rlc_chunks_size(chunks) -
-                                                   header_size,
-                                    });
+        segment = (struct rlc_segment){
+                .start = pdu.seg_offset,
+                .end = pdu.seg_offset + rlc_chunks_size(chunks) - header_size,
+        };
+
+        status = rlc_sdu_seg_append(ctx, sdu, segment);
         if (status != 0) {
                 rlc_errf("RX; Unable to append segment (%" RLC_PRI_ERRNO ")",
                          (rlc_errno)status);
