@@ -12,6 +12,7 @@ static bool seg_overlap_(const struct rlc_segment *left,
         return right->start >= left->start && right->start <= left->end;
 }
 
+/* TODO: rename to insert */
 rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                              struct rlc_segment seg)
 {
@@ -88,7 +89,22 @@ entry_found:
         return 0;
 }
 
-void rlc_sdu_append(struct rlc_context *ctx, struct rlc_sdu *sdu)
+size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir)
+{
+        size_t count;
+        struct rlc_sdu *sdu;
+
+        count = 0;
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir == dir) {
+                        count++;
+                }
+        }
+
+        return count;
+}
+
+void rlc_sdu_insert(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         struct rlc_sdu *cur;
         struct rlc_sdu **lastp;
@@ -96,6 +112,13 @@ void rlc_sdu_append(struct rlc_context *ctx, struct rlc_sdu *sdu)
         lastp = &ctx->sdus;
 
         for (rlc_each_node(ctx->sdus, cur, next)) {
+                if (sdu->sn <= cur->sn) {
+                        assert(sdu->sn != cur->sn);
+
+                        sdu->next = cur;
+                        break;
+                }
+
                 lastp = &cur->next;
         }
 

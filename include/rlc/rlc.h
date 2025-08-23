@@ -56,6 +56,8 @@ struct rlc_config {
         uint32_t time_reassembly_us;
         uint32_t time_poll_retransmit_us;
 
+        uint32_t max_retx_threshhold;
+
         enum rlc_sn_width sn_width;
 };
 
@@ -90,6 +92,7 @@ typedef struct rlc_context {
         struct {
                 uint32_t next;
                 uint32_t next_ack;
+                uint32_t retx_count;
 
                 size_t pdu_without_poll;
                 size_t byte_without_poll;
@@ -192,6 +195,7 @@ struct rlc_event {
                 RLC_EVENT_RX_FAIL,
 
                 RLC_EVENT_TX_DONE,
+                RLC_EVENT_TX_FAIL
         } type;
 
         union {

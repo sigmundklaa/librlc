@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <rlc/rlc.h>
+#include <rlc/buf.h>
 #include <rlc/chunks.h>
 #include <fcntl.h>
 #include <string.h>
@@ -158,14 +159,13 @@ static void p2_event(rlc_context *ctx, const struct rlc_event *event)
 
         char c;
         for (int i = 0; i < event->data.rx_done->size; i++) {
-                c = *((char *)event->data.rx_done->data + i);
+                c = *((char *)event->data.rx_done->mem + i);
                 (void)printf("%c", c);
         }
         (void)printf("\n");
 
-        ssize_t sz = rlc_chunks_deepcopy(event->data.rx_done, received_,
-                                         sizeof(received_));
-        assert(sz > 0 && memcmp(correct_, received_, sz) == 0);
+        assert(memcmp(correct_, event->data.rx_done->mem,
+                      event->data.rx_done->size) == 0);
         (void)printf("Done\n");
 
         sem_post(&ctx2.done);
@@ -315,6 +315,7 @@ static void ctx_init(struct ctx *c)
 int main(void)
 {
         rlc_errno status;
+        struct rlc_buf *buf;
         struct rlc_chunk chunks[3] = {
                 {
                         .data = FIRST_STR,
@@ -360,6 +361,23 @@ int main(void)
         ctx_init(&ctx1);
         ctx_init(&ctx2);
 
+        status = rlc_init(&ctx1.rlc, RLC_AM, &conf, &p1_methods, NULL);
+        assert(status == 0);
+
+        status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods, NULL);
+        assert(status == 0);
+
+        buf = rlc_buf_alloc(&ctx1.rlc, sizeof(FIRST_STR) + sizeof(SEC_STR) +
+                                               sizeof(THIRD_STR) - 3);
+        assert(buf != NULL);
+
+        (void)memcpy((uint8_t *)buf->mem + 0, FIRST_STR, sizeof(FIRST_STR) - 1);
+        (void)memcpy((uint8_t *)buf->mem + sizeof(FIRST_STR) - 1, SEC_STR,
+                     sizeof(SEC_STR) - 1);
+        (void)memcpy((uint8_t *)buf->mem + sizeof(FIRST_STR) - 1 +
+                             sizeof(SEC_STR) - 1,
+                     THIRD_STR, sizeof(THIRD_STR) - 1);
+
         pthread_t t1, t2;
 
         status = pthread_create(&t1, NULL, worker, &ctx1);
@@ -368,14 +386,8 @@ int main(void)
         status = pthread_create(&t2, NULL, worker, &ctx2);
         assert(status == 0);
 
-        status = rlc_init(&ctx1.rlc, RLC_AM, &conf, &p1_methods, NULL);
-        assert(status == 0);
-
-        status = rlc_init(&ctx2.rlc, RLC_AM, &conf, &p2_methods, NULL);
-        assert(status == 0);
-
         for (int i = 0; i < 300; i++) {
-                status = rlc_send(&ctx1.rlc, chunks);
+                status = rlc_send(&ctx1.rlc, buf);
                 assert(status == 0);
 
                 for (;;) {

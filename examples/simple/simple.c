@@ -8,7 +8,7 @@
 #include <rlc/utils.h>
 #include <rlc/buf.h>
 
-#define MTU (50)
+#define MTU (512)
 
 #define PACKET_LOSS_RATE (75)
 
@@ -28,6 +28,7 @@ static const struct rlc_config config = {
         .pdu_without_poll_max = 3,
         .sn_width = RLC_SN_12BIT,
         .time_reassembly_us = 5000,
+        .max_retx_threshhold = 5,
         .time_poll_retransmit_us = 500,
 };
 
@@ -67,7 +68,7 @@ static rlc_errno tx_submit(struct rlc_context *ctx,
         if (random() % 100 >= PACKET_LOSS_RATE) {
                 rlc_rx_submit(&cl->other->ctx, chunks);
         } else {
-                rlc_wrnf("Dropping packet");
+                rlc_dbgf("Dropping packet");
         }
 
         (void)tx_request(ctx);
@@ -163,6 +164,7 @@ int main(void)
         static struct client client1;
         static struct client client2;
         struct rlc_buf *buf;
+        struct timespec spec;
 
         rlc_plat_init();
 
@@ -178,9 +180,12 @@ int main(void)
 
         (void)memcpy(buf->mem, MESSAGE, buf->size);
 
+        spec.tv_sec = 0;
+        spec.tv_nsec = 1e3;
+
         for (;;) {
                 (void)rlc_send(&client1.ctx, buf);
 
-                sleep(1);
+                nanosleep(&spec, NULL);
         }
 }

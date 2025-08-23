@@ -67,7 +67,9 @@ static inline bool rlc_sdu_loss_detected(struct rlc_sdu *sdu)
 rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                              struct rlc_segment seg);
 
-void rlc_sdu_append(struct rlc_context *ctx, struct rlc_sdu *sdu);
+size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir);
+
+void rlc_sdu_insert(struct rlc_context *ctx, struct rlc_sdu *sdu);
 
 void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu);
 

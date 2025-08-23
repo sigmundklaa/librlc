@@ -175,6 +175,7 @@ static void alarm_reassembly_(rlc_timer timer, struct rlc_context *ctx)
         }
 
         ctx->rx.highest_status = lowest;
+        ctx->rx.next = lowest;
 
         /* Actions to take for SDUs that are unable to be reassembled does
          * not seem to be specified in the standard. Here, we assume that
@@ -246,6 +247,11 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
 
+        if (!in_window_(ctx->tx.next, ctx->tx.next_ack,
+                        ctx->conf->window_size)) {
+                return -ENOSPC;
+        }
+
         sdu = rlc_sdu_alloc(ctx, RLC_TX, buf);
         if (sdu == NULL) {
                 return -ENOMEM;
@@ -255,7 +261,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
 
         rlc_lock_acquire(&ctx->lock);
 
-        rlc_sdu_append(ctx, sdu);
+        rlc_sdu_insert(ctx, sdu);
 
         seg.start = 0;
         seg.end = sdu->buffer->size;
@@ -314,10 +320,127 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
         rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
 }
 
+static void am_tx_next_ack_increase_(struct rlc_context *ctx)
+{
+        struct rlc_sdu *sdu;
+        uint32_t lowest;
+
+        lowest = ctx->tx.next;
+
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir == RLC_TX && sdu->sn < lowest) {
+                        lowest = sdu->sn;
+                }
+        }
+
+        ctx->tx.next_ack = lowest;
+        rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
+}
+
 static void stop_poll_retransmit_(struct rlc_context *ctx)
 {
         rlc_dbgf("Stopping t-PollRetransmit");
         (void)rlc_timer_stop(ctx->t_poll_retransmit);
+}
+
+static void deliver_acked_(struct rlc_context *ctx, uint32_t ack_sn)
+{
+        struct rlc_sdu *sdu;
+        struct rlc_sdu **lastp;
+
+        lastp = &ctx->sdus;
+
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
+                if (sdu->dir == RLC_TX && sdu->state != RLC_READY &&
+                    sdu->sn < ack_sn) {
+                        rlc_dbgf("TX; SDU %" PRIu32
+                                 " implied ACK'd, delivering",
+                                 sdu->sn);
+
+                        *lastp = sdu->next;
+
+                        rlc_event_tx_done(ctx, sdu);
+                        if (sdu->sn == ctx->tx.next_ack) {
+                                am_tx_next_ack_increase_(ctx);
+                        }
+
+                        rlc_sdu_dealloc(ctx, sdu);
+
+                        continue;
+                }
+
+                lastp = &sdu->next;
+        }
+}
+
+static void process_nack_chunk_(struct rlc_context *ctx,
+                                struct rlc_pdu_status *cur)
+{
+        struct rlc_sdu *sdu;
+        rlc_errno status;
+
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir == RLC_TX && sdu->sn == cur->nack_sn) {
+                        break;
+                }
+        }
+
+        if (sdu == NULL) {
+                rlc_errf("Unrecognized SN: %u", cur->nack_sn);
+                return;
+        }
+
+        if (sdu->sn == ctx->poll_sn) {
+                stop_poll_retransmit_(ctx);
+        }
+
+        if (cur->ext.has_offset) {
+                if (cur->offset.end == RLC_STATUS_SO_MAX) {
+                        cur->offset.end = sdu->buffer->size;
+                }
+
+                status = rlc_sdu_seg_append(ctx, sdu, cur->offset);
+                if (status != 0) {
+                        rlc_errf("TX AM STATUS; Unable to "
+                                 "append seg "
+                                 "(%" RLC_PRI_ERRNO ")",
+                                 status);
+                        return;
+                }
+
+                rlc_dbgf("Marking SDU %" PRIu32 " for retransmission (%" PRIu32
+                         "->%" PRIu32 ")",
+                         sdu->sn, cur->offset.start, cur->offset.end);
+                sdu->state = RLC_READY;
+        }
+}
+
+static void process_nack_range_(struct rlc_context *ctx,
+                                struct rlc_pdu_status *cur)
+{
+        struct rlc_sdu *sdu;
+        rlc_errno status;
+
+        for (rlc_each_node(ctx->sdus, sdu, next)) {
+                if (sdu->dir == RLC_TX && sdu->state != RLC_READY &&
+                    in_window_(sdu->sn, cur->nack_sn, cur->range)) {
+                        status = rlc_sdu_seg_append(
+                                ctx, sdu,
+                                (struct rlc_segment){
+                                        .start = 0,
+                                        .end = sdu->buffer->size,
+                                });
+
+                        if (status != 0) {
+                                rlc_errf("TX AM STATUS; Unable "
+                                         "to insert nack range "
+                                         "segment");
+                                return;
+                        }
+
+                        sdu->state = RLC_READY;
+                }
+        }
 }
 
 static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
@@ -343,44 +466,17 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         /* Iterate over every status */
         bytes = rlc_status_decode(ctx, &cur, chunks, offset);
         while (bytes > 0) {
-                rlc_dbgf("TX AM STATUS; NACK_SN: %" PRIu32 ", RANGE: %" PRIu32
-                         "->%" PRIu32,
-                         cur.nack_sn, cur.offset.start, cur.offset.end);
+                rlc_dbgf("TX AM STATUS; NACK_SN: %" PRIu32 ", OFFSET: %" PRIu32
+                         "->%" PRIu32 ", RANGE: %" PRIu32,
+                         cur.nack_sn, cur.offset.start, cur.offset.end,
+                         cur.range);
 
-                for (rlc_each_node(ctx->sdus, sdu, next)) {
-                        if (sdu->dir == RLC_TX && sdu->sn == cur.nack_sn) {
-                                break;
-                        }
-                }
+                deliver_acked_(ctx, cur.nack_sn);
 
-                if (sdu == NULL) {
-                        rlc_errf("Unrecognized SN: %u", cur.nack_sn);
-                        continue;
-                }
-
-                if (sdu->sn == ctx->poll_sn) {
-                        stop_poll_retransmit_(ctx);
-                }
-
-                /* TODO: NACK ranges */
-                if (cur.ext.has_offset) {
-                        if (cur.offset.end == RLC_STATUS_SO_MAX) {
-                                cur.offset.end = sdu->buffer->size;
-                        }
-
-                        status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
-                        if (status != 0) {
-                                rlc_errf("TX AM STATUS; Unable to append seg "
-                                         "(%" RLC_PRI_ERRNO ")",
-                                         status);
-                                return;
-                        }
-
-                        rlc_dbgf("Marking SDU %" PRIu32
-                                 " for retransmission (%" PRIu32 "->%" PRIu32
-                                 ")",
-                                 sdu->sn, cur.offset.start, cur.offset.end);
-                        sdu->state = RLC_READY;
+                if (cur.ext.has_range) {
+                        process_nack_range_(ctx, &cur);
+                } else {
+                        process_nack_chunk_(ctx, &cur);
                 }
 
                 offset += bytes;
@@ -388,7 +484,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 
         /* Mark every SDU not known to the RX side for retransmission */
-        for (rlc_each_node(ctx->sdus, sdu, next)) {
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir != RLC_TX || sdu->state == RLC_READY) {
                         continue;
                 }
@@ -406,6 +502,22 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
 
                 sdu->state = RLC_READY;
+                sdu->retx_count++;
+
+                if (sdu->sn == ctx->poll_sn) {
+                        stop_poll_retransmit_(ctx);
+                }
+
+                if (sdu->retx_count >= ctx->conf->max_retx_threshhold) {
+                        rlc_event_tx_fail(ctx, sdu);
+                        rlc_sdu_remove(ctx, sdu);
+
+                        if (sdu->sn == ctx->tx.next_ack) {
+                                am_tx_next_ack_increase_(ctx);
+                        }
+
+                        rlc_sdu_dealloc(ctx, sdu);
+                }
         }
 
         if (bytes < 0) {
@@ -510,11 +622,13 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 sdu->state = RLC_READY;
                 sdu->sn = pdu.sn;
 
-                rlc_sdu_append(ctx, sdu);
+                rlc_sdu_insert(ctx, sdu);
         }
 
         if (sdu->state != RLC_READY) {
-                rlc_errf("RX; Received when not ready, discarding");
+                rlc_errf("RX; Received SN=%" PRIu32
+                         " when not ready, discarding",
+                         sdu->sn);
                 goto exit;
         }
 
@@ -813,6 +927,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         struct rlc_sdu_segment *seg;
         size_t count;
         size_t status_idx;
+        uint32_t next_sn;
 
         prepare_pdu_(ctx, &pdu);
         pdu.flags.is_status = 1;
@@ -827,6 +942,7 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         chunkptr = &head_chunk;
 
         last_status = NULL;
+        next_sn = pdu.sn;
 
         /* TODO: Every state=DONE should generate a nack range */
         for (rlc_each_node(ctx->sdus, sdu, next)) {
@@ -834,37 +950,23 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
                         continue;
                 }
 
-                for (rlc_each_node(sdu->segments, seg, next)) {
-                        /* No more missing segments */
-                        if (seg->next == NULL && sdu->flags.rx_last_received) {
-                                break;
-                        }
+                if (sdu->sn != next_sn) {
+                        rlc_dbgf("Generating NACK range: %" PRIu32 "->%" PRIu32,
+                                 next_sn, sdu->sn);
 
-                        /* Alternate between two allocated status structs, so
-                         * that we can fill the current one and encode the last
-                         * one */
                         status_idx = 1 - status_idx;
                         cur_status = &status_pool[status_idx];
 
                         *cur_status = (struct rlc_pdu_status){
-                                .ext.has_offset = 1,
-                                .nack_sn = sdu->sn,
+                                .ext.has_range = 1,
+                                .nack_sn = next_sn,
+                                .range = sdu->sn - next_sn,
                         };
-
-                        if (seg->next != NULL) {
-                                /* Between two segments */
-                                cur_status->offset.start = seg->seg.end;
-                                cur_status->offset.end = seg->next->seg.start;
-                        } else {
-                                /* Last segment registered, but last segment of
-                                 * the transmission has not been received */
-                                cur_status->offset.start = seg->seg.end;
-                                cur_status->offset.end = RLC_STATUS_SO_MAX;
-                        }
 
                         /* Encode the last status instead of the current one, so
                          * that the E1 bit can be set appropriately. On the
                          * first iteration, skip encoding as there is no last */
+                        /* TODO: deduplicate code */
                         if (last_status != NULL) {
                                 last_status->ext.has_more = 1;
 
@@ -882,7 +984,65 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 
                         last_status = cur_status;
                         count += 1;
+                } else {
+                        for (rlc_each_node(sdu->segments, seg, next)) {
+                                /* No more missing segments */
+                                if (seg->next == NULL &&
+                                    sdu->flags.rx_last_received) {
+                                        break;
+                                }
+
+                                /* Alternate between two allocated status
+                                 * structs, so that we can fill the current one
+                                 * and encode the last one */
+                                status_idx = 1 - status_idx;
+                                cur_status = &status_pool[status_idx];
+
+                                *cur_status = (struct rlc_pdu_status){
+                                        .ext.has_offset = 1,
+                                        .nack_sn = sdu->sn,
+                                };
+
+                                if (seg->next != NULL) {
+                                        /* Between two segments */
+                                        cur_status->offset.start = seg->seg.end;
+                                        cur_status->offset.end =
+                                                seg->next->seg.start;
+                                } else {
+                                        /* Last segment registered, but last
+                                         * segment of the transmission has not
+                                         * been received */
+                                        cur_status->offset.start = seg->seg.end;
+                                        cur_status->offset.end =
+                                                RLC_STATUS_SO_MAX;
+                                }
+
+                                /* Encode the last status instead of the current
+                                 * one, so that the E1 bit can be set
+                                 * appropriately. On the first iteration, skip
+                                 * encoding as there is no last */
+                                if (last_status != NULL) {
+                                        last_status->ext.has_more = 1;
+
+                                        log_rx_status_(last_status);
+
+                                        chunk = chunk_encode_status_(
+                                                ctx, last_status);
+                                        if (chunk == NULL) {
+                                                ret = -ENOMEM;
+                                                goto exit;
+                                        }
+
+                                        *chunkptr = chunk;
+                                        chunkptr = &chunk->next;
+                                }
+
+                                last_status = cur_status;
+                                count += 1;
+                        }
                 }
+
+                next_sn = sdu->sn + 1;
         }
 
         if (count > 0) {
@@ -901,6 +1061,8 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
         }
 
         ctx->gen_status = false;
+
+        rlc_dbgf("Submitting status PDU: SN=%i", pdu.sn);
 
         ret = do_tx_submit_(ctx, &pdu, head_chunk, max_size);
         if (ret < 0) {
@@ -1007,6 +1169,7 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         const void *data;
         struct rlc_pdu pdu;
         struct rlc_sdu *cur;
+        struct rlc_sdu *next;
         struct rlc_sdu *highest_sn;
         struct rlc_sdu_segment *last_seg;
         struct rlc_sdu_segment *tmp_seg;
@@ -1021,7 +1184,19 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 return;
         }
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, cur, next)) {
+        /* Iterate, without using the `rlc_each_node` macros, for two reasons:
+         * 1) We may need to remove the element during iteration, which would
+         *    require `rlc_each_node_safe`. However:
+         * 2) We release the lock during iteration, meaning that getting the
+         *    next element at the start (what is done is `rlc_each_node_safe`)
+         *    could cause the next element to be invalid after re-acquiring
+         *    the lock.
+         * As such, we replicate `rlc_each_node_safe`, but update the `next`
+         * pointer after re-acquiring the lock.
+         */
+        for (cur = ctx->sdus; cur != NULL; cur = next) {
+                next = cur->next;
+
                 if (cur->dir != RLC_TX || cur->state != RLC_READY) {
                         continue;
                 }
@@ -1036,7 +1211,16 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
                          "%zu",
                          pdu.sn, pdu.seg_offset, pdu.seg_offset + pdu.size);
 
+                /* Release lock while transmitting */
+                rlc_lock_release(&ctx->lock);
                 ret = tx_pdu_view_(ctx, &pdu, cur, size);
+                rlc_lock_acquire(&ctx->lock);
+
+                /* There is a possiblity that the list was modified while the
+                 * lock was released, so the asisgnment to next at the start of
+                 * the function may now be invalid. */
+                next = cur->next;
+
                 if (ret <= 0) {
                         rlc_errf("PDU submit failed: error %" RLC_PRI_ERRNO,
                                  (rlc_errno)ret);
