@@ -83,3 +83,14 @@ void rlc_event_rx_drop(struct rlc_context *ctx, struct rlc_sdu *sdu)
 
         rlc_event_fire(ctx, &event);
 }
+
+void rlc_event_tx_fail(struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        struct rlc_event event;
+
+        rlc_errf("Failed transmit of SN=%" PRIu32, sdu->sn);
+
+        event.type = RLC_EVENT_TX_FAIL;
+
+        rlc_event_fire(ctx, &event);
+}

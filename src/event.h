@@ -16,6 +16,8 @@ void rlc_event_rx_done_direct(struct rlc_context *ctx,
 
 void rlc_event_tx_done(struct rlc_context *ctx, struct rlc_sdu *sdu);
 
+void rlc_event_tx_fail(struct rlc_context *ctx, struct rlc_sdu *sdu);
+
 void rlc_event_rx_drop(struct rlc_context *ctx, struct rlc_sdu *sdu);
 
 RLC_END_DECL
