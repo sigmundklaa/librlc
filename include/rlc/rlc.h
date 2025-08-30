@@ -4,6 +4,7 @@
 
 #include <rlc/plat.h>
 #include <rlc/utils.h>
+#include <rlc/window.h>
 #include <rlc/timer.h>
 #include <rlc/lock.h>
 
@@ -68,12 +69,6 @@ typedef struct rlc_context {
 
         /* RLC specification state variables */
         struct {
-                /* RX_NEXT holds the value of the SN following the last
-                 * in-sequence completely received SDU, and serves as
-                 * the lower edge of the receiving window. Initially
-                 * set to 0, updated whenever SN=RX_NEXT is received */
-                uint32_t next;
-
                 /* RX_NEXT_HIGHEST holds the value of the SN following
                  * the SN of the SDU with the highest SN among received
                  * SDUs. */
@@ -88,14 +83,17 @@ typedef struct rlc_context {
                  * following the SN of the SDU which triggered
                  * reassembly. */
                 uint32_t next_status_trigger;
+
+                struct rlc_window win;
         } rx;
         struct {
                 uint32_t next;
-                uint32_t next_ack;
                 uint32_t retx_count;
 
                 size_t pdu_without_poll;
                 size_t byte_without_poll;
+
+                struct rlc_window win;
         } tx;
         rlc_timer t_reassembly;
         rlc_timer t_poll_retransmit;

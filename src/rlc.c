@@ -93,12 +93,12 @@ static bool should_restart_reassembly_(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
 
-        if (ctx->rx.next_highest > ctx->rx.next + 1) {
+        if (ctx->rx.next_highest > ctx->rx.highest_status + 1) {
                 return true;
         }
 
-        if (ctx->rx.next_highest == ctx->rx.next + 1) {
-                sdu = rlc_sdu_get(ctx, ctx->rx.next, RLC_RX);
+        if (ctx->rx.next_highest == ctx->rx.highest_status + 1) {
+                sdu = rlc_sdu_get(ctx, ctx->rx.highest_status, RLC_RX);
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -112,13 +112,16 @@ static bool should_restart_reassembly_(struct rlc_context *ctx)
 static bool should_start_reassembly_(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
+        uint32_t remaining;
 
-        if (ctx->rx.next_highest > ctx->rx.next + 1) {
+        remaining = rlc_window_index(&ctx->rx.win, ctx->rx.next_highest);
+
+        if (remaining > 1) {
                 return true;
         }
 
-        if (ctx->rx.next_highest == ctx->rx.next + 1) {
-                sdu = rlc_sdu_get(ctx, ctx->rx.next, RLC_RX);
+        if (remaining == 1) {
+                sdu = rlc_sdu_get(ctx, rlc_window_base(&ctx->rx.win), RLC_RX);
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -132,23 +135,24 @@ static bool should_start_reassembly_(struct rlc_context *ctx)
 static bool should_stop_reassembly_(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
+        uint32_t remaining;
 
-        if (ctx->rx.next_status_trigger == ctx->rx.next) {
+        remaining = rlc_window_index(&ctx->rx.win, ctx->rx.next_status_trigger);
+
+        if (remaining == 0) {
                 return true;
         }
 
-        if (ctx->rx.next_status_trigger == ctx->rx.next + 1) {
-                sdu = rlc_sdu_get(ctx, ctx->rx.next, RLC_RX);
+        if (remaining == 1) {
+                sdu = rlc_sdu_get(ctx, rlc_window_base(&ctx->rx.win), RLC_RX);
 
                 if (sdu != NULL && !rlc_sdu_loss_detected(sdu)) {
                         return true;
                 }
         }
 
-        if (!in_window_(ctx->rx.next_status_trigger, ctx->rx.next,
-                        ctx->conf->window_size) &&
-            ctx->rx.next_status_trigger !=
-                    ctx->rx.next + ctx->conf->window_size) {
+        if (!rlc_window_has(&ctx->rx.win, ctx->rx.next_status_trigger) &&
+            ctx->rx.next_status_trigger != rlc_window_end(&ctx->rx.win)) {
                 return true;
         }
 
@@ -175,7 +179,8 @@ static void alarm_reassembly_(rlc_timer timer, struct rlc_context *ctx)
         }
 
         ctx->rx.highest_status = lowest;
-        ctx->rx.next = lowest;
+
+        rlc_window_move_to(&ctx->rx.win, lowest);
 
         /* Actions to take for SDUs that are unable to be reassembled does
          * not seem to be specified in the standard. Here, we assume that
@@ -225,6 +230,9 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
 
         rlc_lock_init(&ctx->lock);
 
+        rlc_window_init(&ctx->tx.win, 0, config->window_size);
+        rlc_window_init(&ctx->rx.win, 0, config->window_size);
+
         if (ctx->type == RLC_AM || ctx->type == RLC_UM) {
                 ctx->t_reassembly = rlc_timer_install(alarm_reassembly_, ctx);
                 if (!rlc_timer_okay(ctx->t_reassembly)) {
@@ -247,8 +255,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
 
-        if (!in_window_(ctx->tx.next, ctx->tx.next_ack,
-                        ctx->conf->window_size)) {
+        if (!rlc_window_has(&ctx->tx.win, ctx->tx.next)) {
                 return -ENOSPC;
         }
 
@@ -288,10 +295,10 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
 
         rlc_dbgf("TX AM STATUS; ACK_SN: %" PRIu32, sn);
 
-        if (ctx->tx.next_ack >= sn) {
+        if (rlc_window_base(&ctx->tx.win) >= sn) {
                 rlc_wrnf("TX AM STATUS; Dropping as next_ack>=ack_sn (%" PRIu32
                          ">=%" PRIu32 ")",
-                         ctx->tx.next_ack, sn);
+                         rlc_window_base(&ctx->tx.win), sn);
                 return;
         }
 
@@ -316,8 +323,8 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
                 lastp = &sdu->next;
         }
 
-        ctx->tx.next_ack = lowest;
-        rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
+        rlc_window_move_to(&ctx->tx.win, lowest);
+        rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, lowest);
 }
 
 static void am_tx_next_ack_increase_(struct rlc_context *ctx)
@@ -333,8 +340,8 @@ static void am_tx_next_ack_increase_(struct rlc_context *ctx)
                 }
         }
 
-        ctx->tx.next_ack = lowest;
-        rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, ctx->tx.next_ack);
+        rlc_window_move_to(&ctx->tx.win, lowest);
+        rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, lowest);
 }
 
 static void stop_poll_retransmit_(struct rlc_context *ctx)
@@ -360,7 +367,7 @@ static void deliver_acked_(struct rlc_context *ctx, uint32_t ack_sn)
                         *lastp = sdu->next;
 
                         rlc_event_tx_done(ctx, sdu);
-                        if (sdu->sn == ctx->tx.next_ack) {
+                        if (sdu->sn == rlc_window_base(&ctx->tx.win)) {
                                 am_tx_next_ack_increase_(ctx);
                         }
 
@@ -512,7 +519,7 @@ static void process_status_(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                         rlc_event_tx_fail(ctx, sdu);
                         rlc_sdu_remove(ctx, sdu);
 
-                        if (sdu->sn == ctx->tx.next_ack) {
+                        if (sdu->sn == rlc_window_base(&ctx->tx.win)) {
                                 am_tx_next_ack_increase_(ctx);
                         }
 
@@ -602,11 +609,12 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         sdu = rlc_sdu_get(ctx, pdu.sn, RLC_RX);
 
         if (sdu == NULL) {
-                if (!in_window_(pdu.sn, ctx->rx.next, ctx->conf->window_size)) {
+                if (!rlc_window_has(&ctx->rx.win, pdu.sn)) {
                         rlc_wrnf("RX; SN %" PRIu32
-                                 " outside RX window (%" PRIu32 "->%zu" PRIu32
+                                 " outside RX window (%" PRIu32 "->%" PRIu32
                                  "), dropping (highest_status=%" PRIu32 ")",
-                                 pdu.sn, ctx->rx.next, ctx->conf->window_size,
+                                 pdu.sn, rlc_window_base(&ctx->rx.win),
+                                 rlc_window_end(&ctx->rx.win),
                                  ctx->rx.highest_status);
                         goto exit;
                 }
@@ -687,8 +695,8 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                         lowest = rlc_min(lowest_sn_not_recv_(ctx),
                                          ctx->rx.next_highest);
 
-                        if (sdu->sn == ctx->rx.next) {
-                                ctx->rx.next = lowest;
+                        if (sdu->sn == rlc_window_base(&ctx->rx.win)) {
+                                rlc_window_move_to(&ctx->rx.win, lowest);
                         }
 
                         sdu->state = RLC_DONE;
