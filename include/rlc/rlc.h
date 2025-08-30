@@ -74,10 +74,10 @@ typedef struct rlc_context {
                  * SDUs. */
                 uint32_t next_highest;
 
-                /* RX_HIGHEST_STATUS holds the highest possible value
-                 * of the SN which can be indicated by ACK_SN when
+                /* Specification: RX_HIGHEST_STATUS holds the highest possible
+                 * value of the SN which can be indicated by ACK_SN when
                  * constructing status PDU. */
-                uint32_t highest_status;
+                uint32_t highest_ack;
 
                 /* RX_NEXT_STATUS_TRIGGER holds the value of the SN
                  * following the SN of the SDU which triggered
@@ -87,7 +87,7 @@ typedef struct rlc_context {
                 struct rlc_window win;
         } rx;
         struct {
-                uint32_t next;
+                uint32_t next_sn; /* TX_Next in the spec */
                 uint32_t retx_count;
 
                 size_t pdu_without_poll;

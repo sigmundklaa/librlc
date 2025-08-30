@@ -93,12 +93,12 @@ static bool should_restart_reassembly_(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
 
-        if (ctx->rx.next_highest > ctx->rx.highest_status + 1) {
+        if (ctx->rx.next_highest > ctx->rx.highest_ack + 1) {
                 return true;
         }
 
-        if (ctx->rx.next_highest == ctx->rx.highest_status + 1) {
-                sdu = rlc_sdu_get(ctx, ctx->rx.highest_status, RLC_RX);
+        if (ctx->rx.next_highest == ctx->rx.highest_ack + 1) {
+                sdu = rlc_sdu_get(ctx, ctx->rx.highest_ack, RLC_RX);
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -178,7 +178,7 @@ static void alarm_reassembly_(rlc_timer timer, struct rlc_context *ctx)
                 }
         }
 
-        ctx->rx.highest_status = lowest;
+        ctx->rx.highest_ack = lowest;
 
         rlc_window_move_to(&ctx->rx.win, lowest);
 
@@ -191,7 +191,7 @@ static void alarm_reassembly_(rlc_timer timer, struct rlc_context *ctx)
          * received in full. We therefore discard these SDUs when
          * RX_HIGHEST_STATUS is updated. */
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir == RLC_RX && sdu->sn < ctx->rx.highest_status) {
+                if (sdu->dir == RLC_RX && sdu->sn < ctx->rx.highest_ack) {
                         rlc_event_rx_drop(ctx, sdu);
                         rlc_sdu_remove(ctx, sdu);
                         rlc_sdu_dealloc(ctx, sdu);
@@ -255,7 +255,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
 
-        if (!rlc_window_has(&ctx->tx.win, ctx->tx.next)) {
+        if (!rlc_window_has(&ctx->tx.win, ctx->tx.next_sn)) {
                 return -ENOSPC;
         }
 
@@ -264,7 +264,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
                 return -ENOMEM;
         }
 
-        sdu->sn = ctx->tx.next++;
+        sdu->sn = ctx->tx.next_sn++;
 
         rlc_lock_acquire(&ctx->lock);
 
@@ -303,7 +303,7 @@ static void am_tx_next_ack_update_(struct rlc_context *ctx, uint16_t sn)
         }
 
         lastp = &ctx->sdus;
-        lowest = ctx->tx.next;
+        lowest = ctx->tx.next_sn;
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir == RLC_TX) {
@@ -332,7 +332,7 @@ static void am_tx_next_ack_increase_(struct rlc_context *ctx)
         struct rlc_sdu *sdu;
         uint32_t lowest;
 
-        lowest = ctx->tx.next;
+        lowest = ctx->tx.next_sn;
 
         for (rlc_each_node(ctx->sdus, sdu, next)) {
                 if (sdu->dir == RLC_TX && sdu->sn < lowest) {
@@ -551,11 +551,11 @@ static uint32_t lowest_sn_not_recv_(struct rlc_context *ctx)
         return lowest;
 }
 
-static void am_rx_highest_status_update_(struct rlc_context *ctx, uint32_t next)
+static void am_rx_highest_ack_update_(struct rlc_context *ctx, uint32_t next)
 {
         struct rlc_sdu *sdu;
 
-        ctx->rx.highest_status = next;
+        ctx->rx.highest_ack = next;
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir != RLC_RX) {
@@ -615,7 +615,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                                  "), dropping (highest_status=%" PRIu32 ")",
                                  pdu.sn, rlc_window_base(&ctx->rx.win),
                                  rlc_window_end(&ctx->rx.win),
-                                 ctx->rx.highest_status);
+                                 ctx->rx.highest_ack);
                         goto exit;
                 }
 
@@ -701,9 +701,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
                         sdu->state = RLC_DONE;
 
-                        if (sdu->sn == ctx->rx.highest_status) {
+                        if (sdu->sn == ctx->rx.highest_ack) {
                                 /* After this call, SDU can not be used */
-                                am_rx_highest_status_update_(ctx, lowest);
+                                am_rx_highest_ack_update_(ctx, lowest);
                         }
                 } else {
                         rlc_sdu_remove(ctx, sdu);
@@ -939,10 +939,10 @@ static ssize_t gen_status_(struct rlc_context *ctx, size_t max_size)
 
         prepare_pdu_(ctx, &pdu);
         pdu.flags.is_status = 1;
-        pdu.sn = ctx->rx.highest_status;
+        pdu.sn = ctx->rx.highest_ack;
 
         rlc_dbgf("Generating status report with highest_status=%" PRIu32,
-                 ctx->rx.highest_status);
+                 ctx->rx.highest_ack);
 
         count = 0;
         status_idx = 0;
