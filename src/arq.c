@@ -99,7 +99,7 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
                 .range = sdu_next->sn - sn,
         };
 
-        if (status_count(pool) != 0) {
+        if (status_count(pool) > 1) {
                 return encode_last(ctx, pool, mem, max_size);
         }
 
@@ -151,7 +151,7 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                  * one, so that the E1 bit can be set
                  * appropriately. On the first iteration, skip
                  * encoding as there is no last */
-                if (status_count(pool) != 0) {
+                if (status_count(pool) > 1) {
                         bytes = encode_last(ctx, pool, (void *)mem, remaining);
                         if (bytes == -ENOSPC) {
                                 break;
@@ -385,11 +385,19 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
                 if (sdu->sn != next_sn) {
                         bytes = create_nack_range(ctx, &pool, (void *)mem,
                                                   max_size, sdu, next_sn);
-                } else {
-                        bytes = create_nack_offset(ctx, &pool, (void *)mem,
-                                                   max_size, sdu);
+
+                        if (bytes == -ENOSPC) {
+                                rlc_wrnf("Unable to transmit full status: MTU "
+                                         "too low");
+                                break;
+                        }
+
+                        mem += (size_t)bytes;
+                        max_size -= (size_t)bytes;
                 }
 
+                bytes = create_nack_offset(ctx, &pool, (void *)mem, max_size,
+                                           sdu);
                 if (bytes == -ENOSPC) {
                         rlc_wrnf("Unable to transmit full status: MTU too low");
                         break;
@@ -397,10 +405,11 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
 
                 mem += (size_t)bytes;
                 max_size -= (size_t)bytes;
+
                 next_sn = sdu->sn + 1;
         }
 
-        if (status_count(&pool) > 0) {
+        if (status_count(&pool) > 1) {
                 encode_last(ctx, &pool, (void *)mem, max_size);
 
                 pdu.flags.ext = 1;
@@ -481,7 +490,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         struct rlc_pdu_status cur;
         struct rlc_sdu *sdu;
 
-        offset = rlc_pdu_header_size(ctx, pdu) - 1;
+        offset = rlc_pdu_header_size(ctx, pdu);
 
         tx_ack(ctx, pdu->sn);
 

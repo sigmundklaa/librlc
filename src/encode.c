@@ -122,7 +122,7 @@ static bool has_sn_(const struct rlc_pdu *pdu, enum rlc_sdu_type type)
 
 static bool has_so_(const struct rlc_pdu *pdu)
 {
-        return !pdu->flags.is_first;
+        return !pdu->flags.is_first && !pdu->flags.is_status;
 }
 
 static size_t bytes_ceil_(size_t num_bits)

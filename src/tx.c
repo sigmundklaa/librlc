@@ -287,7 +287,7 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
                 }
         }
 
-        if (ctx->force_poll && size > 0) {
+        if (ctx->force_poll && max_size > 0) {
                 size += force_retransmit(ctx, max_size);
         }
 
