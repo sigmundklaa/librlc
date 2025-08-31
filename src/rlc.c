@@ -1,7 +1,6 @@
 
 #include <assert.h>
 #include <string.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <inttypes.h>
 
@@ -11,34 +10,11 @@
 #include <rlc/chunks.h>
 #include <rlc/buf.h>
 
-#include "encode.h"
 #include "arq.h"
 #include "tx.h"
 #include "rx.h"
-#include "backend.h"
-#include "event.h"
 #include "sdu.h"
 #include "methods.h"
-
-static const char *rlc_sdu_type_str(enum rlc_sdu_type type)
-{
-        switch (type) {
-        case RLC_AM:
-                return "AM";
-        case RLC_TM:
-                return "TM";
-        case RLC_UM:
-                return "UM";
-        default:
-                rlc_assert(0);
-                return NULL;
-        }
-}
-
-static bool in_window_(uint32_t sn, uint32_t base, uint32_t size)
-{
-        return base <= sn && sn < base + size;
-}
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *config,

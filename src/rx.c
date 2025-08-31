@@ -103,8 +103,6 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 
         ctx->rx.highest_ack = lowest;
 
-        rlc_window_move_to(&ctx->rx.win, lowest);
-
         /* Actions to take for SDUs that are unable to be reassembled does
          * not seem to be specified in the standard. Here, we assume that
          * when highest_status is updated, the next STATUS PDU will send
@@ -240,7 +238,7 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         }
 
         if (sdu->state != RLC_READY) {
-                rlc_errf("RX; Received SN=%" PRIu32
+                rlc_wrnf("RX; Received SN=%" PRIu32
                          " when not ready, discarding",
                          sdu->sn);
                 goto exit;

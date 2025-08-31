@@ -228,38 +228,8 @@ static void stop_poll_retransmit(struct rlc_context *ctx)
         (void)rlc_timer_stop(ctx->t_poll_retransmit);
 }
 
-static void deliver_acked(struct rlc_context *ctx, uint32_t ack_sn)
-{
-        struct rlc_sdu *sdu;
-        struct rlc_sdu **lastp;
-
-        lastp = &ctx->sdus;
-
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir == RLC_TX && sdu->state != RLC_READY &&
-                    sdu->sn < ack_sn) {
-                        rlc_dbgf("TX; SDU %" PRIu32
-                                 " implied ACK'd, delivering",
-                                 sdu->sn);
-
-                        *lastp = sdu->next;
-
-                        rlc_event_tx_done(ctx, sdu);
-                        if (sdu->sn == rlc_window_base(&ctx->tx.win)) {
-                                tx_win_shift(ctx);
-                        }
-
-                        rlc_sdu_dealloc(ctx, sdu);
-
-                        continue;
-                }
-
-                lastp = &sdu->next;
-        }
-}
-
-static void process_nack_chunk(struct rlc_context *ctx,
-                               struct rlc_pdu_status *cur)
+static void process_nack_offset(struct rlc_context *ctx,
+                                struct rlc_pdu_status *cur)
 {
         struct rlc_sdu *sdu;
         rlc_errno status;
@@ -396,15 +366,18 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
                         max_size -= (size_t)bytes;
                 }
 
-                bytes = create_nack_offset(ctx, &pool, (void *)mem, max_size,
-                                           sdu);
-                if (bytes == -ENOSPC) {
-                        rlc_wrnf("Unable to transmit full status: MTU too low");
-                        break;
-                }
+                if (sdu->state != RLC_DONE) {
+                        bytes = create_nack_offset(ctx, &pool, (void *)mem,
+                                                   max_size, sdu);
+                        if (bytes == -ENOSPC) {
+                                rlc_wrnf("Unable to transmit full status: MTU "
+                                         "too low");
+                                break;
+                        }
 
-                mem += (size_t)bytes;
-                max_size -= (size_t)bytes;
+                        mem += (size_t)bytes;
+                        max_size -= (size_t)bytes;
+                }
 
                 next_sn = sdu->sn + 1;
         }
@@ -509,12 +482,10 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                          cur.nack_sn, cur.offset.start, cur.offset.end,
                          cur.range);
 
-                deliver_acked(ctx, cur.nack_sn);
-
                 if (cur.ext.has_range) {
                         process_nack_range(ctx, &cur);
                 } else {
-                        process_nack_chunk(ctx, &cur);
+                        process_nack_offset(ctx, &cur);
                 }
 
                 offset += bytes;

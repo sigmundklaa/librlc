@@ -1,6 +1,7 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <errno.h>
 
 #include <rlc/rlc.h>
 #include <rlc/chunks.h>
@@ -90,6 +91,10 @@ ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks, void *dst,
                          * case below. */
                         copy_size = rlc_min(cur->size, max_size - total);
 
+                        if (total + copy_size > max_size) {
+                                return -ENOSPC;
+                        }
+
                         (void)memcpy((uint8_t *)dst + total, cur->data,
                                      copy_size);
 
@@ -99,6 +104,10 @@ ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks, void *dst,
                         local_offset = offset - passed;
                         copy_size = rlc_min(cur->size - local_offset,
                                             max_size - total);
+
+                        if (total + copy_size > max_size) {
+                                return -ENOSPC;
+                        }
 
                         (void)memcpy((uint8_t *)dst + total,
                                      (uint8_t *)cur->data + local_offset,
@@ -111,10 +120,6 @@ ssize_t rlc_chunks_deepcopy_view(const struct rlc_chunk *chunks, void *dst,
                 }
 
                 passed += cur->size;
-
-                if (total >= max_size) {
-                        break;
-                }
         }
 
         return total;
