@@ -14,7 +14,6 @@
 static ssize_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                            struct rlc_sdu *sdu, size_t max_size)
 {
-        size_t num_chunks;
         struct rlc_chunk chunk;
 
         if (pdu->seg_offset + pdu->size > sdu->buffer->size) {
@@ -63,7 +62,6 @@ static void pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                       struct rlc_pdu *pdu, size_t size_avail)
 {
-        size_t tot_size;
         rlc_errno status;
         struct rlc_sdu_segment *segment;
         struct rlc_sdu *cur;

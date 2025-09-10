@@ -63,7 +63,6 @@ static void bit_copy_mem_(uint8_t *dst, uint32_t src, unsigned int offset,
         unsigned int i;
         unsigned int bytes;
         unsigned int num_bits;
-        unsigned int width_remain;
         uint8_t src_byte;
 
         bytes = (offset + width) / 8 + 1;
@@ -238,10 +237,8 @@ static rlc_errno decode_status_header_(const struct rlc_context *ctx,
 rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
                          const struct rlc_chunk *chunks)
 {
-        rlc_errno status;
         ssize_t size;
         size_t sn_size;
-        const struct rlc_chunk *cur;
         uint8_t header[5];
 
         if (ctx->type == RLC_TM) {

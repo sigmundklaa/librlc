@@ -77,18 +77,6 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
 
 void rlc_tx_avail(struct rlc_context *ctx, size_t size)
 {
-        rlc_errno status;
-        ssize_t ret;
-        size_t tot_size;
-        size_t pdu_size;
-        const void *data;
-        struct rlc_pdu pdu;
-        struct rlc_sdu *cur;
-        struct rlc_sdu *next;
-        struct rlc_sdu *highest_sn;
-        struct rlc_sdu_segment *last_seg;
-        struct rlc_sdu_segment *tmp_seg;
-
         rlc_lock_acquire(&ctx->lock);
 
         rlc_dbgf("TX availability for context %p", ctx);

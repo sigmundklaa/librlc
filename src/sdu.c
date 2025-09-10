@@ -16,7 +16,6 @@ static bool seg_overlap_(const struct rlc_segment *left,
 rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                              struct rlc_segment seg)
 {
-        struct rlc_sdu_segment *new_seg;
         struct rlc_sdu_segment *cur;
         struct rlc_sdu_segment *next;
         struct rlc_sdu_segment **lastp;

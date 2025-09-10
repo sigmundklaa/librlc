@@ -39,8 +39,6 @@ static size_t status_count(struct status_pool *pool)
 
 static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
 {
-        rlc_errno status;
-
         rlc_dbgf("Retransmitting poll");
 
         ctx->force_poll = true;
@@ -168,7 +166,6 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
 static void tx_ack(struct rlc_context *ctx, uint16_t sn)
 {
         struct rlc_sdu *sdu;
-        struct rlc_sdu *next;
         struct rlc_sdu **lastp;
         uint32_t lowest;
 
@@ -411,8 +408,6 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
 
 size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
 {
-        size_t size;
-
         if (ctx->gen_status) {
                 return rlc_arq_tx_status(ctx, max_size);
         }

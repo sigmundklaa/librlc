@@ -20,7 +20,6 @@ void rlc_event_fire(struct rlc_context *ctx, struct rlc_event *event)
 void rlc_event_rx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         struct rlc_event event;
-        struct rlc_chunk chunk;
 
         rlc_inff("RX; SDU %" PRIu32 " received (%" PRIu32 "B)", sdu->sn,
                  sdu->segments->seg.end);

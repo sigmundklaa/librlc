@@ -84,7 +84,6 @@ static bool should_stop_reassembly(struct rlc_context *ctx)
 
 static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 {
-        rlc_errno status;
         struct rlc_sdu *sdu;
         uint32_t lowest;
 
@@ -185,7 +184,6 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
         struct rlc_pdu pdu;
         struct rlc_segment segment;
         struct rlc_sdu *sdu;
-        struct rlc_chunk *cur_chunk;
 
         rlc_lock_acquire(&ctx->lock);
 

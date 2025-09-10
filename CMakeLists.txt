@@ -13,9 +13,6 @@ if(TEST)
     add_subdirectory(tests)
 endif()
 
-add_executable(rlcexe main.c)
-target_link_libraries(rlcexe PRIVATE rlc)
-
 macro(rlc_plat_define name)
     set(kwargs "SOURCES")
     cmake_parse_arguments(RLC_PLAT_DEFINE "" "" "${kwargs}" ${ARGN})
