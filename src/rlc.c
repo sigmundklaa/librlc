@@ -20,6 +20,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *config,
                    const struct rlc_methods *methods, void *user_data)
 {
+        rlc_errno status;
         (void)memset(ctx, 0, sizeof(*ctx));
 
         ctx->type = type;
@@ -32,10 +33,58 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         rlc_window_init(&ctx->tx.win, 0, config->window_size);
         rlc_window_init(&ctx->rx.win, 0, config->window_size);
 
-        rlc_arq_init(ctx);
-        rlc_rx_init(ctx);
+        status = rlc_arq_init(ctx);
+        if (status != 0) {
+                rlc_lock_deinit(&ctx->lock);
+                return status;
+        }
+
+        status = rlc_rx_init(ctx);
+        if (status != 0) {
+                (void)rlc_arq_deinit(ctx);
+                rlc_lock_deinit(&ctx->lock);
+
+                return status;
+        }
 
         return 0;
+}
+
+rlc_errno rlc_deinit(struct rlc_context *ctx)
+{
+        rlc_errno status;
+        struct rlc_sdu *sdu;
+
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
+                rlc_sdu_dealloc(ctx, sdu);
+        }
+
+        status = rlc_rx_deinit(ctx);
+        if (status != 0) {
+                return status;
+        }
+
+        status = rlc_arq_deinit(ctx);
+        if (status != 0) {
+                return status;
+        }
+
+        rlc_lock_deinit(&ctx->lock);
+
+        return 0;
+}
+
+rlc_errno rlc_reset(struct rlc_context *ctx)
+{
+        rlc_errno status;
+
+        status = rlc_deinit(ctx);
+        if (status != 0) {
+                return status;
+        }
+
+        return rlc_init(ctx, ctx->type, ctx->conf, ctx->methods,
+                        ctx->user_data);
 }
 
 rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)

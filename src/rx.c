@@ -176,6 +176,11 @@ rlc_errno rlc_rx_init(struct rlc_context *ctx)
         return 0;
 }
 
+rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
+{
+        return rlc_timer_uninstall(ctx->t_reassembly);
+}
+
 void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 {
         ssize_t status;

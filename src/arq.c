@@ -312,6 +312,11 @@ rlc_errno rlc_arq_init(struct rlc_context *ctx)
         return 0;
 }
 
+rlc_errno rlc_arq_deinit(struct rlc_context *ctx)
+{
+        return rlc_timer_uninstall(ctx->t_poll_retransmit);
+}
+
 /** @brief Generate and submit status PDU to lower layer */
 size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
 {

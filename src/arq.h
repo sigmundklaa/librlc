@@ -7,6 +7,7 @@
 RLC_BEGIN_DECL
 
 rlc_errno rlc_arq_init(struct rlc_context *ctx);
+rlc_errno rlc_arq_deinit(struct rlc_context *ctx);
 
 ssize_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size);
 size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size);
