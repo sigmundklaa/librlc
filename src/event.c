@@ -25,7 +25,7 @@ void rlc_event_rx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
                  sdu->segments->seg.end);
 
         event.type = RLC_EVENT_RX_DONE;
-        event.data.rx_done = sdu->buffer;
+        event.sdu = sdu;
 
         rlc_event_fire(ctx, &event);
 }
@@ -52,8 +52,8 @@ void rlc_event_rx_done_direct(struct rlc_context *ctx,
                 rlc_panicf((rlc_errno)status, "Failed to copy to buffer");
         }
 
-        event.type = RLC_EVENT_RX_DONE;
-        event.data.rx_done = buf;
+        event.type = RLC_EVENT_RX_DONE_DIRECT;
+        event.buf = buf;
 
         rlc_event_fire(ctx, &event);
         rlc_buf_decref(buf, ctx);
@@ -67,7 +67,7 @@ void rlc_event_tx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
                  sdu->buffer->size);
 
         event.type = RLC_EVENT_TX_DONE;
-        event.data.tx_done = sdu->buffer;
+        event.sdu = sdu;
 
         rlc_event_fire(ctx, &event);
 }
@@ -79,6 +79,7 @@ void rlc_event_rx_drop(struct rlc_context *ctx, struct rlc_sdu *sdu)
         rlc_wrnf("Dropping SN=%" PRIu32, sdu->sn);
 
         event.type = RLC_EVENT_RX_FAIL;
+        event.sdu = sdu;
 
         rlc_event_fire(ctx, &event);
 }
@@ -90,6 +91,7 @@ void rlc_event_tx_fail(struct rlc_context *ctx, struct rlc_sdu *sdu)
         rlc_errf("Failed transmit of SN=%" PRIu32, sdu->sn);
 
         event.type = RLC_EVENT_TX_FAIL;
+        event.sdu = sdu;
 
         rlc_event_fire(ctx, &event);
 }

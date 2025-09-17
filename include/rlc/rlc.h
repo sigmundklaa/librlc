@@ -190,6 +190,7 @@ struct rlc_chunk {
 struct rlc_event {
         enum rlc_event_type {
                 RLC_EVENT_RX_DONE,
+                RLC_EVENT_RX_DONE_DIRECT,
                 RLC_EVENT_RX_FAIL,
 
                 RLC_EVENT_TX_DONE,
@@ -197,9 +198,9 @@ struct rlc_event {
         } type;
 
         union {
-                struct rlc_buf *rx_done;
-                struct rlc_buf *tx_done;
-        } data;
+                struct rlc_sdu *sdu;
+                struct rlc_buf *buf; /* RX_DONE_DIRECT */
+        };
 };
 
 #define rlc_each_node(start_, tptr_, prop_name_)                               \
