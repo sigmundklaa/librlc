@@ -97,7 +97,7 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 } else {
                         sdu->segments = segment->next;
 
-                        rlc_dealloc(ctx, segment);
+                        rlc_dealloc(ctx, segment, RLC_ALLOC_SDU_SEGMENT);
                 }
         }
 
@@ -274,7 +274,7 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
                 if (ctx->type != RLC_AM && pdu.flags.is_last) {
                         rlc_event_tx_done(ctx, sdu);
                         rlc_sdu_remove(ctx, sdu);
-                        rlc_dealloc(ctx, sdu);
+                        rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);
                 }
 
                 size += (size_t)ret;

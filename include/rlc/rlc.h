@@ -20,14 +20,21 @@ struct rlc_event;
 #define RLC_STATUS_SO_MAX (UINT16_MAX)
 #define RLC_STATUS_SO_MIN (0x0)
 
+enum rlc_alloc_type {
+        RLC_ALLOC_SDU,
+        RLC_ALLOC_BUF,
+        RLC_ALLOC_SDU_SEGMENT,
+        RLC_ALLOC_ARENA
+};
+
 struct rlc_methods {
         rlc_errno (*tx_submit)(struct rlc_context *, const struct rlc_chunk *);
         rlc_errno (*tx_request)(struct rlc_context *);
 
         void (*event)(struct rlc_context *, const struct rlc_event *);
 
-        void *(*mem_alloc)(struct rlc_context *, size_t);
-        void (*mem_dealloc)(struct rlc_context *, void *);
+        void *(*mem_alloc)(struct rlc_context *, size_t, enum rlc_alloc_type);
+        void (*mem_dealloc)(struct rlc_context *, void *, enum rlc_alloc_type);
 };
 
 enum rlc_sdu_type {

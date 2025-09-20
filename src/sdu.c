@@ -34,7 +34,7 @@ rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                                 seg.end = next->seg.end;
 
                                 cur->next = next->next;
-                                rlc_dealloc(ctx, next);
+                                rlc_dealloc(ctx, next, RLC_ALLOC_SDU_SEGMENT);
                         }
 
                         seg.start = cur->seg.start;
@@ -74,7 +74,7 @@ rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 lastp = &cur->next;
         }
 
-        cur = rlc_alloc(ctx, sizeof(*cur));
+        cur = rlc_alloc(ctx, sizeof(*cur), RLC_ALLOC_SDU_SEGMENT);
         if (cur == NULL) {
                 return -ENOMEM;
         }
@@ -148,7 +148,7 @@ struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir,
 {
         struct rlc_sdu *sdu;
 
-        sdu = rlc_alloc(ctx, sizeof(*sdu));
+        sdu = rlc_alloc(ctx, sizeof(*sdu), RLC_ALLOC_SDU);
         if (sdu == NULL) {
                 return NULL;
         }
@@ -179,10 +179,10 @@ void rlc_sdu_dealloc(struct rlc_context *ctx, struct rlc_sdu *sdu)
 
         for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments, seg,
                                 next)) {
-                rlc_dealloc(ctx, seg);
+                rlc_dealloc(ctx, seg, RLC_ALLOC_SDU_SEGMENT);
         }
 
-        rlc_dealloc(ctx, sdu);
+        rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);
 }
 
 struct rlc_sdu *rlc_sdu_get(struct rlc_context *ctx, uint32_t sn,

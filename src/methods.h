@@ -31,7 +31,8 @@ static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx,
         return methods->tx_submit(ctx, chunk);
 }
 
-static inline void *rlc_alloc(struct rlc_context *ctx, size_t size)
+static inline void *rlc_alloc(struct rlc_context *ctx, size_t size,
+                              enum rlc_alloc_type type)
 {
         const struct rlc_methods *methods = ctx->methods;
         void *mem;
@@ -39,20 +40,21 @@ static inline void *rlc_alloc(struct rlc_context *ctx, size_t size)
                 return NULL;
         }
 
-        mem = methods->mem_alloc(ctx, size);
+        mem = methods->mem_alloc(ctx, size, type);
         (void)memset(mem, 0, size);
 
         return mem;
 }
 
-static inline void rlc_dealloc(struct rlc_context *ctx, void *mem)
+static inline void rlc_dealloc(struct rlc_context *ctx, void *mem,
+                               enum rlc_alloc_type type)
 {
         const struct rlc_methods *methods = ctx->methods;
         if (methods->mem_dealloc == NULL) {
                 return;
         }
 
-        methods->mem_dealloc(ctx, mem);
+        methods->mem_dealloc(ctx, mem, type);
 }
 
 RLC_END_DECL
