@@ -5,6 +5,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(rlc)
 add_library(rlc STATIC)
 
+set(RLC_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
 target_include_directories(rlc PUBLIC include)
 
 add_subdirectory(src)
@@ -23,8 +25,11 @@ macro(rlc_plat_define name)
         target_sources(${name} INTERFACE ${RLC_PLAT_DEFINE_SOURCES})
     endif()
 
-    target_include_directories(${name}
-        INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}
+    target_include_directories(
+        ${name}
+        INTERFACE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${RLC_DIR}/src
     )
 endmacro()
 
@@ -34,4 +39,4 @@ endfunction()
 
 add_subdirectory(platform)
 
-rlc_plat_use(rlc-linux)
+rlc_plat_use(rlc-zephyr)
