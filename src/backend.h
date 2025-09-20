@@ -9,7 +9,7 @@
 RLC_BEGIN_DECL
 
 ssize_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                              struct rlc_chunk *payload, size_t max_size);
+                              rlc_buf *buf);
 
 RLC_END_DECL
 

@@ -2,7 +2,6 @@
 #include <errno.h>
 
 #include <rlc/rlc.h>
-#include <rlc/chunks.h>
 #include <rlc/buf.h>
 
 #include "arq.h"
@@ -76,7 +75,7 @@ static bool should_stop_reassembly(struct rlc_context *ctx)
 
         if (!rlc_window_has(&ctx->rx.win, ctx->rx.next_status_trigger) &&
             ctx->rx.next_status_trigger != rlc_window_end(&ctx->rx.win)) {
-                return true;
+                return false;
         }
 
         return false;
@@ -181,30 +180,31 @@ rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
         return rlc_timer_uninstall(ctx->t_reassembly);
 }
 
-void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
+void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
 {
         ssize_t status;
         size_t header_size;
         uint32_t lowest;
         struct rlc_pdu pdu;
         struct rlc_segment segment;
+        struct rlc_segment uniq_segment;
         struct rlc_sdu *sdu;
 
         rlc_lock_acquire(&ctx->lock);
 
-        status = rlc_pdu_decode(ctx, &pdu, chunks);
+        status = rlc_pdu_decode(ctx, &pdu, buf);
         if (status != 0) {
                 goto exit;
         }
 
         if (ctx->type == RLC_TM) {
-                rlc_event_rx_done_direct(ctx, chunks);
+                rlc_event_rx_done_direct(ctx, buf);
 
                 goto exit;
         }
 
         if (pdu.flags.is_status) {
-                rlc_arq_rx_status(ctx, &pdu, chunks);
+                rlc_arq_rx_status(ctx, &pdu, buf);
 
                 goto exit;
         }
@@ -247,9 +247,9 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
                 goto exit;
         }
 
-        if (pdu.seg_offset >= sdu->buffer->size) {
+        if (pdu.seg_offset >= rlc_buf_size(sdu->buffer)) {
                 rlc_errf("RX; Offset out of bounds: %" PRIu32 ">%zu",
-                         pdu.seg_offset, sdu->buffer->size);
+                         pdu.seg_offset, rlc_buf_size(sdu->buffer));
                 goto exit;
         }
 
@@ -257,29 +257,29 @@ void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks)
 
         rlc_dbgf("RX; SN: %" PRIu32 ", RANGE: %" PRIu32 "->%zu", pdu.sn,
                  pdu.seg_offset,
-                 pdu.seg_offset + rlc_chunks_size(chunks) - header_size);
-
-        /* Copy the contents of the chunks, skipping the header content */
-        status = rlc_chunks_deepcopy_view(
-                chunks, (uint8_t *)sdu->buffer->mem + pdu.seg_offset,
-                sdu->buffer->size - pdu.seg_offset, header_size);
-        if (status <= 0) {
-                rlc_errf("RX; Unable to flatten chunks: (%" RLC_PRI_ERRNO ")",
-                         (rlc_errno)status);
-                goto exit;
-        }
+                 pdu.seg_offset + rlc_buf_size(buf) - header_size);
 
         segment = (struct rlc_segment){
                 .start = pdu.seg_offset,
-                .end = pdu.seg_offset + rlc_chunks_size(chunks) - header_size,
+                .end = pdu.seg_offset + rlc_buf_size(buf) - header_size,
         };
 
-        status = rlc_sdu_seg_append(ctx, sdu, segment);
-        if (status != 0) {
-                rlc_errf("RX; Unable to append segment (%" RLC_PRI_ERRNO ")",
-                         (rlc_errno)status);
+        uniq_segment = rlc_sdu_seg_append(ctx, sdu, segment);
+        if (uniq_segment.start == 0 && uniq_segment.end == 0) {
+                rlc_errf("RX; Unable to append segment");
                 goto exit;
         }
+
+        if (uniq_segment.start != segment.start) {
+                rlc_buf_strip_front(buf, uniq_segment.start - segment.start);
+        }
+
+        if (uniq_segment.end != segment.end) {
+                rlc_buf_strip_back(buf, segment.end - uniq_segment.end);
+        }
+
+        /* Insert buffer fragment */
+        rlc_buf_chain_at(sdu->buffer, buf, uniq_segment.start);
 
         if (pdu.flags.is_last) {
                 sdu->flags.rx_last_received = 1;

@@ -7,25 +7,79 @@
 
 RLC_BEGIN_DECL
 
-struct rlc_buf;
+static inline rlc_buf *rlc_buf_alloc(struct rlc_context *ctx, size_t size)
+{
+        return rlc_plat_buf_alloc(ctx, size);
+}
 
-typedef void (*rlc_buf_dealloc_fn)(struct rlc_context *, struct rlc_buf *);
+static inline void rlc_buf_incref(rlc_buf *buf)
+{
+        rlc_plat_buf_incref(buf);
+}
 
-struct rlc_buf {
-        void *mem;
-        size_t size;
+static inline void rlc_buf_decref(rlc_buf *buf, struct rlc_context *ctx)
+{
+        rlc_plat_buf_decref(buf, ctx);
+}
 
-        unsigned int refcnt;
-        void (*dealloc)(struct rlc_context *ctx, struct rlc_buf *buf);
-};
+static inline void rlc_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset)
+{
+        rlc_plat_buf_chain_at(buf, next, offset);
+}
 
-void rlc_buf_init(struct rlc_buf *buf, void *mem, size_t size,
-                  rlc_buf_dealloc_fn dealloc);
+static inline void rlc_buf_chain_back(rlc_buf *buf, rlc_buf *back)
+{
+        rlc_plat_buf_chain_back(buf, back);
+}
 
-struct rlc_buf *rlc_buf_alloc(struct rlc_context *ctx, size_t size);
+static inline void rlc_buf_chain_front(rlc_buf *buf, rlc_buf *front)
+{
+        rlc_plat_buf_chain_front(buf, front);
+}
 
-void rlc_buf_incref(struct rlc_buf *buf);
-void rlc_buf_decref(struct rlc_buf *buf, struct rlc_context *ctx);
+static inline rlc_buf *rlc_buf_view(rlc_buf *buf, size_t offset, size_t size,
+                                    struct rlc_context *ctx)
+{
+        return rlc_plat_buf_view(buf, offset, size, ctx);
+}
+
+static inline void rlc_buf_strip_front(rlc_buf *buf, size_t size)
+{
+        rlc_plat_buf_strip_front(buf, size);
+}
+
+static inline void rlc_buf_strip_back(rlc_buf *buf, size_t size)
+{
+        rlc_plat_buf_strip_back(buf, size);
+}
+
+static inline size_t rlc_buf_put_back(rlc_buf *buf, const void *mem,
+                                      size_t size)
+{
+        return rlc_plat_buf_put_back(buf, mem, size);
+}
+
+static inline size_t rlc_buf_put_front(rlc_buf *buf, const void *mem,
+                                       size_t size)
+{
+        return rlc_plat_buf_put_front(buf, mem, size);
+}
+
+static inline size_t rlc_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
+                                  size_t max_size)
+{
+        return rlc_plat_buf_copy(buf, mem, offset, max_size);
+}
+
+static inline size_t rlc_buf_cap(const rlc_buf *buf)
+{
+        return rlc_plat_buf_cap(buf);
+}
+
+static inline size_t rlc_buf_size(const rlc_buf *buf)
+{
+        return rlc_plat_buf_size(buf);
+}
 
 RLC_END_DECL
 

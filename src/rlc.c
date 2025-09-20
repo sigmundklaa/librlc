@@ -7,7 +7,6 @@
 #include <rlc/rlc.h>
 #include <rlc/timer.h>
 #include <rlc/plat.h>
-#include <rlc/chunks.h>
 #include <rlc/buf.h>
 
 #include "arq.h"
@@ -87,9 +86,9 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
                         ctx->user_data);
 }
 
-rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
+rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf *buf,
+                   struct rlc_sdu **sdu_out)
 {
-        rlc_errno status;
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
 
@@ -109,14 +108,15 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
         rlc_sdu_insert(ctx, sdu);
 
         seg.start = 0;
-        seg.end = sdu->buffer->size;
+        seg.end = rlc_buf_size(sdu->buffer);
 
         rlc_dbgf("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
                  sdu->sn, seg.start, seg.end);
 
-        status = rlc_sdu_seg_append(ctx, sdu, seg);
-        if (status != 0) {
-                return status;
+        (void)rlc_sdu_seg_append(ctx, sdu, seg);
+
+        if (sdu_out != NULL) {
+                *sdu_out = sdu;
         }
 
         rlc_lock_release(&ctx->lock);
@@ -124,7 +124,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, struct rlc_buf *buf)
         return rlc_tx_request(ctx);
 }
 
-void rlc_tx_avail(struct rlc_context *ctx, size_t size)
+size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
 {
         rlc_lock_acquire(&ctx->lock);
 
@@ -136,4 +136,6 @@ void rlc_tx_avail(struct rlc_context *ctx, size_t size)
         }
 
         rlc_lock_release(&ctx->lock);
+
+        return size;
 }

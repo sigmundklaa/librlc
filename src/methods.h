@@ -20,15 +20,14 @@ static inline rlc_errno rlc_tx_request(struct rlc_context *ctx)
         return methods->tx_request(ctx);
 }
 
-static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx,
-                                      struct rlc_chunk *chunk)
+static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx, rlc_buf *buf)
 {
         const struct rlc_methods *methods = ctx->methods;
         if (methods->tx_submit == NULL) {
                 return -ENOTSUP;
         }
 
-        return methods->tx_submit(ctx, chunk);
+        return methods->tx_submit(ctx, buf);
 }
 
 static inline void *rlc_alloc(struct rlc_context *ctx, size_t size,

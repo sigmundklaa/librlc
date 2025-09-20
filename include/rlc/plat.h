@@ -30,6 +30,23 @@ rlc_errno rlc_plat_timer_stop(rlc_timer timer);
 
 bool rlc_plat_timer_active(rlc_timer timer);
 
+rlc_buf *rlc_plat_buf_alloc(struct rlc_context *ctx, size_t size);
+void rlc_plat_buf_incref(rlc_buf *buf);
+void rlc_plat_buf_decref(rlc_buf *buf, struct rlc_context *ctx);
+void rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset);
+void rlc_plat_buf_chain_back(rlc_buf *buf, rlc_buf *back);
+void rlc_plat_buf_chain_front(rlc_buf *buf, rlc_buf *front);
+rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
+                           struct rlc_context *ctx);
+void rlc_plat_buf_strip_front(rlc_buf *buf, size_t size);
+void rlc_plat_buf_strip_back(rlc_buf *buf, size_t size);
+size_t rlc_plat_buf_put_back(rlc_buf *buf, const void *mem, size_t size);
+size_t rlc_plat_buf_put_front(rlc_buf *buf, const void *mem, size_t size);
+size_t rlc_plat_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
+                         size_t max_size);
+size_t rlc_plat_buf_cap(const rlc_buf *buf);
+size_t rlc_plat_buf_size(const rlc_buf *buf);
+
 RLC_END_DECL
 
 #endif /* RLC_PLAT_H__ */

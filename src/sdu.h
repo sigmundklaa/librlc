@@ -64,8 +64,22 @@ static inline bool rlc_sdu_loss_detected(struct rlc_sdu *sdu)
         return sdu->segments->next != NULL || sdu->segments->seg.start != 0;
 }
 
-rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                             struct rlc_segment seg);
+/**
+ * @brief Insert segment into segment list.
+ *
+ * This function takes into account that parts of the segment is already
+ * received, and adjusts the list to only represent each byte in the SDU once.
+ *
+ * @param ctx
+ * @param sdu
+ * @param seg Segment to insert
+ * @return struct rlc_segment Adjusted segment which will be contained within @p
+ * seg, but may be adjusted to only represent data which has not already been
+ * received.
+ */
+struct rlc_segment rlc_sdu_seg_append(struct rlc_context *ctx,
+                                      struct rlc_sdu *sdu,
+                                      struct rlc_segment seg);
 
 size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir);
 
@@ -74,7 +88,7 @@ void rlc_sdu_insert(struct rlc_context *ctx, struct rlc_sdu *sdu);
 void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu);
 
 struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir,
-                              struct rlc_buf *buf);
+                              rlc_buf *buf);
 
 void rlc_sdu_dealloc_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu);
 

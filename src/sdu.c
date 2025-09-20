@@ -13,15 +13,18 @@ static bool seg_overlap_(const struct rlc_segment *left,
 }
 
 /* TODO: rename to insert */
-rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                             struct rlc_segment seg)
+struct rlc_segment rlc_sdu_seg_append(struct rlc_context *ctx,
+                                      struct rlc_sdu *sdu,
+                                      struct rlc_segment seg)
 {
         struct rlc_sdu_segment *cur;
         struct rlc_sdu_segment *next;
         struct rlc_sdu_segment **lastp;
+        struct rlc_segment ret_seg;
 
         lastp = &sdu->segments;
         next = NULL;
+        ret_seg = seg;
 
         for (rlc_each_node(sdu->segments, cur, next)) {
                 next = cur->next;
@@ -32,11 +35,13 @@ rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                          * they can be merged. */
                         if (next != NULL && seg_overlap_(&seg, &next->seg)) {
                                 seg.end = next->seg.end;
+                                ret_seg.end = next->seg.start;
 
                                 cur->next = next->next;
                                 rlc_dealloc(ctx, next, RLC_ALLOC_SDU_SEGMENT);
                         }
 
+                        ret_seg.start = cur->seg.end;
                         seg.start = cur->seg.start;
                         goto entry_found;
                 }
@@ -51,6 +56,7 @@ rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                                         /* Overlap to the right, merge */
                                         cur = next;
                                         seg.end = next->seg.end;
+                                        ret_seg.end = next->seg.start;
 
                                         goto entry_found;
                                 }
@@ -62,6 +68,7 @@ rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 } else if (seg.start < cur->seg.start) {
                         if (seg.end >= cur->seg.start) {
                                 seg.end = cur->seg.end;
+                                ret_seg.end = cur->seg.start;
 
                                 goto entry_found;
                         }
@@ -76,7 +83,8 @@ rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
         cur = rlc_alloc(ctx, sizeof(*cur), RLC_ALLOC_SDU_SEGMENT);
         if (cur == NULL) {
-                return -ENOMEM;
+                rlc_assert(0);
+                return (struct rlc_segment){0};
         }
 
         *lastp = cur;
@@ -85,7 +93,7 @@ rlc_errno rlc_sdu_seg_append(struct rlc_context *ctx, struct rlc_sdu *sdu,
 entry_found:
         (void)memcpy(&cur->seg, &seg, sizeof(seg));
 
-        return 0;
+        return ret_seg;
 }
 
 size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir)
@@ -144,7 +152,7 @@ void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu)
 }
 
 struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir,
-                              struct rlc_buf *buf)
+                              rlc_buf *buf)
 {
         struct rlc_sdu *sdu;
 

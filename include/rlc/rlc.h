@@ -12,7 +12,6 @@ RLC_BEGIN_DECL
 
 /** @cond PRIVATE */
 struct rlc_context;
-struct rlc_chunk;
 struct rlc_sdu;
 struct rlc_event;
 /** @endcond */
@@ -28,7 +27,7 @@ enum rlc_alloc_type {
 };
 
 struct rlc_methods {
-        rlc_errno (*tx_submit)(struct rlc_context *, const struct rlc_chunk *);
+        rlc_errno (*tx_submit)(struct rlc_context *, rlc_buf *);
         rlc_errno (*tx_request)(struct rlc_context *);
 
         void (*event)(struct rlc_context *, const struct rlc_event *);
@@ -141,7 +140,7 @@ typedef struct rlc_sdu {
         uint32_t sn;
         unsigned int retx_count; /* Number of retransmissions */
 
-        struct rlc_buf *buffer;
+        rlc_buf *buffer;
 
         struct {
                 bool rx_last_received: 1;
@@ -187,13 +186,6 @@ struct rlc_pdu_status {
         struct rlc_pdu_status *next;
 };
 
-struct rlc_chunk {
-        void *data;
-        size_t size;
-
-        struct rlc_chunk *next;
-};
-
 struct rlc_event {
         enum rlc_event_type {
                 RLC_EVENT_RX_DONE,
@@ -205,8 +197,8 @@ struct rlc_event {
         } type;
 
         union {
-                struct rlc_sdu *sdu;
-                struct rlc_buf *buf; /* RX_DONE_DIRECT */
+                const struct rlc_sdu *sdu;
+                const rlc_buf *buf; /* RX_DONE_DIRECT */
         };
 };
 
@@ -250,15 +242,24 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *conf,
                    const struct rlc_methods *methods, void *user_data);
 
-rlc_errno rlc_send(rlc_context *ctx, struct rlc_buf *buf);
+rlc_errno rlc_deinit(struct rlc_context *ctx);
 
-void rlc_tx_avail(struct rlc_context *ctx, size_t size);
+rlc_errno rlc_reset(struct rlc_context *ctx);
 
-void rlc_rx_submit(struct rlc_context *ctx, const struct rlc_chunk *chunks);
+rlc_errno rlc_send(rlc_context *ctx, rlc_buf *buf, struct rlc_sdu **sdu);
+
+size_t rlc_tx_avail(struct rlc_context *ctx, size_t size);
+
+void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf);
 
 static inline void *rlc_user_data(struct rlc_context *ctx)
 {
         return ctx->user_data;
+}
+
+static inline bool rlc_segment_okay(struct rlc_segment *segment)
+{
+        return segment->start != 0 || segment->end != 0;
 }
 
 RLC_END_DECL

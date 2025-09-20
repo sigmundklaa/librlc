@@ -54,10 +54,9 @@ static void log_rx_status(struct rlc_pdu_status *status)
 }
 
 static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
-                             void *mem, size_t max_size)
+                             rlc_buf *buf)
 {
         struct rlc_pdu_status *last;
-        struct rlc_chunk chunk;
         size_t size;
 
         last = status_last(pool);
@@ -66,23 +65,18 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
         log_rx_status(last);
 
         size = rlc_status_size(ctx, last);
-        if (size > max_size) {
+        if (size > rlc_buf_cap(buf) - rlc_buf_size(buf)) {
                 return -ENOSPC;
         }
 
-        chunk.data = mem;
-        chunk.next = NULL;
-
-        rlc_status_encode(ctx, last, &chunk);
-        assert(chunk.size == size);
+        rlc_status_encode(ctx, last, buf);
 
         return size;
 }
 
 static ptrdiff_t create_nack_range(struct rlc_context *ctx,
-                                   struct status_pool *pool, void *mem,
-                                   size_t max_size, struct rlc_sdu *sdu_next,
-                                   uint32_t sn)
+                                   struct status_pool *pool, rlc_buf *buf,
+                                   struct rlc_sdu *sdu_next, uint32_t sn)
 {
         struct rlc_pdu_status *cur_status;
 
@@ -98,23 +92,23 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
         };
 
         if (status_count(pool) > 1) {
-                return encode_last(ctx, pool, mem, max_size);
+                return encode_last(ctx, pool, buf);
         }
 
         return 0;
 }
 
 static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
-                                    struct status_pool *pool, void *mem_arg,
-                                    size_t max_size, struct rlc_sdu *sdu)
+                                    struct status_pool *pool, rlc_buf *buf,
+                                    struct rlc_sdu *sdu)
 {
         struct rlc_pdu_status *cur_status;
         struct rlc_sdu_segment *seg;
         ptrdiff_t bytes;
+        size_t max_size;
         size_t remaining;
-        uintptr_t mem;
 
-        mem = (uintptr_t)mem_arg;
+        max_size = rlc_buf_cap(buf) - rlc_buf_size(buf);
         remaining = max_size;
 
         for (rlc_each_node(sdu->segments, seg, next)) {
@@ -150,13 +144,12 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                  * appropriately. On the first iteration, skip
                  * encoding as there is no last */
                 if (status_count(pool) > 1) {
-                        bytes = encode_last(ctx, pool, (void *)mem, remaining);
+                        bytes = encode_last(ctx, pool, buf);
                         if (bytes == -ENOSPC) {
                                 break;
                         }
 
                         remaining -= (size_t)bytes;
-                        mem += (size_t)bytes;
                 }
         }
 
@@ -229,7 +222,7 @@ static void process_nack_offset(struct rlc_context *ctx,
                                 struct rlc_pdu_status *cur)
 {
         struct rlc_sdu *sdu;
-        rlc_errno status;
+        struct rlc_segment seg;
 
         for (rlc_each_node(ctx->sdus, sdu, next)) {
                 if (sdu->dir == RLC_TX && sdu->sn == cur->nack_sn) {
@@ -248,15 +241,13 @@ static void process_nack_offset(struct rlc_context *ctx,
 
         if (cur->ext.has_offset) {
                 if (cur->offset.end == RLC_STATUS_SO_MAX) {
-                        cur->offset.end = sdu->buffer->size;
+                        cur->offset.end = rlc_buf_size(sdu->buffer);
                 }
 
-                status = rlc_sdu_seg_append(ctx, sdu, cur->offset);
-                if (status != 0) {
+                seg = rlc_sdu_seg_append(ctx, sdu, cur->offset);
+                if (!rlc_segment_okay(&seg)) {
                         rlc_errf("TX AM STATUS; Unable to "
-                                 "append seg "
-                                 "(%" RLC_PRI_ERRNO ")",
-                                 status);
+                                 "append seg ");
                         return;
                 }
 
@@ -271,7 +262,6 @@ static void process_nack_range(struct rlc_context *ctx,
                                struct rlc_pdu_status *cur)
 {
         struct rlc_sdu *sdu;
-        rlc_errno status;
         struct rlc_window nack_win;
         struct rlc_segment seg;
 
@@ -284,10 +274,10 @@ static void process_nack_range(struct rlc_context *ctx,
 
                 if (rlc_window_has(&nack_win, sdu->sn)) {
                         seg.start = 0;
-                        seg.end = sdu->buffer->size;
+                        seg.end = rlc_buf_size(sdu->buffer);
 
-                        status = rlc_sdu_seg_append(ctx, sdu, seg);
-                        if (status != 0) {
+                        seg = rlc_sdu_seg_append(ctx, sdu, seg);
+                        if (!rlc_segment_okay(&seg)) {
                                 rlc_errf("TX AM STATUS; Unable "
                                          "to insert nack range "
                                          "segment");
@@ -323,10 +313,8 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
         ptrdiff_t ret;
         struct rlc_pdu pdu;
         struct rlc_sdu *sdu;
-        struct rlc_chunk chunk;
         struct status_pool pool;
-        uintptr_t mem;
-        uintptr_t mem_alloc;
+        rlc_buf *buf;
         ptrdiff_t bytes;
         uint32_t next_sn;
 
@@ -341,12 +329,10 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
 
         next_sn = pdu.sn;
 
-        mem_alloc = (uintptr_t)rlc_alloc(ctx, max_size);
-        if (mem_alloc == 0) {
+        buf = rlc_buf_alloc(ctx, max_size);
+        if (buf == NULL) {
                 return -ENOMEM;
         }
-
-        mem = mem_alloc;
 
         for (rlc_each_node(ctx->sdus, sdu, next)) {
                 if (sdu->dir != RLC_RX) {
@@ -355,8 +341,8 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
 
                 /* TODO: Generate singular NACK? */
                 if (sdu->sn != next_sn) {
-                        bytes = create_nack_range(ctx, &pool, (void *)mem,
-                                                  max_size, sdu, next_sn);
+                        bytes = create_nack_range(ctx, &pool, buf, sdu,
+                                                  next_sn);
 
                         if (bytes == -ENOSPC) {
                                 rlc_wrnf("Unable to transmit full status: MTU "
@@ -364,20 +350,17 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
                                 break;
                         }
 
-                        mem += (size_t)bytes;
                         max_size -= (size_t)bytes;
                 }
 
                 if (sdu->state != RLC_DONE) {
-                        bytes = create_nack_offset(ctx, &pool, (void *)mem,
-                                                   max_size, sdu);
+                        bytes = create_nack_offset(ctx, &pool, buf, sdu);
                         if (bytes == -ENOSPC) {
                                 rlc_wrnf("Unable to transmit full status: MTU "
                                          "too low");
                                 break;
                         }
 
-                        mem += (size_t)bytes;
                         max_size -= (size_t)bytes;
                 }
 
@@ -385,7 +368,7 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
         }
 
         if (status_count(&pool) > 1) {
-                encode_last(ctx, &pool, (void *)mem, max_size);
+                encode_last(ctx, &pool, buf);
 
                 pdu.flags.ext = 1;
         }
@@ -394,11 +377,7 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
 
         rlc_dbgf("Submitting status PDU: SN=%i", pdu.sn);
 
-        chunk.next = NULL;
-        chunk.data = (void *)mem_alloc;
-        chunk.size = mem - mem_alloc;
-
-        ret = rlc_backend_tx_submit(ctx, &pdu, &chunk, max_size);
+        ret = rlc_backend_tx_submit(ctx, &pdu, buf);
         if (ret < 0) {
                 rlc_errf("Submitting status failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)ret);
@@ -406,7 +385,7 @@ size_t rlc_arq_tx_status(struct rlc_context *ctx, size_t max_size)
                 ret = 0;
         }
 
-        rlc_dealloc(ctx, (void *)mem_alloc);
+        rlc_buf_decref(buf, ctx);
 
         return ret;
 }
@@ -455,9 +434,8 @@ void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
 }
 
 void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                       const struct rlc_chunk *chunks)
+                       rlc_buf *buf)
 {
-        ptrdiff_t bytes;
         size_t offset;
         rlc_errno status;
         struct rlc_pdu_status cur;
@@ -475,8 +453,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 
         /* Iterate over every status */
-        bytes = rlc_status_decode(ctx, &cur, chunks, offset);
-        while (bytes > 0) {
+        while ((status = rlc_status_decode(ctx, &cur, buf)) == 0) {
                 rlc_dbgf("TX AM STATUS; NACK_SN: %" PRIu32 ", OFFSET: %" PRIu32
                          "->%" PRIu32 ", RANGE: %" PRIu32,
                          cur.nack_sn, cur.offset.start, cur.offset.end,
@@ -487,9 +464,6 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 } else {
                         process_nack_offset(ctx, &cur);
                 }
-
-                offset += bytes;
-                bytes = rlc_status_decode(ctx, &cur, chunks, offset);
         }
 
         /* Mark every SDU not known to the RX side for retransmission */
@@ -499,16 +473,9 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
 
                 cur.offset.start = 0;
-                cur.offset.end = sdu->buffer->size;
+                cur.offset.end = rlc_buf_size(sdu->buffer);
 
-                status = rlc_sdu_seg_append(ctx, sdu, cur.offset);
-
-                if (status != 0) {
-                        rlc_errf("TX AM STATUS; Unable to append seg "
-                                 "(%" RLC_PRI_ERRNO ")",
-                                 status);
-                        return;
-                }
+                (void)rlc_sdu_seg_append(ctx, sdu, cur.offset);
 
                 sdu->state = RLC_READY;
                 sdu->retx_count++;
@@ -527,12 +494,6 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
                         rlc_sdu_dealloc(ctx, sdu);
                 }
-        }
-
-        if (bytes < 0) {
-                rlc_errf("TX AM STATUS; Decode failed: %" RLC_PRI_ERRNO,
-                         (rlc_errno)bytes);
-                return;
         }
 }
 

@@ -1,7 +1,4 @@
 
-#include <errno.h>
-
-#include <rlc/chunks.h>
 #include <rlc/buf.h>
 
 #include "event.h"
@@ -30,33 +27,16 @@ void rlc_event_rx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
         rlc_event_fire(ctx, &event);
 }
 
-void rlc_event_rx_done_direct(struct rlc_context *ctx,
-                              const struct rlc_chunk *chunks)
+void rlc_event_rx_done_direct(struct rlc_context *ctx, const rlc_buf *buf)
 {
         struct rlc_event event;
-        struct rlc_buf *buf;
-        size_t size;
-        ssize_t status;
 
-        size = rlc_chunks_size(chunks);
-
-        rlc_inff("RX; Full SDU delivered (%zuB)", size);
-
-        buf = rlc_buf_alloc(ctx, size);
-        if (buf == NULL) {
-                rlc_panicf(ENOMEM, "Unable to allocate buffer");
-        }
-
-        status = rlc_chunks_deepcopy(chunks, buf->mem, buf->size);
-        if (status != (ssize_t)size) {
-                rlc_panicf((rlc_errno)status, "Failed to copy to buffer");
-        }
+        rlc_inff("RX; Full SDU delivered (%zuB)", rlc_buf_size(buf));
 
         event.type = RLC_EVENT_RX_DONE_DIRECT;
         event.buf = buf;
 
         rlc_event_fire(ctx, &event);
-        rlc_buf_decref(buf, ctx);
 }
 
 void rlc_event_tx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
@@ -64,7 +44,7 @@ void rlc_event_tx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
         struct rlc_event event;
 
         rlc_inff("TX; SDU %" PRIu32 " transmitted (%zuB)", sdu->sn,
-                 sdu->buffer->size);
+                 rlc_buf_size(sdu->buffer));
 
         event.type = RLC_EVENT_TX_DONE;
         event.sdu = sdu;

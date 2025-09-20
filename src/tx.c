@@ -3,6 +3,7 @@
 
 #include <rlc/buf.h>
 
+#include "rlc/rlc.h"
 #include "tx.h"
 #include "encode.h"
 #include "sdu.h"
@@ -14,19 +15,20 @@
 static ssize_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                            struct rlc_sdu *sdu, size_t max_size)
 {
-        struct rlc_chunk chunk;
+        rlc_buf *buf;
+        ssize_t ret;
 
-        if (pdu->seg_offset + pdu->size > sdu->buffer->size) {
+        if (pdu->seg_offset + pdu->size > rlc_buf_size(sdu->buffer)) {
                 return -ENODATA;
         }
 
-        chunk.next = NULL;
-        chunk.data = (uint8_t *)sdu->buffer->mem + pdu->seg_offset;
-        chunk.size = pdu->size;
-
         rlc_arq_tx_register(ctx, pdu);
+        buf = rlc_buf_view(sdu->buffer, pdu->seg_offset, pdu->size, ctx);
 
-        return rlc_backend_tx_submit(ctx, pdu, &chunk, max_size);
+        ret = rlc_backend_tx_submit(ctx, pdu, buf);
+        rlc_buf_decref(buf, ctx);
+
+        return ret;
 }
 
 /*
@@ -161,7 +163,6 @@ static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
 
 static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
 {
-        rlc_errno status;
         ptrdiff_t bytes;
         struct rlc_pdu pdu;
         struct rlc_sdu *highest_sn;
@@ -198,8 +199,8 @@ static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
         seg.end = last->seg.start;
         seg.start = seg.end - rlc_min(seg.end, max_size);
 
-        status = rlc_sdu_seg_append(ctx, highest_sn, seg);
-        if (status != 0) {
+        seg = rlc_sdu_seg_append(ctx, highest_sn, seg);
+        if (seg.start == 0 && seg.end == 0) {
                 rlc_errf("Unable to forcibly re-append segment to SDU");
                 return 0;
         }
@@ -212,7 +213,7 @@ static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
         bytes = tx_pdu_view(ctx, &pdu, highest_sn, max_size);
         if (bytes < 0) {
                 rlc_errf("Unable to transmit PDU view: %" RLC_PRI_ERRNO,
-                         (rlc_errno)status);
+                         (rlc_errno)bytes);
                 return 0;
         }
 

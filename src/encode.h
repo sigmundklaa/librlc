@@ -10,21 +10,19 @@ RLC_BEGIN_DECL
 #define RLC_STATUS_MAX_SIZE     (8)
 
 void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                    struct rlc_chunk *dst);
+                    rlc_buf *buf);
 
 rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
-                         const struct rlc_chunk *chunks);
+                         rlc_buf *buf);
 
 size_t rlc_pdu_header_size(const struct rlc_context *ctx,
                            const struct rlc_pdu *pdu);
 
 void rlc_status_encode(const struct rlc_context *ctc,
-                       const struct rlc_pdu_status *status,
-                       struct rlc_chunk *dst);
+                       const struct rlc_pdu_status *status, rlc_buf *buf);
 
-ssize_t rlc_status_decode(const struct rlc_context *ctx,
-                          struct rlc_pdu_status *status,
-                          const struct rlc_chunk *chunks, size_t offset);
+rlc_errno rlc_status_decode(const struct rlc_context *ctx,
+                            struct rlc_pdu_status *status, rlc_buf *buf);
 
 size_t rlc_status_size(const struct rlc_context *ctx,
                        struct rlc_pdu_status *status);

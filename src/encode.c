@@ -3,7 +3,7 @@
 #include <string.h>
 #include <errno.h>
 
-#include <rlc/chunks.h>
+#include <rlc/buf.h>
 #include <rlc/utils.h>
 
 #include "encode.h"
@@ -131,33 +131,34 @@ static size_t bytes_ceil_(size_t num_bits)
 }
 
 static void encode_status_header_(const struct rlc_context *ctx,
-                                  const struct rlc_pdu *pdu,
-                                  struct rlc_chunk *dst)
+                                  const struct rlc_pdu *pdu, rlc_buf *buf)
 {
         size_t full_width;
         size_t sn_width;
+        uint8_t data[RLC_STATUS_MAX_SIZE];
 
         full_width = 0;
 
-        bit_copy_mem_(dst->data, (0b0 << 1) | 0b000, 0, 4);
+        bit_copy_mem_(data, (0b0 << 1) | 0b000, 0, 4);
         full_width += 4;
 
         sn_width = sn_num_bits_(ctx->conf->sn_width);
-        bit_copy_mem_(dst->data, pdu->sn, full_width, sn_width);
+        bit_copy_mem_(data, pdu->sn, full_width, sn_width);
         full_width += sn_width;
 
-        bit_copy_mem_(dst->data, pdu->flags.ext, full_width, 1);
+        bit_copy_mem_(data, pdu->flags.ext, full_width, 1);
         full_width += 1;
 
-        dst->size = bytes_ceil_(full_width);
+        rlc_buf_put_front(buf, data, bytes_ceil_(full_width));
 }
 
 void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                    struct rlc_chunk *dst)
+                    rlc_buf *buf)
 {
         size_t size;
         size_t full_width;
         uint8_t si;
+        uint8_t data[RLC_PDU_HEADER_MAX_SIZE];
 
         switch (ctx->type) {
         case RLC_TM:
@@ -165,7 +166,7 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 return;
         case RLC_AM:
                 if (pdu->flags.is_status) {
-                        encode_status_header_(ctx, pdu, dst);
+                        encode_status_header_(ctx, pdu, buf);
                         return;
                 }
                 /* fallthrough */
@@ -178,14 +179,14 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         if (ctx->type == RLC_AM) {
                 /* Data bit and polled bit */
-                bit_copy_mem_(dst->data, (0b1 << 1) | pdu->flags.polled, 0, 2);
+                bit_copy_mem_(data, (0b1 << 1) | pdu->flags.polled, 0, 2);
 
                 full_width += 2;
         }
 
         si = to_si_(pdu);
 
-        bit_copy_mem_(dst->data, si, full_width, 2);
+        bit_copy_mem_(data, si, full_width, 2);
         full_width += 2;
 
         /* Reserve necessary amount bits so that the end of the SN is aligned at
@@ -196,18 +197,18 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 
         if (has_sn_(pdu, ctx->type)) {
-                bit_copy_mem_(dst->data, pdu->sn, full_width,
+                bit_copy_mem_(data, pdu->sn, full_width,
                               sn_num_bits_(ctx->conf->sn_width));
                 full_width += sn_num_bits_(ctx->conf->sn_width);
 
                 if (has_so_(pdu)) {
-                        bit_copy_mem_(dst->data, pdu->seg_offset, full_width,
+                        bit_copy_mem_(data, pdu->seg_offset, full_width,
                                       SO_WIDTH_);
                         full_width += SO_WIDTH_;
                 }
         }
 
-        dst->size = bytes_ceil_(full_width);
+        rlc_buf_put_front(buf, data, bytes_ceil_(full_width));
 }
 
 static rlc_errno decode_status_header_(const struct rlc_context *ctx,
@@ -235,21 +236,24 @@ static rlc_errno decode_status_header_(const struct rlc_context *ctx,
 }
 
 rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
-                         const struct rlc_chunk *chunks)
+                         rlc_buf *buf)
 {
+        rlc_errno status;
         ssize_t size;
         size_t sn_size;
-        uint8_t header[5];
+        uint8_t header[RLC_PDU_HEADER_MAX_SIZE];
 
         if (ctx->type == RLC_TM) {
                 return 0;
         }
 
+        status = 0;
+
         (void)memset(&pdu->flags, 0, sizeof(pdu->flags));
 
         sn_size = sn_num_bytes_(ctx->conf->sn_width);
 
-        size = rlc_chunks_deepcopy(chunks, header, sizeof(header));
+        size = rlc_buf_copy(buf, header, 0, sizeof(header));
         if (size < sn_size) {
                 if (size >= 0) {
                         return -ENODATA;
@@ -261,7 +265,8 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         if (ctx->type == RLC_AM) {
                 pdu->flags.is_status = (~(header[0] >> 7)) & 1;
                 if (pdu->flags.is_status) {
-                        return decode_status_header_(ctx, pdu, header);
+                        status = decode_status_header_(ctx, pdu, header);
+                        goto done;
                 }
 
                 pdu->flags.polled = (header[0] >> 6) & 1;
@@ -301,7 +306,12 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
                 pdu->seg_offset = 0;
         }
 
-        return 0;
+done:
+        if (status == 0) {
+                (void)rlc_buf_strip_front(buf, rlc_pdu_header_size(ctx, pdu));
+        }
+
+        return status;
 }
 
 size_t rlc_pdu_header_size(const struct rlc_context *ctx,
@@ -321,45 +331,43 @@ size_t rlc_pdu_header_size(const struct rlc_context *ctx,
 }
 
 void rlc_status_encode(const struct rlc_context *ctx,
-                       const struct rlc_pdu_status *status,
-                       struct rlc_chunk *dst)
+                       const struct rlc_pdu_status *status, rlc_buf *buf)
 {
         size_t full_width;
         size_t sn_width;
         uint8_t ext;
+        uint8_t data[RLC_STATUS_MAX_SIZE];
 
         full_width = 0;
         sn_width = sn_num_bits_(ctx->conf->sn_width);
 
-        bit_copy_mem_(dst->data, status->nack_sn, full_width, sn_width);
+        bit_copy_mem_(data, status->nack_sn, full_width, sn_width);
         full_width += sn_width;
 
         ext = (status->ext.has_more << 2) | (status->ext.has_offset << 1) |
               (status->ext.has_range << 0);
-        bit_copy_mem_(dst->data, ext, full_width, 3);
+        bit_copy_mem_(data, ext, full_width, 3);
         full_width += 3;
 
         full_width = width_aligned_(full_width);
         if (status->ext.has_offset) {
-                bit_copy_mem_(dst->data, status->offset.start, full_width,
+                bit_copy_mem_(data, status->offset.start, full_width,
                               SO_WIDTH_);
                 full_width += SO_WIDTH_;
-                bit_copy_mem_(dst->data, status->offset.end, full_width,
-                              SO_WIDTH_);
+                bit_copy_mem_(data, status->offset.end, full_width, SO_WIDTH_);
                 full_width += SO_WIDTH_;
         }
 
         if (status->ext.has_range) {
-                bit_copy_mem_(dst->data, status->range, full_width, 8);
+                bit_copy_mem_(data, status->range, full_width, 8);
                 full_width += 8;
         }
 
-        dst->size = bytes_ceil_(full_width);
+        rlc_buf_put_front(buf, data, bytes_ceil_(full_width));
 }
 
-ssize_t rlc_status_decode(const struct rlc_context *ctx,
-                          struct rlc_pdu_status *status,
-                          const struct rlc_chunk *chunks, size_t offset)
+rlc_errno rlc_status_decode(const struct rlc_context *ctx,
+                            struct rlc_pdu_status *status, rlc_buf *buf)
 {
         uint8_t header[RLC_STATUS_MAX_SIZE];
         size_t req_size;
@@ -368,13 +376,9 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
 
         req_size = sn_num_bytes_(ctx->conf->sn_width);
 
-        size = rlc_chunks_deepcopy_view(chunks, header, sizeof(header), offset);
+        size = rlc_buf_copy(buf, header, 0, sizeof(header));
         if (size < req_size) {
-                if (size >= 0) {
-                        return 0;
-                }
-
-                return size;
+                return -ENODATA;
         }
 
         if (ctx->conf->sn_width == RLC_SN_12BIT) {
@@ -413,6 +417,8 @@ ssize_t rlc_status_decode(const struct rlc_context *ctx,
 
                 status->range = header[req_size - 1];
         }
+
+        (void)rlc_buf_strip_front(buf, req_size);
 
         return req_size;
 }
