@@ -162,6 +162,7 @@ struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir,
         }
 
         sdu->dir = dir;
+        sdu->refcount = 1;
 
         rlc_buf_incref(buf);
         sdu->buffer = buf;
@@ -179,18 +180,25 @@ void rlc_sdu_dealloc_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu)
         sdu->buffer = NULL;
 }
 
-void rlc_sdu_dealloc(struct rlc_context *ctx, struct rlc_sdu *sdu)
+void rlc_sdu_incref(struct rlc_sdu *sdu)
+{
+        sdu->refcount++;
+}
+
+void rlc_sdu_decref(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         struct rlc_sdu_segment *seg;
 
-        rlc_sdu_dealloc_buffer(ctx, sdu);
+        if (--sdu->refcount == 0) {
+                rlc_sdu_dealloc_buffer(ctx, sdu);
 
-        for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments, seg,
-                                next)) {
-                rlc_dealloc(ctx, seg, RLC_ALLOC_SDU_SEGMENT);
+                for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments,
+                                        seg, next)) {
+                        rlc_dealloc(ctx, seg, RLC_ALLOC_SDU_SEGMENT);
+                }
+
+                rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);
         }
-
-        rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);
 }
 
 struct rlc_sdu *rlc_sdu_get(struct rlc_context *ctx, uint32_t sn,

@@ -180,7 +180,7 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
                                 *lastp = sdu->next;
 
                                 rlc_event_tx_done(ctx, sdu);
-                                rlc_sdu_dealloc(ctx, sdu);
+                                rlc_sdu_decref(ctx, sdu);
 
                                 continue;
                         } else if (sdu->sn < lowest) {
@@ -492,7 +492,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                                 tx_win_shift(ctx);
                         }
 
-                        rlc_sdu_dealloc(ctx, sdu);
+                        rlc_sdu_decref(ctx, sdu);
                 }
         }
 }

@@ -113,7 +113,7 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
                 if (sdu->dir == RLC_RX && sdu->sn < ctx->rx.highest_ack) {
                         rlc_event_rx_drop(ctx, sdu);
                         rlc_sdu_remove(ctx, sdu);
-                        rlc_sdu_dealloc(ctx, sdu);
+                        rlc_sdu_decref(ctx, sdu);
                 }
         }
 
@@ -158,7 +158,7 @@ static void highest_ack_update(struct rlc_context *ctx, uint32_t next)
                         assert(sdu->state == RLC_DONE);
 
                         rlc_sdu_remove(ctx, sdu);
-                        rlc_sdu_dealloc(ctx, sdu);
+                        rlc_sdu_decref(ctx, sdu);
                 }
         }
 }
@@ -314,7 +314,7 @@ void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
                         }
                 } else {
                         rlc_sdu_remove(ctx, sdu);
-                        rlc_sdu_dealloc(ctx, sdu);
+                        rlc_sdu_decref(ctx, sdu);
                 }
         }
 

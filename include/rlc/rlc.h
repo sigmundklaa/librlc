@@ -136,15 +136,17 @@ typedef struct rlc_sdu {
                 RLC_DONE,
         } state;
 
+        struct {
+                bool rx_last_received: 1;
+        } flags;
+
+        unsigned int refcount;
+
         /* RLC specification state variables */
         uint32_t sn;
         unsigned int retx_count; /* Number of retransmissions */
 
         rlc_buf *buffer;
-
-        struct {
-                bool rx_last_received: 1;
-        } flags;
 
         /* TX mode: unsent segments */
         /* RX mode: received segments */

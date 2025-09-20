@@ -55,7 +55,7 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
         struct rlc_sdu *sdu;
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                rlc_sdu_dealloc(ctx, sdu);
+                rlc_sdu_decref(ctx, sdu);
         }
 
         status = rlc_rx_deinit(ctx);
