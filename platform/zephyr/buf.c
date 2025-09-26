@@ -31,7 +31,7 @@ size_t rlc_plat_buf_size(const rlc_buf *buf)
         return net_buf_frags_len(buf);
 }
 
-void rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset)
+rlc_buf *rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset)
 {
         struct net_buf *cur;
         size_t bytes;
@@ -46,7 +46,7 @@ void rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset)
 
         if (cur == NULL) {
                 __ASSERT(0, "Buffer length < offset");
-                return;
+                return buf;
         }
 
         __ASSERT(bytes == offset, "Offset not aligned");
@@ -56,16 +56,17 @@ void rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset)
         }
 
         cur->frags = next;
+        return buf;
 }
 
-void rlc_plat_buf_chain_back(rlc_buf *buf, rlc_buf *back)
+rlc_buf *rlc_plat_buf_chain_back(rlc_buf *buf, rlc_buf *back)
 {
-        (void)net_buf_frag_add(buf, back);
+        return net_buf_frag_add(buf, back);
 }
 
-void rlc_plat_buf_chain_front(rlc_buf *buf, rlc_buf *front)
+rlc_buf *rlc_plat_buf_chain_front(rlc_buf *buf, rlc_buf *front)
 {
-        (void)net_buf_frag_add(front, buf);
+        return net_buf_frag_add(front, buf);
 }
 
 static rlc_buf *create_view(rlc_buf *parent, size_t offset, size_t max_size,
@@ -125,14 +126,40 @@ rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
         return head;
 }
 
-void rlc_plat_buf_strip_front(rlc_buf *buf, size_t size)
+rlc_buf *rlc_plat_buf_strip_front(rlc_buf *buf, size_t size,
+                                  struct rlc_context *ctx)
 {
-        net_buf_skip(buf, size);
+        return net_buf_skip(buf, size);
 }
 
-void rlc_plat_buf_strip_back(rlc_buf *buf, size_t size)
+rlc_buf *rlc_plat_buf_strip_back(rlc_buf *buf, size_t size,
+                                 struct rlc_context *ctx)
 {
-        (void)net_buf_remove_mem(buf, size);
+        struct net_buf *cur;
+        size_t total;
+        size_t bytes;
+        size_t offset;
+
+        bytes = 0;
+        total = net_buf_frags_len(buf);
+        offset = total - size;
+
+        for (cur = buf; cur && bytes + cur->len <= offset; cur = cur->frags) {
+                bytes += cur->len;
+        }
+
+        rlc_assert(cur != NULL);
+
+        if (bytes == offset) {
+                (void)net_buf_remove_mem(cur, cur->len - (bytes - offset));
+        }
+
+        if (cur->frags != NULL) {
+                net_buf_unref(cur->frags);
+                cur->frags = NULL;
+        }
+
+        return cur;
 }
 
 size_t rlc_plat_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
@@ -141,14 +168,7 @@ size_t rlc_plat_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
         return net_buf_linearize(mem, max_size, buf, offset, max_size);
 }
 
-size_t rlc_plat_buf_put_back(rlc_buf *buf, const void *mem, size_t size)
+void rlc_plat_buf_put(rlc_buf *buf, const void *mem, size_t size)
 {
         (void)net_buf_add_mem(buf, mem, size);
-        return size;
-}
-
-size_t rlc_plat_buf_put_front(rlc_buf *buf, const void *mem, size_t size)
-{
-        (void)net_buf_push_mem(buf, mem, size);
-        return size;
 }
