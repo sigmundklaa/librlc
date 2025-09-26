@@ -5,4 +5,5 @@ rlc_plat_define(
         lock.c
         timer.c
         init.c
+        buf.c
 )
