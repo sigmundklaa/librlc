@@ -1,9 +1,9 @@
 
 #include <rlc/buf.h>
+#include <rlc/sdu.h>
 
 #include <string.h>
 
-#include "sdu.h"
 #include "methods.h"
 
 static bool seg_overlap_(const struct rlc_segment *left,

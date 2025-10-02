@@ -8,11 +8,11 @@
 #include <rlc/timer.h>
 #include <rlc/plat.h>
 #include <rlc/buf.h>
+#include <rlc/sdu.h>
 
 #include "arq.h"
 #include "tx.h"
 #include "rx.h"
-#include "sdu.h"
 #include "methods.h"
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,

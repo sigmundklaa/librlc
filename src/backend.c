@@ -1,9 +1,7 @@
 
-#include <string.h>
-
 #include <rlc/buf.h>
+#include <rlc/sdu.h>
 
-#include "sdu.h"
 #include "backend.h"
 #include "encode.h"
 

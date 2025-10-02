@@ -3,11 +3,11 @@
 
 #include <rlc/rlc.h>
 #include <rlc/buf.h>
+#include <rlc/sdu.h>
 
 #include "backend.h"
 #include "encode.h"
 #include "event.h"
-#include "sdu.h"
 
 struct status_pool {
         struct rlc_pdu_status mem[2];

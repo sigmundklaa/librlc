@@ -3,12 +3,12 @@
 
 #include <rlc/rlc.h>
 #include <rlc/buf.h>
+#include <rlc/sdu.h>
 
 #include "arq.h"
 #include "methods.h"
 #include "event.h"
 #include "encode.h"
-#include "sdu.h"
 
 /* Section 5.2.3.2.4, "when t-Reassembly expires" */
 static bool should_restart_reassembly(struct rlc_context *ctx)

@@ -2,11 +2,11 @@
 #include <string.h>
 
 #include <rlc/buf.h>
+#include <rlc/sdu.h>
 
 #include "rlc/rlc.h"
 #include "tx.h"
 #include "encode.h"
-#include "sdu.h"
 #include "event.h"
 #include "methods.h"
 #include "arq.h"
