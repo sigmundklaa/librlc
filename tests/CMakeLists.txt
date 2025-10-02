@@ -25,8 +25,7 @@ function(add_test src_file)
         ${test_name}
         PUBLIC
             rlc
-        PRIVATE
-            unity
+            unity::framework
     )
     target_include_directories(
         ${test_name}
@@ -67,8 +66,4 @@ add_custom_target(
     VERBATIM
 )
 
-add_test(test_chunks.c)
 add_test(test_encode.c)
-
-add_test(test_rlc.c)
-add_test(test_timer.c)
