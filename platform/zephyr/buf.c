@@ -34,28 +34,37 @@ size_t rlc_plat_buf_size(const rlc_buf *buf)
 rlc_buf *rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset)
 {
         struct net_buf *cur;
+        struct net_buf *last;
         size_t bytes;
 
-        bytes = 0;
-        cur = buf;
-
-        while (cur != NULL && bytes < offset) {
-                bytes += cur->len;
-                cur = cur->frags;
+        if (offset == 0) {
+                return rlc_plat_buf_chain_front(buf, next);
         }
 
-        if (cur == NULL) {
+        bytes = 0;
+        last = buf;
+
+        for (cur = buf; cur != NULL && bytes < offset; cur = cur->frags) {
+                if (bytes + cur->len > offset) {
+                        break;
+                }
+
+                bytes += cur->len;
+                last = cur;
+        }
+
+        if (last == NULL) {
                 __ASSERT(0, "Buffer length < offset");
                 return buf;
         }
 
         __ASSERT(bytes == offset, "Offset not aligned");
 
-        if (cur->frags != NULL) {
-                (void)net_buf_frag_add(next, cur->frags);
+        if (last->frags != NULL) {
+                (void)net_buf_frag_add(next, last->frags);
         }
 
-        cur->frags = next;
+        last->frags = next;
         return buf;
 }
 
@@ -66,6 +75,10 @@ rlc_buf *rlc_plat_buf_chain_back(rlc_buf *buf, rlc_buf *back)
 
 rlc_buf *rlc_plat_buf_chain_front(rlc_buf *buf, rlc_buf *front)
 {
+        if (buf == NULL) {
+                return front;
+        }
+
         return net_buf_frag_add(front, buf);
 }
 
@@ -81,7 +94,7 @@ static rlc_buf *create_view(rlc_buf *parent, size_t offset, size_t max_size,
                 return NULL;
         }
 
-        chunklen = rlc_min(parent->len, max_size) - offset;
+        chunklen = rlc_min(parent->len - offset, max_size);
 
         net_buf_simple_init_with_data(&buf->b, parent->data + offset, chunklen);
         buf->flags = NET_BUF_EXTERNAL_DATA;
@@ -102,8 +115,8 @@ rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
         parent = buf;
 
         while (parent != NULL && bytes + parent->len < offset) {
-                parent = parent->frags;
                 bytes += parent->len;
+                parent = parent->frags;
         }
 
         if (parent == NULL) {
@@ -111,25 +124,43 @@ rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
                 return NULL;
         }
 
-        head = create_view(parent, bytes - offset, size, ctx);
+        head = create_view(parent, offset - bytes, size, ctx);
         remaining = size - head->len;
 
         while (remaining > 0) {
+                parent = parent->frags;
+                __ASSERT_NO_MSG(parent != NULL);
+
                 cur = create_view(parent, 0, remaining, ctx);
                 remaining -= cur->len;
 
                 (void)net_buf_frag_add(net_buf_frag_last(head), cur);
-
-                parent = parent->frags;
         }
 
         return head;
 }
 
+/* Same as net_buf_skip, only that this does not remove the last element */
 rlc_buf *rlc_plat_buf_strip_front(rlc_buf *buf, size_t size,
                                   struct rlc_context *ctx)
 {
-        return net_buf_skip(buf, size);
+        size_t stripped;
+
+        while (buf != NULL && size > 0) {
+                stripped = rlc_min(size, buf->len);
+                (void)net_buf_pull_mem(buf, stripped);
+
+                size -= stripped;
+                if (size == 0) {
+                        break;
+                }
+
+                buf = net_buf_frag_del(NULL, buf);
+        }
+
+        __ASSERT_NO_MSG(buf != NULL);
+
+        return buf;
 }
 
 rlc_buf *rlc_plat_buf_strip_back(rlc_buf *buf, size_t size,
@@ -150,16 +181,14 @@ rlc_buf *rlc_plat_buf_strip_back(rlc_buf *buf, size_t size,
 
         rlc_assert(cur != NULL);
 
-        if (bytes == offset) {
-                (void)net_buf_remove_mem(cur, cur->len - (bytes - offset));
-        }
+        (void)net_buf_remove_mem(cur, cur->len - (offset - bytes));
 
         if (cur->frags != NULL) {
                 net_buf_unref(cur->frags);
                 cur->frags = NULL;
         }
 
-        return cur;
+        return buf;
 }
 
 size_t rlc_plat_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
