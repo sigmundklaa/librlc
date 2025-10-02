@@ -41,6 +41,8 @@ class radio_manager
         {
         }
 
+        radio_manager(const radio_manager &) = delete;
+
         void add_channel(channel &&chan)
         {
                 std::unique_lock guard(chan_lock);
@@ -49,8 +51,7 @@ class radio_manager
 
         void request()
         {
-                std::unique_lock guard(delay_lock);
-                tx_schedule_locked(std::chrono::steady_clock::now());
+                tx_schedule(std::chrono::system_clock::now());
         }
 
         void submit(const buffer &data)
@@ -60,26 +61,23 @@ class radio_manager
         }
 
       private:
-        using time_point = std::chrono::time_point<std::chrono::steady_clock>;
-
-        void tx_schedule_locked(time_point tp)
-        {
-                if (!deadline.has_value() || *deadline < tp) {
-                        deadline = tp;
-                        cv.notify_one();
-                }
-        }
+        using time_point = std::chrono::time_point<std::chrono::system_clock>;
 
         void tx_schedule(time_point tp)
         {
                 std::unique_lock guard(delay_lock);
-                tx_schedule_locked(tp);
+                if (!deadline.has_value() || *deadline < tp) {
+                        deadline = tp;
+
+                        cv.notify_all();
+                }
         }
 
         void tx_wait()
         {
                 std::unique_lock guard(delay_lock);
                 std::cv_status res;
+
                 do {
                         if (deadline.has_value()) {
                                 res = cv.wait_until(guard, *deadline);
@@ -108,7 +106,7 @@ class radio_manager
         {
                 using namespace std::chrono;
 
-                auto tx_delay = microseconds(200);
+                auto tx_delay = seconds(1);
 
                 for (;;) {
                         tx_wait();
@@ -121,7 +119,7 @@ class radio_manager
                         }
 
                         if (remaining > 0) {
-                                tx_schedule(steady_clock::now() + tx_delay);
+                                tx_schedule(system_clock::now() + tx_delay);
                         }
                 }
         }
@@ -157,7 +155,7 @@ template <class Context = rlc::context<>>
 struct backend : public rlc::backend<Context> {
         std::shared_ptr<radio_manager> radio;
 
-        backend(const std::shared_ptr<radio_manager> radio) : radio(radio)
+        backend(const std::shared_ptr<radio_manager> &radio) : radio(radio)
         {
         }
 
@@ -185,6 +183,8 @@ class socket_radio : public radio_driver
 
                 addr.sun_family = AF_UNIX;
                 std::strcpy(addr.sun_path, path.c_str());
+
+                (void)::unlink(path.c_str());
 
                 sock = ::socket(AF_UNIX, SOCK_STREAM, 0);
                 if (sock < 0) {
@@ -219,29 +219,60 @@ class socket_radio : public radio_driver
         {
                 for (const auto &buf : data) {
                         std::ptrdiff_t bytes = 0;
+                        std::uint16_t len = buf->size();
+
+                        auto ret = ::write(fd, &len, sizeof(len));
+                        if (ret < sizeof(len)) {
+                                throw std::runtime_error(
+                                        std::string("Write error (header): ") +
+                                        std::strerror(errno));
+                        }
+
+                        rlc_inff("Sending packet of size %" PRIu16, len);
 
                         do {
-                                auto ret = ::write(fd, buf->data() + bytes,
-                                                   buf->size());
+                                rlc_inff("Sending %zu", buf->size() - bytes);
+                                ret = ::write(fd, buf->data() + bytes,
+                                              buf->size() - bytes);
                                 if (ret < 0) {
                                         throw std::runtime_error(
                                                 std::string("Write error: ") +
                                                 std::strerror(ret));
                                 }
+
+                                bytes += ret;
                         } while (bytes < buf->size());
                 }
         }
 
         buffer recv() override
         {
-                auto buf = std::make_shared<buffer::element_type>(buf_size);
-                auto ret = ::read(fd, buf->data(), buf->size());
-                if (ret < 0) {
-                        throw std::runtime_error(std::string("Read error: ") +
-                                                 std::strerror(ret));
+                std::uint16_t len;
+                size_t bytes;
+
+                auto ret = ::read(fd, &len, sizeof(len));
+                if (ret < sizeof(len)) {
+                        throw std::runtime_error(
+                                std::string("Receive (header): ") +
+                                std::strerror(errno));
                 }
 
-                buf->resize(ret);
+                rlc_inff("Reading packet of size %" PRIu16, len);
+
+                auto buf = std::make_shared<buffer::element_type>(len);
+
+                bytes = 0;
+                do {
+                        ret = ::read(fd, buf->data() + bytes, len - bytes);
+                        if (ret <= 0) {
+                                throw std::runtime_error(
+                                        std::string("Read error: ") +
+                                        std::strerror(errno));
+                        }
+
+                        bytes += ret;
+                } while (bytes < len);
+
                 return buf;
         }
 
@@ -270,7 +301,7 @@ int main(int argc, char **argv)
                 .pdu_without_poll_max = 5,
                 .byte_without_poll_max = 500,
                 .time_reassembly_us = 500000,
-                .time_poll_retransmit_us = 50000,
+                .time_poll_retransmit_us = 500000,
                 .max_retx_threshhold = 10,
                 .sn_width = RLC_SN_18BIT,
         });
