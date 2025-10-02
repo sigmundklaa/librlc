@@ -66,13 +66,14 @@ class vector_buffer
         }
 
         vector_buffer(const ::rlc_buf *native)
+                : data(std::make_shared<std::vector<std::byte>>())
         {
                 const ::rlc_buf *cur;
 
                 for (rlc_each_node(native, cur, next)) {
                         std::copy_n(
                                 reinterpret_cast<const std::byte *>(cur->data),
-                                cur->size, data->end());
+                                cur->size, std::back_inserter(*data));
                 }
         }
 
@@ -144,15 +145,13 @@ class context
 
         ::rlc_sdu *send(const buffer_type &buf)
         {
-                ::rlc_sdu *sdu;
-
-                auto ret = ::rlc_send(&ctx_, buf.native(*this), &sdu);
+                auto ret = ::rlc_send(&ctx_, buf.native(*this), nullptr);
                 if (ret != 0) {
                         throw error(std::string("send(): failed; status=") +
                                     std::strerror(ret));
                 }
 
-                return sdu;
+                return nullptr;
         }
 
         std::size_t tx_avail(std::size_t size)
@@ -162,12 +161,14 @@ class context
 
         void rx_submit(buffer_type &buf)
         {
-                ::rlc_rx_submit(&ctx_, buf.native(*this));
+                auto native = ::rlc_rx_submit(&ctx_, buf.native(*this));
+                ::rlc_buf_decref(native, &ctx_);
         }
 
         void rx_submit(const buffer_type &buf)
         {
-                ::rlc_rx_submit(&ctx_, buf.native(*this));
+                auto native = ::rlc_rx_submit(&ctx_, buf.native(*this));
+                ::rlc_buf_decref(native, &ctx_);
         }
 
         ::rlc_context &native()
@@ -279,7 +280,7 @@ void methods<Context>::dealloc_cb(::rlc_context *ctx, void *memory,
 
         std::memcpy(&size, ptr - sizeof(size), sizeof(size));
 
-        allocator.deallocate(ptr, size);
+        allocator.deallocate(ptr - sizeof(size), size + sizeof(size));
 }
 
 }; // namespace detail
