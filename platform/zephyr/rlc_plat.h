@@ -2,6 +2,8 @@
 #ifndef RLC_PLAT_ZEPHYR_H__
 #define RLC_PLAT_ZEPHYR_H__
 
+#define RLC_PLAT_ZEPHYR
+
 #include <zephyr/kernel.h>
 #include <zephyr/net_buf.h>
 

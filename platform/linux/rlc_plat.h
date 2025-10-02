@@ -2,6 +2,8 @@
 #ifndef RLC_PLAT_LINUX_H__
 #define RLC_PLAT_LINUX_H__
 
+#define RLC_PLAT_LINUX
+
 #include <rlc/utils.h>
 #include <pthread.h>
 
