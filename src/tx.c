@@ -163,6 +163,7 @@ static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
 
 static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
 {
+        rlc_errno status;
         ptrdiff_t bytes;
         struct rlc_pdu pdu;
         struct rlc_sdu *highest_sn;
@@ -199,9 +200,11 @@ static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
         seg.end = last->seg.start;
         seg.start = seg.end - rlc_min(seg.end, max_size);
 
-        seg = rlc_sdu_seg_append(ctx, highest_sn, seg);
-        if (seg.start == 0 && seg.end == 0) {
-                rlc_errf("Unable to forcibly re-append segment to SDU");
+        status = rlc_sdu_seg_insert_all(ctx, highest_sn, seg);
+        if (status != 0) {
+                rlc_errf("Unable to forcibly re-insert segment to SDU: "
+                         "%" RLC_PRI_ERRNO,
+                         status);
                 return 0;
         }
 

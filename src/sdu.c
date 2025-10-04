@@ -6,94 +6,124 @@
 
 #include "methods.h"
 
-static bool seg_overlap_(const struct rlc_segment *left,
-                         const struct rlc_segment *right)
+/** @brief Check if the start of @p right lies within the range of @p left */
+static bool seg_overlap(const struct rlc_segment *left,
+                        const struct rlc_segment *right)
 {
         return right->start >= left->start && right->start <= left->end;
 }
 
-/* TODO: rename to insert */
-struct rlc_segment rlc_sdu_seg_append(struct rlc_context *ctx,
-                                      struct rlc_sdu *sdu,
-                                      struct rlc_segment seg)
+rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
+                             struct rlc_segment *segptr,
+                             struct rlc_segment *unique)
 {
-        struct rlc_sdu_segment *cur;
-        struct rlc_sdu_segment *next;
+        struct rlc_sdu_segment *slot;
+        struct rlc_sdu_segment *left;
+        struct rlc_sdu_segment *right;
         struct rlc_sdu_segment **lastp;
-        struct rlc_segment ret_seg;
+        struct rlc_segment seg;
+        bool overlap_left;
+        bool overlap_right;
 
         lastp = &sdu->segments;
-        next = NULL;
-        ret_seg = seg;
+        left = NULL;
+        right = NULL;
 
-        for (rlc_each_node(sdu->segments, cur, next)) {
-                next = cur->next;
+        seg = *segptr;
 
-                /* Seg overlaps with the element to the left */
-                if (seg_overlap_(&cur->seg, &seg)) {
-                        /* Overlaps to the right. Since overlap on both sides,
-                         * they can be merged. */
-                        if (next != NULL && seg_overlap_(&seg, &next->seg)) {
-                                seg.end = next->seg.end;
-                                ret_seg.end = next->seg.start;
+        for (rlc_each_node(sdu->segments, left, next)) {
+                right = left->next;
+                lastp = &left->next;
 
-                                cur->next = next->next;
-                                rlc_dealloc(ctx, next, RLC_ALLOC_SDU_SEGMENT);
+                overlap_left = seg_overlap(&left->seg, &seg);
+                overlap_right = right && seg_overlap(&seg, &right->seg);
+
+                /* Overlapping with either the left or right segment. In that
+                 * case, we need to insert atleast a chunk of the segment now.
+                 *
+                 * NOTE: This moves the start of the segment if overlapping to
+                 * the left, and the end of the segment if overlapping to the
+                 * right. If the segment is completely contained within
+                 * either left or right, this will cause seg.start>=seg.end.
+                 * This case should be (and is) handled before returning.
+                 */
+                if (overlap_left || overlap_right) {
+                        if (overlap_left) {
+                                seg.start = left->seg.end;
                         }
 
-                        ret_seg.start = cur->seg.end;
-                        seg.start = cur->seg.start;
-                        goto entry_found;
-                }
-
-                /* If not overlapping to the left, but the offset is higher than
-                 * that of the segment to the left */
-                if (seg.start > cur->seg.end) {
-                        if (next != NULL) {
-                                if (seg.start >= next->seg.end) {
-                                        continue;
-                                } else if (seg.end >= next->seg.start) {
-                                        /* Overlap to the right, merge */
-                                        cur = next;
-                                        seg.end = next->seg.end;
-                                        ret_seg.end = next->seg.start;
-
-                                        goto entry_found;
-                                }
+                        if (overlap_right) {
+                                seg.end = right->seg.start;
                         }
 
-                        /* Otherwise create a new entry and insert it */
-                        lastp = &cur->next;
-                        break;
-                } else if (seg.start < cur->seg.start) {
-                        if (seg.end >= cur->seg.start) {
-                                seg.end = cur->seg.end;
-                                ret_seg.end = cur->seg.start;
-
-                                goto entry_found;
-                        }
-
-                        /* Insert before current */
-                        next = cur;
                         break;
                 }
 
-                lastp = &cur->next;
+                /* Not overlapping, but should be inserted before the right
+                 * neighbour, meaning we can't continue iterating from here. */
+                if (right != NULL && seg.start <= right->seg.start) {
+                        seg.start = seg.start;
+                        seg.end = rlc_min(right->seg.start, seg.end);
+                        break;
+                }
         }
 
-        cur = rlc_alloc(ctx, sizeof(*cur), RLC_ALLOC_SDU_SEGMENT);
-        if (cur == NULL) {
-                rlc_assert(0);
-                return (struct rlc_segment){0};
+        /* Error check. This happens if the segment is completely contained
+         * within the left or right neighbours and the segment should
+         * then be completely discarded. */
+        if (seg.start >= seg.end) {
+                *segptr = (struct rlc_segment){0};
+                *unique = *segptr;
+
+                return -ENODATA;
         }
 
-        *lastp = cur;
-        cur->next = next;
+        *unique = seg;
+        slot = NULL;
 
-entry_found:
-        (void)memcpy(&cur->seg, &seg, sizeof(seg));
+        /* New segment and the right neighbour can be merged together. */
+        if (right != NULL && seg.end >= right->seg.start) {
+                seg.end = right->seg.end;
+                right->seg = seg;
 
-        return ret_seg;
+                slot = right;
+        }
+
+        /* New segment can be merged into left one */
+        if (left != NULL && seg.start <= left->seg.end) {
+                left->seg.end = seg.end;
+
+                /* Already merged with right, so we are now merging with two,
+                 * meaning one can be deleted. In this case, we delete the right
+                 * one */
+                if (slot != NULL) {
+                        left->next = slot->next;
+                        rlc_dealloc(ctx, slot, RLC_ALLOC_SDU_SEGMENT);
+                }
+
+                slot = left;
+        }
+
+        if (slot == NULL) {
+                slot = rlc_alloc(ctx, sizeof(*slot), RLC_ALLOC_SDU_SEGMENT);
+                if (slot == NULL) {
+                        rlc_assert(0);
+                        return -ENOMEM;
+                }
+
+                slot->seg = seg;
+                slot->next = right;
+
+                *lastp = slot;
+        }
+
+        segptr->start = slot->seg.end;
+        if (segptr->start >= segptr->end) {
+                segptr->start = 0;
+                segptr->end = 0;
+        }
+
+        return 0;
 }
 
 size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir)
