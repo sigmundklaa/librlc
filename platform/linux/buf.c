@@ -29,17 +29,17 @@ rlc_buf *rlc_plat_buf_alloc(struct rlc_context *ctx, size_t size)
 
 void rlc_plat_buf_incref(rlc_buf *buf)
 {
-        for (rlc_each_node(buf, buf, next)) {
-                buf->refcnt++;
-        }
+        buf->refcnt++;
 }
 
 void rlc_plat_buf_decref(rlc_buf *buf, struct rlc_context *ctx)
 {
         for (rlc_each_node_safe(rlc_buf, buf, buf, next)) {
-                if (--buf->refcnt == 0) {
-                        rlc_dealloc(ctx, buf, RLC_ALLOC_BUF);
+                if (--buf->refcnt > 0) {
+                        break;
                 }
+
+                rlc_dealloc(ctx, buf, RLC_ALLOC_BUF);
         }
 }
 
@@ -170,7 +170,6 @@ static const struct rlc_buf *buf_seek(const rlc_buf *buf, size_t offset,
                 *count = bytes;
         }
 
-        rlc_assert(cur != NULL);
         return cur;
 }
 
@@ -185,6 +184,7 @@ rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
         size_t remaining;
 
         parent = buf_seek(buf, offset, &bytes);
+        rlc_assert(parent != NULL);
 
         head = create_view(parent, offset - bytes, size, ctx);
         remaining = size - head->size;
@@ -203,6 +203,24 @@ rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
         }
 
         return head;
+}
+
+rlc_buf *rlc_plat_buf_clone(const rlc_buf *buf, size_t offset, size_t size,
+                            struct rlc_context *ctx)
+{
+        size_t bytes;
+        struct rlc_buf *ret;
+
+        ret = rlc_plat_buf_alloc(ctx, size);
+        if (ret == NULL) {
+                return NULL;
+        }
+
+        bytes = rlc_plat_buf_copy(buf, ret->data, offset, ret->cap);
+        rlc_assert(bytes == size);
+
+        ret->size = bytes;
+        return ret;
 }
 
 rlc_buf *rlc_plat_buf_strip_front(rlc_buf *buf, size_t size,
@@ -248,6 +266,8 @@ rlc_buf *rlc_plat_buf_strip_back(rlc_buf *buf, size_t size,
         offset = total - size;
 
         cur = (rlc_buf *)buf_seek(buf, offset, &bytes);
+        rlc_assert(cur != NULL);
+
         cur->size = offset - bytes;
 
         for (rlc_each_node_safe(struct rlc_buf, cur->next, del, next)) {
@@ -272,6 +292,10 @@ size_t rlc_plat_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
         remaining = max_size;
 
         cur = buf_seek(buf, offset, &bytes);
+        if (cur == NULL) {
+                return 0;
+        }
+
         cur_offset = bytes - offset;
 
         do {

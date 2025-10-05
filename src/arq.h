@@ -15,8 +15,8 @@ bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
                          const struct rlc_sdu *sdu);
 void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu);
 
-void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                       rlc_buf *buf);
+rlc_buf *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
+                           rlc_buf *buf);
 
 void rlc_arq_rx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu);
 

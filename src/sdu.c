@@ -33,7 +33,6 @@ rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
         for (rlc_each_node(sdu->segments, left, next)) {
                 right = left->next;
-                lastp = &left->next;
 
                 overlap_left = seg_overlap(&left->seg, &seg);
                 overlap_right = right && seg_overlap(&seg, &right->seg);
@@ -56,16 +55,22 @@ rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
                                 seg.end = right->seg.start;
                         }
 
+                        lastp = &left->next;
                         break;
                 }
 
-                /* Not overlapping, but should be inserted before the right
+                /* Not overlapping, but should be inserted before the left
                  * neighbour, meaning we can't continue iterating from here. */
-                if (right != NULL && seg.start <= right->seg.start) {
-                        seg.start = seg.start;
-                        seg.end = rlc_min(right->seg.start, seg.end);
+                if (seg.start <= left->seg.start) {
+                        seg.end = rlc_min(left->seg.start, seg.end);
+
+                        right = left;
+                        left = NULL;
+
                         break;
                 }
+
+                lastp = &left->next;
         }
 
         /* Error check. This happens if the segment is completely contained
@@ -170,7 +175,7 @@ void rlc_sdu_insert(struct rlc_context *ctx, struct rlc_sdu *sdu)
         lastp = &ctx->sdus;
 
         for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (sdu->sn <= cur->sn) {
+                if (sdu->dir == cur->dir && sdu->sn <= cur->sn) {
                         assert(sdu->sn != cur->sn);
 
                         sdu->next = cur;
@@ -202,8 +207,7 @@ void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu)
         }
 }
 
-struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir,
-                              rlc_buf *buf)
+struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir)
 {
         struct rlc_sdu *sdu;
 
@@ -212,11 +216,10 @@ struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir,
                 return NULL;
         }
 
+        (void)memset(sdu, 0, sizeof(*sdu));
+
         sdu->dir = dir;
         sdu->refcount = 1;
-
-        rlc_buf_incref(buf);
-        sdu->buffer = buf;
 
         return sdu;
 }

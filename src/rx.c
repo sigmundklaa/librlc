@@ -163,6 +163,18 @@ static void highest_ack_update(struct rlc_context *ctx, uint32_t next)
         }
 }
 
+static void log_rx_state(struct rlc_sdu *sdu)
+{
+        struct rlc_sdu_segment *seg;
+
+        rlc_dbgf("RX Status of SDU SN=%" PRIu32 ":", sdu->sn);
+
+        for (rlc_each_node(sdu->segments, seg, next)) {
+                rlc_dbgf("\t%" PRIu32 "->%" PRIu32, seg->seg.start,
+                         seg->seg.end);
+        }
+}
+
 rlc_errno rlc_rx_init(struct rlc_context *ctx)
 {
         if (ctx->type != RLC_TM) {
@@ -180,20 +192,84 @@ rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
         return rlc_timer_uninstall(ctx->t_reassembly);
 }
 
-void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
+static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
+                               rlc_buf *buf, struct rlc_segment seg)
+{
+        struct rlc_segment unique;
+        struct rlc_segment cur;
+        rlc_buf *insertbuf;
+        size_t offset;
+        rlc_errno status;
+
+        status = 0;
+
+        do {
+                cur = seg;
+
+                status = rlc_sdu_seg_insert(ctx, sdu, &seg, &unique);
+                if (status != 0) {
+                        if (status == -ENODATA) {
+                                status = 0;
+                        }
+
+                        break;
+                }
+
+                /* No remaining parts of the buffer that need to be inserted, so
+                 * we don't need to create a new buffer. This is the most likely
+                 * case. */
+                if (!rlc_segment_okay(&seg)) {
+                        rlc_buf_incref(buf);
+                        insertbuf = buf;
+
+                        if (unique.start != cur.start) {
+                                insertbuf = rlc_buf_strip_front(
+                                        insertbuf, unique.start - cur.start,
+                                        ctx);
+                        }
+
+                        if (unique.end != cur.end) {
+                                insertbuf = rlc_buf_strip_back(
+                                        insertbuf, cur.end - unique.end, ctx);
+                        }
+                } else {
+                        offset = unique.start - cur.start;
+                        insertbuf = rlc_buf_clone(
+                                buf, offset,
+                                offset + (unique.end - unique.start), ctx);
+
+                        /* Strip off the bytes that are now handled by the new
+                         * buffer, in addition to the bytes that are already
+                         * inserted (which is the difference between the start
+                         * of the remaining and the end of the unique). */
+                        buf = rlc_buf_strip_front(
+                                buf,
+                                offset + rlc_buf_size(insertbuf) +
+                                        (seg.start - unique.end),
+                                ctx);
+                }
+
+                sdu->buffer = rlc_buf_chain_at(
+                        sdu->buffer, insertbuf,
+                        rlc_sdu_seg_byte_offset(sdu, unique.start));
+        } while (rlc_segment_okay(&seg));
+
+        return status;
+}
+
+rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
 {
         ssize_t status;
-        size_t header_size;
         uint32_t lowest;
         struct rlc_pdu pdu;
         struct rlc_segment segment;
-        struct rlc_segment uniq_segment;
         struct rlc_sdu *sdu;
 
         rlc_lock_acquire(&ctx->lock);
 
-        status = rlc_pdu_decode(ctx, &pdu, buf);
+        status = rlc_pdu_decode(ctx, &pdu, &buf);
         if (status != 0) {
+                rlc_errf("Decode failed: %" RLC_PRI_ERRNO, (rlc_errno)status);
                 goto exit;
         }
 
@@ -204,7 +280,7 @@ void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
         }
 
         if (pdu.flags.is_status) {
-                rlc_arq_rx_status(ctx, &pdu, buf);
+                buf = rlc_arq_rx_status(ctx, &pdu, buf);
 
                 goto exit;
         }
@@ -226,8 +302,7 @@ void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
                         goto exit;
                 }
 
-                sdu = rlc_sdu_alloc(ctx, RLC_RX,
-                                    rlc_buf_alloc(ctx, ctx->conf->buffer_size));
+                sdu = rlc_sdu_alloc(ctx, RLC_RX);
                 if (sdu == NULL) {
                         rlc_errf("RX; SDU alloc failed (%" RLC_PRI_ERRNO ")",
                                  -ENOMEM);
@@ -247,39 +322,20 @@ void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
                 goto exit;
         }
 
-        if (pdu.seg_offset >= rlc_buf_size(sdu->buffer)) {
-                rlc_errf("RX; Offset out of bounds: %" PRIu32 ">%zu",
-                         pdu.seg_offset, rlc_buf_size(sdu->buffer));
-                goto exit;
-        }
-
-        header_size = rlc_pdu_header_size(ctx, &pdu);
-
         rlc_dbgf("RX; SN: %" PRIu32 ", RANGE: %" PRIu32 "->%zu", pdu.sn,
-                 pdu.seg_offset,
-                 pdu.seg_offset + rlc_buf_size(buf) - header_size);
+                 pdu.seg_offset, pdu.seg_offset + rlc_buf_size(buf));
 
         segment = (struct rlc_segment){
                 .start = pdu.seg_offset,
-                .end = pdu.seg_offset + rlc_buf_size(buf) - header_size,
+                .end = pdu.seg_offset + rlc_buf_size(buf),
         };
 
-        uniq_segment = rlc_sdu_seg_append(ctx, sdu, segment);
-        if (uniq_segment.start == 0 && uniq_segment.end == 0) {
-                rlc_errf("RX; Unable to append segment");
+        status = insert_buffer(ctx, sdu, buf, segment);
+        if (status != 0) {
+                rlc_errf("Buffer insertion failed: %" RLC_PRI_ERRNO,
+                         (rlc_errno)status);
                 goto exit;
         }
-
-        if (uniq_segment.start != segment.start) {
-                rlc_buf_strip_front(buf, uniq_segment.start - segment.start);
-        }
-
-        if (uniq_segment.end != segment.end) {
-                rlc_buf_strip_back(buf, segment.end - uniq_segment.end);
-        }
-
-        /* Insert buffer fragment */
-        rlc_buf_chain_at(sdu->buffer, buf, uniq_segment.start);
 
         if (pdu.flags.is_last) {
                 sdu->flags.rx_last_received = 1;
@@ -288,6 +344,8 @@ void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
         if (sdu->sn >= ctx->rx.next_highest) {
                 ctx->rx.next_highest = sdu->sn + 1;
         }
+
+        log_rx_state(sdu);
 
         if (rlc_sdu_is_rx_done(sdu)) {
                 rlc_inff("RX; SN: %" PRIu32 " completed", sdu->sn);
@@ -336,9 +394,10 @@ void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
                                               ctx->conf->time_reassembly_us);
                 }
         }
-
 exit:
         (void)rlc_tx_request(ctx);
 
         rlc_lock_release(&ctx->lock);
+
+        return buf;
 }

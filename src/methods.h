@@ -40,7 +40,6 @@ static inline void *rlc_alloc(struct rlc_context *ctx, size_t size,
         }
 
         mem = methods->mem_alloc(ctx, size, type);
-        (void)memset(mem, 0, size);
 
         return mem;
 }

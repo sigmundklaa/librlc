@@ -27,7 +27,7 @@ void rlc_event_rx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
         rlc_event_fire(ctx, &event);
 }
 
-void rlc_event_rx_done_direct(struct rlc_context *ctx, const rlc_buf *buf)
+void rlc_event_rx_done_direct(struct rlc_context *ctx, rlc_buf *buf)
 {
         struct rlc_event event;
 

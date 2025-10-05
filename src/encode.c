@@ -137,6 +137,8 @@ static void encode_status_header_(const struct rlc_context *ctx,
         size_t sn_width;
         uint8_t data[RLC_STATUS_MAX_SIZE];
 
+        (void)memset(data, 0, sizeof(data));
+
         full_width = 0;
 
         bit_copy_mem_(data, (0b0 << 1) | 0b000, 0, 4);
@@ -149,16 +151,18 @@ static void encode_status_header_(const struct rlc_context *ctx,
         bit_copy_mem_(data, pdu->flags.ext, full_width, 1);
         full_width += 1;
 
-        rlc_buf_put_front(buf, data, bytes_ceil_(full_width));
+        rlc_buf_put(buf, data, bytes_ceil_(full_width));
 }
 
-void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
+void rlc_pdu_encode(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                     rlc_buf *buf)
 {
         size_t size;
         size_t full_width;
         uint8_t si;
         uint8_t data[RLC_PDU_HEADER_MAX_SIZE];
+
+        (void)memset(data, 0, sizeof(data));
 
         switch (ctx->type) {
         case RLC_TM:
@@ -208,18 +212,19 @@ void rlc_pdu_encode(const struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
         }
 
-        rlc_buf_put_front(buf, data, bytes_ceil_(full_width));
+        rlc_buf_put(buf, data, bytes_ceil_(full_width));
 }
 
-static rlc_errno decode_status_header_(const struct rlc_context *ctx,
-                                       struct rlc_pdu *pdu,
-                                       const uint8_t header[5])
+static rlc_errno
+decode_status_header_(struct rlc_context *ctx, struct rlc_pdu *pdu,
+                      const uint8_t header[RLC_PDU_HEADER_MAX_SIZE])
 {
         uint8_t cpt;
 
         /* CPT is reserved and must always be zero */
         cpt = (header[0] >> 4) & 0x7;
         if (cpt != 0) {
+                rlc_errf("CPT is non-zero: %d", cpt);
                 return -ENOTSUP;
         }
 
@@ -235,8 +240,8 @@ static rlc_errno decode_status_header_(const struct rlc_context *ctx,
         return 0;
 }
 
-rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
-                         rlc_buf *buf)
+rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
+                         rlc_buf **buf)
 {
         rlc_errno status;
         ssize_t size;
@@ -253,7 +258,7 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 
         sn_size = sn_num_bytes_(ctx->conf->sn_width);
 
-        size = rlc_buf_copy(buf, header, 0, sizeof(header));
+        size = rlc_buf_copy(*buf, header, 0, sizeof(header));
         if (size < sn_size) {
                 if (size >= 0) {
                         return -ENODATA;
@@ -308,7 +313,8 @@ rlc_errno rlc_pdu_decode(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 
 done:
         if (status == 0) {
-                (void)rlc_buf_strip_front(buf, rlc_pdu_header_size(ctx, pdu));
+                *buf = rlc_buf_strip_front(*buf, rlc_pdu_header_size(ctx, pdu),
+                                           ctx);
         }
 
         return status;
@@ -330,13 +336,15 @@ size_t rlc_pdu_header_size(const struct rlc_context *ctx,
         }
 }
 
-void rlc_status_encode(const struct rlc_context *ctx,
+void rlc_status_encode(struct rlc_context *ctx,
                        const struct rlc_pdu_status *status, rlc_buf *buf)
 {
         size_t full_width;
         size_t sn_width;
         uint8_t ext;
         uint8_t data[RLC_STATUS_MAX_SIZE];
+
+        (void)memset(data, 0, sizeof(data));
 
         full_width = 0;
         sn_width = sn_num_bits_(ctx->conf->sn_width);
@@ -363,11 +371,11 @@ void rlc_status_encode(const struct rlc_context *ctx,
                 full_width += 8;
         }
 
-        rlc_buf_put_front(buf, data, bytes_ceil_(full_width));
+        rlc_buf_put(buf, data, bytes_ceil_(full_width));
 }
 
-rlc_errno rlc_status_decode(const struct rlc_context *ctx,
-                            struct rlc_pdu_status *status, rlc_buf *buf)
+rlc_errno rlc_status_decode(struct rlc_context *ctx,
+                            struct rlc_pdu_status *status, rlc_buf **buf)
 {
         uint8_t header[RLC_STATUS_MAX_SIZE];
         size_t req_size;
@@ -376,7 +384,7 @@ rlc_errno rlc_status_decode(const struct rlc_context *ctx,
 
         req_size = sn_num_bytes_(ctx->conf->sn_width);
 
-        size = rlc_buf_copy(buf, header, 0, sizeof(header));
+        size = rlc_buf_copy(*buf, header, 0, sizeof(header));
         if (size < req_size) {
                 return -ENODATA;
         }
@@ -418,9 +426,9 @@ rlc_errno rlc_status_decode(const struct rlc_context *ctx,
                 status->range = header[req_size - 1];
         }
 
-        (void)rlc_buf_strip_front(buf, req_size);
+        *buf = rlc_buf_strip_front(*buf, req_size, ctx);
 
-        return req_size;
+        return 0;
 }
 
 size_t rlc_status_size(const struct rlc_context *ctx,

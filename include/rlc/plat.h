@@ -36,6 +36,8 @@ void rlc_plat_buf_decref(rlc_buf *buf, struct rlc_context *ctx);
 rlc_buf *rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset);
 rlc_buf *rlc_plat_buf_chain_back(rlc_buf *buf, rlc_buf *back);
 rlc_buf *rlc_plat_buf_chain_front(rlc_buf *buf, rlc_buf *front);
+rlc_buf *rlc_plat_buf_clone(const rlc_buf *buf, size_t offset, size_t size,
+                            struct rlc_context *ctx);
 rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
                            struct rlc_context *ctx);
 rlc_buf *rlc_plat_buf_strip_front(rlc_buf *buf, size_t size,

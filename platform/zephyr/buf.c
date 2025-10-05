@@ -140,6 +140,24 @@ rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
         return head;
 }
 
+rlc_buf *rlc_plat_buf_clone(const rlc_buf *buf, size_t offset, size_t size,
+                            struct rlc_context *ctx)
+{
+        size_t bytes;
+        rlc_buf *ret;
+
+        ret = rlc_plat_buf_alloc(ctx, size);
+        if (ret == NULL) {
+                return NULL;
+        }
+
+        bytes = rlc_plat_buf_copy(buf, ret->data, offset, ret->size);
+        __ASSERT_NO_MSG(bytes == size);
+
+        net_buf_add(ret, bytes);
+        return ret;
+}
+
 /* Same as net_buf_skip, only that this does not remove the last element */
 rlc_buf *rlc_plat_buf_strip_front(rlc_buf *buf, size_t size,
                                   struct rlc_context *ctx)

@@ -62,6 +62,12 @@ static inline rlc_buf *rlc_buf_view(rlc_buf *buf, size_t offset, size_t size,
         return rlc_plat_buf_view(buf, offset, size, ctx);
 }
 
+static inline rlc_buf *rlc_buf_clone(const rlc_buf *buf, size_t offset,
+                                     size_t size, struct rlc_context *ctx)
+{
+        return rlc_plat_buf_clone(buf, offset, size, ctx);
+}
+
 /**
  * @brief Strip off @p size bytes from the start of @p buf.
  */

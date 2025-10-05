@@ -22,8 +22,7 @@ struct rlc_event;
 enum rlc_alloc_type {
         RLC_ALLOC_SDU,
         RLC_ALLOC_BUF,
-        RLC_ALLOC_SDU_SEGMENT,
-        RLC_ALLOC_ARENA
+        RLC_ALLOC_SDU_SEGMENT
 };
 
 struct rlc_methods {
@@ -199,8 +198,8 @@ struct rlc_event {
         } type;
 
         union {
-                const struct rlc_sdu *sdu;
-                const rlc_buf *buf; /* RX_DONE_DIRECT */
+                struct rlc_sdu *sdu;
+                rlc_buf *buf; /* RX_DONE_DIRECT */
         };
 };
 
@@ -252,7 +251,7 @@ rlc_errno rlc_send(rlc_context *ctx, rlc_buf *buf, struct rlc_sdu **sdu);
 
 size_t rlc_tx_avail(struct rlc_context *ctx, size_t size);
 
-void rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf);
+rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf);
 
 static inline void *rlc_user_data(struct rlc_context *ctx)
 {
