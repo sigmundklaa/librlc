@@ -104,6 +104,8 @@ static inline rlc_errno rlc_sdu_seg_insert_all(struct rlc_context *ctx,
         return status;
 }
 
+size_t rlc_sdu_seg_byte_offset(const struct rlc_sdu *sdu, size_t start);
+
 size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir);
 
 void rlc_sdu_insert(struct rlc_context *ctx, struct rlc_sdu *sdu);

@@ -126,6 +126,27 @@ rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
         return 0;
 }
 
+size_t rlc_sdu_seg_byte_offset(const struct rlc_sdu *sdu, size_t start)
+{
+        const struct rlc_sdu_segment *cur;
+        size_t ret;
+
+        ret = 0;
+
+        for (rlc_each_node(sdu->segments, cur, next)) {
+                if (cur->seg.start >= start) {
+                        break;
+                } else if (cur->seg.end >= start) {
+                        ret += start - cur->seg.start;
+                        break;
+                }
+
+                ret += cur->seg.end - cur->seg.start;
+        }
+
+        return ret;
+}
+
 size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir)
 {
         size_t count;
