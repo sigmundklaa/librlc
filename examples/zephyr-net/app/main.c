@@ -147,23 +147,26 @@ static void sock_send(struct sock_ctx *sock, struct net_buf *buf)
 {
         size_t bytes;
         size_t ret;
+        struct net_buf *cur;
 
-        for (; buf != NULL; buf = buf->frags) {
+        for (cur = buf; cur != NULL; cur = cur->frags) {
                 bytes = 0;
 
-                LOG_DBG("Sending buffer of: %zu bytes", (size_t)buf->len);
+                LOG_DBG("Sending buffer of: %zu bytes", (size_t)cur->len);
 
                 do {
-                        ret = zsock_send(sock->fd, buf->data + bytes,
-                                         buf->len - bytes, 0);
+                        ret = zsock_send(sock->fd, cur->data + bytes,
+                                         cur->len - bytes, 0);
                         if (ret < 0) {
                                 LOG_ERR("Failed to send: %i", errno);
                                 return;
                         }
 
                         bytes += ret;
-                } while (ret < buf->len);
+                } while (ret < cur->len);
         }
+
+        net_buf_unref(buf);
 }
 
 static void sock_recv(struct sock_ctx *sock)
@@ -271,7 +274,7 @@ int main(void)
         radio.send = tx_send;
         radio.mtu = 256;
         radio.rx_tx_delay = 10e3;
-        radio.tx_tx_delay = 30e3;
+        radio.tx_tx_delay = 4e3;
 
         LOG_INF("radio init");
         radio_init(&ctx.radio, &radio, tx_avail);

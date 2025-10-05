@@ -106,7 +106,7 @@ class radio_manager
         {
                 using namespace std::chrono;
 
-                auto tx_delay = milliseconds(10);
+                auto tx_delay = milliseconds(4);
 
                 for (;;) {
                         tx_wait();
@@ -118,9 +118,7 @@ class radio_manager
                                 bufs.clear();
                         }
 
-                        if (remaining > 0) {
-                                tx_schedule(system_clock::now() + tx_delay);
-                        }
+                        tx_schedule(system_clock::now() + tx_delay);
                 }
         }
 
@@ -300,7 +298,7 @@ int main(int argc, char **argv)
                 .pdu_without_poll_max = 5,
                 .byte_without_poll_max = 500,
                 .time_reassembly_us = 500000,
-                .time_poll_retransmit_us = 500000,
+                .time_poll_retransmit_us = 50000,
                 .max_retx_threshhold = 10,
                 .sn_width = RLC_SN_18BIT,
         });
