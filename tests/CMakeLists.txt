@@ -67,3 +67,5 @@ add_custom_target(
 )
 
 add_test(test_encode.c)
+add_test(test_sdu.c)
+add_test(test_rx.c REPLACE rx.c)
