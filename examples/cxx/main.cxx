@@ -35,10 +35,10 @@ class radio_manager
         };
 
         radio_manager(std::size_t mtu, std::shared_ptr<radio_driver> radio)
-                : mtu(mtu), radio(radio),
-                  tx_handle(&radio_manager::tx_thread, this),
-                  rx_handle(&radio_manager::rx_thread, this)
+                : mtu(mtu), radio(radio)
         {
+                tx_handle = std::thread(&radio_manager::tx_thread, this);
+                rx_handle = std::thread(&radio_manager::rx_thread, this);
         }
 
         radio_manager(const radio_manager &) = delete;
@@ -106,7 +106,7 @@ class radio_manager
         {
                 using namespace std::chrono;
 
-                auto tx_delay = seconds(1);
+                auto tx_delay = milliseconds(10);
 
                 for (;;) {
                         tx_wait();
@@ -221,19 +221,18 @@ class socket_radio : public radio_driver
                         std::ptrdiff_t bytes = 0;
                         std::uint16_t len = buf->size();
 
-                        auto ret = ::write(fd, &len, sizeof(len));
+                        auto ret = ::send(fd, &len, sizeof(len), 0);
                         if (ret < sizeof(len)) {
                                 throw std::runtime_error(
                                         std::string("Write error (header): ") +
                                         std::strerror(errno));
                         }
 
-                        rlc_inff("Sending packet of size %" PRIu16, len);
+                        rlc_dbgf("Sending packet of size %" PRIu16, len);
 
                         do {
-                                rlc_inff("Sending %zu", buf->size() - bytes);
-                                ret = ::write(fd, buf->data() + bytes,
-                                              buf->size() - bytes);
+                                ret = ::send(fd, buf->data() + bytes,
+                                             buf->size() - bytes, 0);
                                 if (ret < 0) {
                                         throw std::runtime_error(
                                                 std::string("Write error: ") +
@@ -250,20 +249,20 @@ class socket_radio : public radio_driver
                 std::uint16_t len;
                 size_t bytes;
 
-                auto ret = ::read(fd, &len, sizeof(len));
+                auto ret = ::recv(fd, &len, sizeof(len), 0);
                 if (ret < sizeof(len)) {
                         throw std::runtime_error(
                                 std::string("Receive (header): ") +
                                 std::strerror(errno));
                 }
 
-                rlc_inff("Reading packet of size %" PRIu16, len);
+                rlc_dbgf("Reading packet of size %" PRIu16, len);
 
                 auto buf = std::make_shared<buffer::element_type>(len);
 
                 bytes = 0;
                 do {
-                        ret = ::read(fd, buf->data() + bytes, len - bytes);
+                        ret = ::recv(fd, buf->data() + bytes, len - bytes, 0);
                         if (ret <= 0) {
                                 throw std::runtime_error(
                                         std::string("Read error: ") +
@@ -296,7 +295,7 @@ int main(int argc, char **argv)
         auto radio_man = std::make_shared<radio_manager>(256, radio);
         auto back = std::make_shared<backend<>>(radio_man);
         auto conf = std::make_shared<rlc::config>((rlc::config){
-                .window_size = 5,
+                .window_size = 1,
                 .buffer_size = 1500,
                 .pdu_without_poll_max = 5,
                 .byte_without_poll_max = 500,
