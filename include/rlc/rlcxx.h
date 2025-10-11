@@ -283,6 +283,14 @@ void methods<Context>::dealloc_cb(::rlc_context *ctx, void *memory,
         allocator.deallocate(ptr - sizeof(size), size + sizeof(size));
 }
 
+struct plat_init {
+        plat_init()
+        {
+                rlc_plat_init();
+        }
+};
+static inline plat_init plat_init_inst;
+
 }; // namespace detail
 
 }; // namespace rlc
