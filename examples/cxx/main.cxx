@@ -1,4 +1,5 @@
 
+#include "rlc/rlc.h"
 #include <chrono>
 #include <vector>
 #include <mutex>
@@ -8,6 +9,16 @@
 #include <iostream>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/ioctl.h>
+
+#include <linux/if.h>
+#include <linux/if_tun.h>
 #include <sys/un.h>
 
 #include <rlc/rlcxx.h>
@@ -279,17 +290,68 @@ class socket_radio : public radio_driver
         std::size_t buf_size;
 };
 
+template <typename Func> struct defer {
+        defer(Func &&fn) : fn(std::move(fn))
+        {
+        }
+
+        ~defer()
+        {
+                fn();
+        }
+
+        Func fn;
+};
+
+void tun_write(int fd, const buffer &buf)
+{
+        size_t bytes;
+
+        do {
+                auto ret =
+                        ::write(fd, buf->data() + bytes, buf->size() - bytes);
+                if (ret < 0) {
+                        throw std::runtime_error(std::string("Write error: ") +
+                                                 std::strerror(errno));
+                }
+
+                bytes += ret;
+        } while (bytes < buf->size());
+}
+
 }; // namespace
 
 int main(int argc, char **argv)
 {
-        if (argc < 2) {
-                std::cout << "Usage: " << argv[0] << " <socket_path>"
+        if (argc < 3) {
+                std::cout << "Usage: " << argv[0] << " <tun> <socket_path>"
                           << std::endl;
                 return 1;
         }
 
-        auto radio = std::make_shared<socket_radio>(argv[1]);
+        ::ifreq ifr;
+
+        auto tun_fd = ::open("/dev/net/tun", O_RDWR);
+        if (tun_fd < 0) {
+                throw std::runtime_error(
+                        std::string("Unable to open tun device") +
+                        std::strerror(errno));
+        }
+
+        defer close_fd([&]() { ::close(tun_fd); });
+
+        std::memset(&ifr, 0, sizeof(ifr));
+
+        ifr.ifr_flags = IFF_TUN;
+        std::strcpy(ifr.ifr_name, argv[1]);
+
+        if (::ioctl(tun_fd, TUNSETIFF, &ifr) < 0) {
+                throw std::runtime_error(std::string("Unable to connect to ") +
+                                         std::string(argv[1]) +
+                                         std::strerror(errno));
+        }
+
+        auto radio = std::make_shared<socket_radio>(argv[2]);
         auto radio_man = std::make_shared<radio_manager>(256, radio);
         auto back = std::make_shared<backend<>>(radio_man);
         auto conf = std::make_shared<rlc::config>((rlc::config){
@@ -302,14 +364,40 @@ int main(int argc, char **argv)
                 .max_retx_threshhold = 10,
                 .sn_width = RLC_SN_18BIT,
         });
-        auto eh = [&](const rlc::event &event) {};
+        auto eh = [&](const rlc::event &event) {
+                switch (event.type) {
+                case rlc_event::RLC_EVENT_RX_DONE:
+                        tun_write(tun_fd, rlc::context<>::buffer_type(
+                                                  event.sdu->buffer));
+                        break;
+                case rlc_event::RLC_EVENT_RX_DONE_DIRECT:
+                        break;
+                case rlc_event::RLC_EVENT_RX_FAIL:
+                        break;
+                case rlc_event::RLC_EVENT_TX_DONE:
+                        break;
+                case rlc_event::RLC_EVENT_TX_FAIL:
+                        break;
+                }
+        };
         auto ctx = std::make_shared<rlc::context<>>(RLC_AM, eh, back, conf);
 
         radio_man->add_channel({ctx});
 
         for (;;) {
                 try {
-                        ctx->send(std::make_shared<buffer::element_type>(4000));
+                        auto buf = std::make_shared<buffer::element_type>(1500);
+                        auto ret = ::read(tun_fd, buf->data(), buf->size());
+
+                        if (ret < 0) {
+                                throw std::runtime_error(
+                                        std::string("Read failure: ") +
+                                        std::strerror(errno));
+                        }
+
+                        buf->resize(ret);
+
+                        ctx->send(buf);
                 } catch (const rlc::error &err) {
                         std::cout << err.what() << std::endl;
                 }
