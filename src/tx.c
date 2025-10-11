@@ -182,8 +182,6 @@ static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
                 return 0;
         }
 
-        max_size -= header_size;
-
         highest_sn = highest_sn_submitted(ctx);
         if (highest_sn == NULL) {
                 rlc_errf("No viable SDU to retransmit poll with");
@@ -198,7 +196,9 @@ static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
         rlc_assert(last != NULL);
 
         seg.end = last->seg.start;
-        seg.start = seg.end - rlc_min(seg.end, max_size);
+        seg.start = seg.end - rlc_min(seg.end, max_size - header_size);
+
+        /* TODO: max retx */
 
         status = rlc_sdu_seg_insert_all(ctx, highest_sn, seg);
         if (status != 0) {
