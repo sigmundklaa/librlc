@@ -7,12 +7,8 @@
 #define CONFIG_RLC_TIMER_MAX (100)
 
 struct timer_info {
-        enum {
-                STATUS_STOPPED,
-                STATUS_RUNNING,
-        } status;
-
-        struct k_timer timer;
+        struct k_work_delayable dwork;
+        struct k_work_sync sync;
 
         rlc_timer_cb callback;
         struct rlc_context *ctx;
@@ -46,22 +42,15 @@ static void release(struct timer_info *info)
         __ASSERT_NO_MSG(status == 0);
 }
 
-static void timer_expiry(struct k_timer *timer)
+static void timer_expiry(struct k_work *work)
 {
         struct timer_info *info;
+        struct k_work_delayable *dwork;
 
-        info = CONTAINER_OF(timer, struct timer_info, timer);
+        dwork = k_work_delayable_from_work(work);
+        info = CONTAINER_OF(dwork, struct timer_info, dwork);
 
         info->callback(info, info->ctx);
-        info->status = STATUS_STOPPED;
-}
-
-static void timer_stop(struct k_timer *timer)
-{
-        struct timer_info *info;
-
-        info = CONTAINER_OF(timer, struct timer_info, timer);
-        info->status = STATUS_STOPPED;
 }
 
 bool rlc_plat_timer_okay(rlc_timer timer_arg)
@@ -75,10 +64,9 @@ rlc_timer rlc_plat_timer_install(rlc_timer_cb cb, struct rlc_context *ctx)
 
         info = reserve();
         info->callback = cb;
-        info->status = STATUS_STOPPED;
         info->ctx = ctx;
 
-        k_timer_init(&info->timer, timer_expiry, timer_stop);
+        k_work_init_delayable(&info->dwork, timer_expiry);
 
         return info;
 }
@@ -87,7 +75,7 @@ rlc_errno rlc_plat_timer_uninstall(rlc_timer timer)
 {
         struct timer_info *info = timer;
 
-        k_timer_stop(&info->timer);
+        (void)k_work_cancel_delayable_sync(&info->dwork, &info->sync);
         release(info);
 
         return 0;
@@ -96,10 +84,11 @@ rlc_errno rlc_plat_timer_uninstall(rlc_timer timer)
 rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
 {
         struct timer_info *info = timer;
+        int status;
 
-        info->status = STATUS_RUNNING;
+        status = k_work_schedule(&info->dwork, K_USEC(delay_us));
+        __ASSERT_NO_MSG(status >= 0);
 
-        k_timer_start(&info->timer, K_USEC(delay_us), K_NO_WAIT);
         return 0;
 }
 
@@ -114,7 +103,7 @@ rlc_errno rlc_plat_timer_stop(rlc_timer timer)
 {
         struct timer_info *info = timer;
 
-        k_timer_stop(&info->timer);
+        (void)k_work_cancel_delayable(&info->dwork);
 
         return 0;
 }
@@ -123,5 +112,5 @@ bool rlc_plat_timer_active(rlc_timer timer)
 {
         struct timer_info *info = timer;
 
-        return info->status != STATUS_STOPPED;
+        return k_work_delayable_busy_get(&info->dwork);
 }
