@@ -160,18 +160,6 @@ static void highest_ack_update(struct rlc_context *ctx, uint32_t next)
         }
 }
 
-static void log_rx_state(struct rlc_sdu *sdu)
-{
-        struct rlc_sdu_segment *seg;
-
-        rlc_dbgf("RX Status of SDU SN=%" PRIu32 ":", sdu->sn);
-
-        for (rlc_each_node(sdu->segments, seg, next)) {
-                rlc_dbgf("\t%" PRIu32 "->%" PRIu32, seg->seg.start,
-                         seg->seg.end);
-        }
-}
-
 rlc_errno rlc_rx_init(struct rlc_context *ctx)
 {
         if (ctx->type != RLC_TM) {
@@ -342,7 +330,7 @@ rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
                 ctx->rx.next_highest = sdu->sn + 1;
         }
 
-        log_rx_state(sdu);
+        rlc_log_sdu(sdu);
 
         if (rlc_sdu_is_rx_done(sdu)) {
                 rlc_inff("RX; SN: %" PRIu32 " completed", sdu->sn);

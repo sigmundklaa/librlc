@@ -136,6 +136,8 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 rlc_dbgf("TX; Polling %" PRIu32 " for status", pdu->sn);
         }
 
+        rlc_log_sdu(sdu);
+
         return true;
 }
 
@@ -158,18 +160,6 @@ static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
         }
 
         return highest;
-}
-
-static void log_tx_state(struct rlc_sdu *sdu)
-{
-        struct rlc_sdu_segment *seg;
-
-        rlc_dbgf("TX Status of SDU SN=%" PRIu32 ":", sdu->sn);
-
-        for (rlc_each_node(sdu->segments, seg, next)) {
-                rlc_dbgf("\t%" PRIu32 "->%" PRIu32, seg->seg.start,
-                         seg->seg.end);
-        }
 }
 
 static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
@@ -218,8 +208,6 @@ static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
                          status);
                 return 0;
         }
-
-        log_tx_state(highest_sn);
 
         if (!serve_sdu(ctx, highest_sn, &pdu, max_size)) {
                 rlc_errf("Unable to serve SDU");
