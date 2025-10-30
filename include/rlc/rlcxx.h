@@ -298,7 +298,7 @@ struct plat_init {
                 rlc_plat_init();
         }
 };
-static inline plat_init plat_init_inst;
+inline plat_init plat_init_inst __attribute__((used));
 
 }; // namespace detail
 
