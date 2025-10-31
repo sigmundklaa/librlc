@@ -65,6 +65,7 @@ struct rlc_config {
 
         uint32_t time_reassembly_us;
         uint32_t time_poll_retransmit_us;
+        uint32_t time_status_prohibit_us;
 
         uint32_t max_retx_threshhold;
 
@@ -104,8 +105,10 @@ typedef struct rlc_context {
 
                 struct rlc_window win;
         } tx;
+
         rlc_timer t_reassembly;
         rlc_timer t_poll_retransmit;
+        rlc_timer t_status_prohibit;
 
         uint32_t poll_sn;
 
