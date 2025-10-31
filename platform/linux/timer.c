@@ -336,6 +336,10 @@ static void to_itimerspec_(struct itimerspec *spec, uint32_t time_us)
 
         spec->it_value.tv_sec = time_us / (uint32_t)1e6;
         spec->it_value.tv_nsec = (time_us % (uint32_t)1e6) * 1000;
+
+        if (spec->it_value.tv_sec == 0 && spec->it_value.tv_nsec == 0) {
+                spec->it_value.tv_nsec = 1;
+        }
 }
 
 static rlc_errno timer_restart_(struct timer_info *t, uint32_t delay_us)
@@ -439,7 +443,7 @@ bool rlc_plat_timer_active(rlc_timer timer)
         rlc_lock_acquire(&lock_);
         t = timer_get_(timer);
         /* Use a counter/id to track changes */
-        ret = t != NULL && t->state == t->next_state;
+        ret = t != NULL && t->state == t->next_state && t->state != TIMER_STALE;
         rlc_lock_release(&lock_);
 
         return ret;

@@ -92,8 +92,15 @@ rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
 {
         struct timer_info *info = timer;
         int status;
+        k_timeout_t timeout;
 
-        status = k_work_schedule(&info->dwork, K_USEC(delay_us));
+        if (delay_us == 0) {
+                timeout = K_TICKS(1);
+        } else {
+                timeout = K_USEC(delay_us);
+        }
+
+        status = k_work_schedule(&info->dwork, timeout);
         __ASSERT_NO_MSG(status >= 0);
 
         return 0;
