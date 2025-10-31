@@ -378,7 +378,8 @@ rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
 
         if (t->state != TIMER_STALE || t->next_state != TIMER_STALE) {
                 rlc_lock_release(&lock_);
-                return -EBUSY;
+
+                return 0;
         }
 
         status = timer_restart_(t, delay_us);
