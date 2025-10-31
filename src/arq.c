@@ -441,12 +441,34 @@ size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
 bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
                          const struct rlc_sdu *sdu)
 {
-        return ctx->type == RLC_AM &&
-               (ctx->force_poll || sdu->next != NULL ||
-                ctx->tx.pdu_without_poll >= ctx->conf->pdu_without_poll_max ||
-                ctx->tx.byte_without_poll >= ctx->conf->byte_without_poll_max ||
-                (sdu->segments->next == NULL &&
-                 sdu->segments->seg.start >= sdu->segments->seg.end));
+        const struct rlc_sdu *cur;
+
+        if (ctx->type != RLC_AM) {
+                return false;
+        }
+
+        if (ctx->force_poll) {
+                return true;
+        }
+
+        if (ctx->tx.pdu_without_poll >= ctx->conf->pdu_without_poll_max ||
+            ctx->tx.byte_without_poll >= ctx->conf->byte_without_poll_max) {
+                return true;
+        }
+
+        /* Check if tranmission buffer is empty */
+        for (rlc_each_node(sdu, cur, next)) {
+                if (cur->dir != RLC_TX || sdu->segments->next != NULL) {
+                        continue;
+                }
+
+                if (sdu->segments->seg.start < sdu->segments->seg.end) {
+                        return false;
+                }
+        }
+
+        /* No more buffers to transmit - include poll */
+        return true;
 }
 
 void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
