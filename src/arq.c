@@ -220,8 +220,6 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
 
                 rlc_event_tx_done(ctx, sdu);
                 rlc_sdu_decref(ctx, sdu);
-
-                lastp = &sdu->next;
         }
 }
 
