@@ -11,6 +11,7 @@
 #include "event.h"
 #include "utils.h"
 #include "log.h"
+#include "tx.h"
 
 struct status_pool {
         struct rlc_pdu_status mem[2];
@@ -427,13 +428,102 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         return ret;
 }
 
-size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
+static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
 {
-        if (ctx->gen_status && !rlc_timer_active(ctx->t_status_prohibit)) {
-                return tx_status(ctx, max_size);
+        struct rlc_sdu *cur;
+        struct rlc_sdu *highest;
+
+        highest = NULL;
+
+        for (rlc_each_node(ctx->sdus, cur, next)) {
+                if (cur->dir != RLC_TX) {
+                        continue;
+                }
+
+                if (rlc_sdu_submitted(cur) &&
+                    (highest == NULL || cur->sn > highest->sn)) {
+                        highest = cur;
+                }
         }
 
-        return 0;
+        return highest;
+}
+
+static struct rlc_sdu_segment *last_segment(struct rlc_sdu *sdu)
+{
+        struct rlc_sdu_segment *last;
+        struct rlc_sdu_segment *cur;
+
+        last = NULL;
+
+        for (rlc_each_node(sdu->segments, cur, next)) {
+                last = cur;
+        }
+
+        return last;
+}
+
+static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
+{
+        size_t ret;
+        size_t header_size;
+        struct rlc_sdu *sdu;
+        struct rlc_sdu_segment *last_seg;
+        struct rlc_segment seg;
+        struct rlc_pdu pdu;
+
+        /* First try and transmit the poll with an unsubmitted segment */
+        ret = rlc_tx_yield(ctx, max_size);
+
+        /* This should have been cleared if anything has been transmitted. If
+         * not, we need to retransmit something to include the poll */
+        if (ctx->force_poll) {
+                (void)memset(&pdu, 0, sizeof(pdu));
+                header_size = rlc_pdu_header_size(ctx, &pdu);
+                if (header_size > max_size) {
+                        /* TODO: issue tx request? */
+                        rlc_errf("Transmit window can not fit minimal header; "
+                                 "needs %zu, has %zu",
+                                 header_size, max_size);
+                        return ret;
+                }
+
+                sdu = highest_sn_submitted(ctx);
+                if (sdu == NULL) {
+                        rlc_wrnf("Unable to get SDU to retransmit poll with");
+                        return ret;
+                }
+
+                last_seg = last_segment(sdu);
+                if (last_seg == NULL) {
+                        rlc_assert(0);
+                        return ret;
+                }
+
+                seg.end = last_seg->seg.end;
+                seg.start = seg.end - rlc_min(seg.end, max_size - header_size);
+
+                retransmit_sdu(ctx, sdu, &seg);
+        }
+
+        return ret;
+}
+
+size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
+{
+        size_t ret;
+
+        ret = 0;
+
+        if (ctx->gen_status && !rlc_timer_active(ctx->t_status_prohibit)) {
+                ret += tx_status(ctx, max_size);
+        }
+
+        if (ctx->force_poll) {
+                ret += tx_poll(ctx, max_size);
+        }
+
+        return ret;
 }
 
 bool rlc_arq_tx_pollable(const struct rlc_context *ctx,

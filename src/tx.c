@@ -141,90 +141,7 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         return true;
 }
 
-static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
-{
-        struct rlc_sdu *cur;
-        struct rlc_sdu *highest;
-
-        highest = NULL;
-
-        for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->dir != RLC_TX) {
-                        continue;
-                }
-
-                if (rlc_sdu_submitted(cur) &&
-                    (highest == NULL || cur->sn > highest->sn)) {
-                        highest = cur;
-                }
-        }
-
-        return highest;
-}
-
-static size_t force_retransmit(struct rlc_context *ctx, size_t max_size)
-{
-        rlc_errno status;
-        ptrdiff_t bytes;
-        struct rlc_pdu pdu;
-        struct rlc_sdu *highest_sn;
-        struct rlc_sdu_segment *last;
-        struct rlc_sdu_segment *tmp_seg;
-        struct rlc_segment seg;
-        size_t header_size;
-
-        (void)memset(&pdu, 0, sizeof(pdu));
-
-        header_size = rlc_pdu_header_size(ctx, &pdu);
-        if (header_size > max_size) {
-                rlc_errf("Transmit window can not fit minimal header; needs "
-                         "%zu, has %zu",
-                         header_size, max_size);
-                return 0;
-        }
-
-        highest_sn = highest_sn_submitted(ctx);
-        if (highest_sn == NULL) {
-                rlc_errf("No viable SDU to retransmit poll with");
-                return 0;
-        }
-
-        last = NULL;
-        for (rlc_each_node(highest_sn->segments, tmp_seg, next)) {
-                last = tmp_seg;
-        }
-
-        rlc_assert(last != NULL);
-
-        seg.end = last->seg.start;
-        seg.start = seg.end - rlc_min(seg.end, max_size - header_size);
-
-        /* TODO: max retx */
-
-        status = rlc_sdu_seg_insert_all(ctx, highest_sn, seg);
-        if (status != 0) {
-                rlc_errf("Unable to forcibly re-insert segment to SDU: "
-                         "%" RLC_PRI_ERRNO,
-                         status);
-                return 0;
-        }
-
-        if (!serve_sdu(ctx, highest_sn, &pdu, max_size)) {
-                rlc_errf("Unable to serve SDU");
-                return 0;
-        }
-
-        bytes = tx_pdu_view(ctx, &pdu, highest_sn, max_size);
-        if (bytes < 0) {
-                rlc_errf("Unable to transmit PDU view: %" RLC_PRI_ERRNO,
-                         (rlc_errno)bytes);
-                return 0;
-        }
-
-        return (size_t)bytes;
-}
-
-static size_t tx_yield(struct rlc_context *ctx, size_t max_size)
+size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
 {
         struct rlc_sdu *sdu;
         struct rlc_pdu pdu;
@@ -240,8 +157,6 @@ static size_t tx_yield(struct rlc_context *ctx, size_t max_size)
          *    next element at the start (what is done is `rlc_each_node_safe`)
          *    could cause the next element to be invalid after re-acquiring
          *    the lock.
-         * As such, we replicate `rlc_each_node_safe`, but update the `next`
-         * pointer after re-acquiring the lock.
          */
         for (;;) {
                 /* This is a bit inefficient, but allows for modification of
@@ -291,10 +206,6 @@ static size_t tx_yield(struct rlc_context *ctx, size_t max_size)
                 }
         }
 
-        if (ctx->force_poll && max_size > 0) {
-                size += force_retransmit(ctx, max_size);
-        }
-
         return size;
 }
 
@@ -306,7 +217,7 @@ size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
 
         size -= rlc_arq_tx_yield(ctx, size);
         if (size > 0) {
-                size -= tx_yield(ctx, size);
+                size -= rlc_tx_yield(ctx, size);
         }
 
         rlc_lock_release(&ctx->lock);
