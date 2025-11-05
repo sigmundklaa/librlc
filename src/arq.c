@@ -325,7 +325,7 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
         struct rlc_segment seg;
 
         sdu = rlc_sdu_get(ctx, cur->nack_sn, RLC_TX);
-        if (sdu != NULL) {
+        if (sdu == NULL) {
                 rlc_errf("Unknown SDU: %" PRIu32, cur->nack_sn);
 
                 return;
