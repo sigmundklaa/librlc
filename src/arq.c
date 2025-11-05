@@ -120,12 +120,14 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
 {
         struct rlc_pdu_status *cur_status;
         struct rlc_sdu_segment *seg;
+        struct rlc_sdu_segment *last;
         ptrdiff_t bytes;
         size_t max_size;
         size_t remaining;
 
         max_size = rlc_buf_cap(buf) - rlc_buf_size(buf);
         remaining = max_size;
+        last = NULL;
 
         for (rlc_each_node(sdu->segments, seg, next)) {
                 /* No more missing segments */
@@ -143,7 +145,10 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                         .nack_sn = sdu->sn,
                 };
 
-                if (seg->next != NULL) {
+                if (last == NULL && seg->seg.start != 0) {
+                        cur_status->offset.start = 0;
+                        cur_status->offset.end = seg->seg.start;
+                } else if (seg->next != NULL) {
                         /* Between two segments */
                         cur_status->offset.start = seg->seg.end;
                         cur_status->offset.end = seg->next->seg.start;
@@ -172,6 +177,8 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                 }
 
                 status_advance(pool);
+
+                last = seg;
         }
 
         return max_size - remaining;
