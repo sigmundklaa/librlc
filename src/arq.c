@@ -8,6 +8,7 @@
 
 #include "backend.h"
 #include "encode.h"
+#include "methods.h"
 #include "event.h"
 #include "utils.h"
 #include "log.h"
@@ -228,6 +229,28 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
 
                 rlc_event_tx_done(ctx, sdu);
                 rlc_sdu_decref(ctx, sdu);
+        }
+}
+
+static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
+{
+        struct rlc_sdu *sdu;
+        struct rlc_sdu_segment *seg;
+
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
+                if (sdu->dir != RLC_TX || sdu->sn >= sn) {
+                        continue;
+                }
+
+                for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments,
+                                        seg, next)) {
+                        if (seg->next == NULL) {
+                                sdu->segments = seg;
+                                break;
+                        }
+
+                        rlc_dealloc(ctx, seg, RLC_ALLOC_SDU_SEGMENT);
+                }
         }
 }
 
@@ -589,6 +612,8 @@ rlc_buf *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         if (pdu->sn > ctx->poll_sn) {
                 stop_poll_retransmit(ctx);
         }
+
+        tx_nack_clear(ctx, pdu->sn);
 
         /* Iterate over every status */
         while ((status = rlc_status_decode(ctx, &cur, &buf)) == 0) {
