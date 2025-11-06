@@ -132,7 +132,8 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
 
         for (rlc_each_node(sdu->segments, seg, next)) {
                 /* No more missing segments */
-                if (seg->next == NULL && sdu->flags.rx_last_received) {
+                if (seg->next == NULL && seg->seg.start == 0 &&
+                    sdu->flags.rx_last_received) {
                         break;
                 }
 
