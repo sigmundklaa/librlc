@@ -54,6 +54,8 @@ static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
 static void alarm_status_prohibit(rlc_timer timer, struct rlc_context *ctx)
 {
         rlc_dbgf("Status prohibit expired");
+
+        rlc_backend_tx_request(ctx, false);
 }
 
 static void log_rx_status(struct rlc_pdu_status *status)
