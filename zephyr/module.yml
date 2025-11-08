@@ -1,0 +1,4 @@
+name: rlc
+build:
+  cmake: zephyr
+  kconfig: zephyr/Kconfig

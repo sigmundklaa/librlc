@@ -7,7 +7,7 @@
 
 RLC_BEGIN_DECL
 
-LOG_MODULE_DECLARE(rlc);
+LOG_MODULE_DECLARE(rlc, CONFIG_RLC_LOG_LEVEL);
 
 #define rlc_plat_dbgf(fmt_, ...) LOG_DBG(fmt_, ##__VA_ARGS__)
 #define rlc_plat_inff(fmt_, ...) LOG_INF(fmt_, ##__VA_ARGS__)

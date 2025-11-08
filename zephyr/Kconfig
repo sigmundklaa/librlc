@@ -1,0 +1,13 @@
+
+config RLC
+    bool "Enable RLC module"
+    default y
+
+config APP_LINK_WITH_ZRLC
+    bool "Link RLC with application"
+    default y
+    depends on RLC
+
+module = RLC
+module-str = rlc
+source "subsys/logging/Kconfig.template.log_config"
