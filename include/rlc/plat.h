@@ -36,25 +36,44 @@ rlc_errno rlc_plat_timer_stop(rlc_timer timer);
 bool rlc_plat_timer_active(rlc_timer timer);
 unsigned int rlc_plat_timer_flags(rlc_timer timer);
 
-rlc_buf *rlc_plat_buf_alloc(struct rlc_context *ctx, size_t size);
-void rlc_plat_buf_incref(rlc_buf *buf);
-void rlc_plat_buf_decref(rlc_buf *buf, struct rlc_context *ctx);
-rlc_buf *rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset);
-rlc_buf *rlc_plat_buf_chain_back(rlc_buf *buf, rlc_buf *back);
-rlc_buf *rlc_plat_buf_chain_front(rlc_buf *buf, rlc_buf *front);
-rlc_buf *rlc_plat_buf_clone(const rlc_buf *buf, size_t offset, size_t size,
-                            struct rlc_context *ctx);
-rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
+rlc_buf rlc_plat_buf_alloc(struct rlc_context *ctx, size_t size);
+rlc_buf rlc_plat_buf_alloc_ro(struct rlc_context *ctx, uint8_t *data,
+                              size_t size);
+bool rlc_plat_buf_okay(rlc_buf buf);
+void rlc_plat_buf_incref(rlc_buf buf);
+void rlc_plat_buf_decref(rlc_buf buf);
+rlc_buf rlc_plat_buf_chain_at(rlc_buf buf, rlc_buf next, size_t offset);
+rlc_buf rlc_plat_buf_chain_back(rlc_buf buf, rlc_buf back);
+rlc_buf rlc_plat_buf_chain_front(rlc_buf buf, rlc_buf front);
+rlc_buf rlc_plat_buf_clone(rlc_buf buf, size_t offset, size_t size,
                            struct rlc_context *ctx);
-rlc_buf *rlc_plat_buf_strip_front(rlc_buf *buf, size_t size,
-                                  struct rlc_context *ctx);
-rlc_buf *rlc_plat_buf_strip_back(rlc_buf *buf, size_t size,
+rlc_buf rlc_plat_buf_view(rlc_buf buf, size_t offset, size_t size,
+                          struct rlc_context *ctx);
+rlc_buf rlc_plat_buf_strip_front(rlc_buf buf, size_t size,
                                  struct rlc_context *ctx);
-void rlc_plat_buf_put(rlc_buf *buf, const void *mem, size_t size);
-size_t rlc_plat_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
+rlc_buf rlc_plat_buf_strip_back(rlc_buf buf, size_t size,
+                                struct rlc_context *ctx);
+void rlc_plat_buf_put(rlc_buf buf, const void *mem, size_t size);
+size_t rlc_plat_buf_copy(rlc_buf buf, void *mem, size_t offset,
                          size_t max_size);
-size_t rlc_plat_buf_cap(const rlc_buf *buf);
-size_t rlc_plat_buf_size(const rlc_buf *buf);
+size_t rlc_plat_buf_cap(rlc_buf buf);
+size_t rlc_plat_buf_size(rlc_buf buf);
+
+rlc_buf_ci rlc_plat_buf_ci_init(rlc_buf *buf);
+rlc_buf_ci rlc_plat_buf_ci_next(rlc_buf_ci it);
+bool rlc_plat_buf_ci_eoi(rlc_buf_ci it);
+uint8_t *rlc_plat_buf_ci_data(rlc_buf_ci it);
+uint8_t *rlc_plat_buf_ci_reserve_head(rlc_buf_ci it, size_t bytes);
+uint8_t *rlc_plat_buf_ci_release_head(rlc_buf_ci it, size_t bytes);
+uint8_t *rlc_plat_buf_ci_reserve_tail(rlc_buf_ci it, size_t bytes);
+uint8_t *rlc_plat_buf_ci_release_tail(rlc_buf_ci it, size_t bytes);
+size_t rlc_plat_buf_ci_headroom(rlc_buf_ci it);
+size_t rlc_plat_buf_ci_tailroom(rlc_buf_ci it);
+rlc_buf_ci rlc_plat_buf_ci_insert(rlc_buf_ci it, rlc_buf buf);
+rlc_buf_ci rlc_plat_buf_ci_remove(rlc_buf_ci it);
+void rlc_plat_buf_ci_detach(rlc_buf_ci it);
+size_t rlc_plat_buf_ci_cap(rlc_buf_ci it);
+size_t rlc_plat_buf_ci_size(rlc_buf_ci it);
 
 RLC_END_DECL
 
