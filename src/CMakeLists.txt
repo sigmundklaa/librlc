@@ -4,6 +4,7 @@ target_sources(
     PRIVATE
         rlc.c
         log.c
+        record.c
         encode.c
         event.c
         sdu.c
