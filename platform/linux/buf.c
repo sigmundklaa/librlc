@@ -8,14 +8,14 @@
 #include "utils.h"
 #include "log.h"
 
-rlc_buf *rlc_plat_buf_alloc(struct rlc_context *ctx, size_t size)
+rlc_buf rlc_plat_buf_alloc(struct rlc_context *ctx, size_t size)
 {
-        rlc_buf *buf;
+        struct rlc_buf_frag *buf;
 
-        buf = rlc_alloc(ctx, size, RLC_ALLOC_BUF);
+        buf = rlc_alloc(ctx, sizeof(*buf) + size, RLC_ALLOC_BUF);
         if (buf == NULL) {
                 rlc_panicf(ENOMEM, "Failed buffer allocation");
-                return NULL;
+                return (struct rlc_buf){0};
         }
 
         buf->cap = size;
@@ -24,303 +24,193 @@ rlc_buf *rlc_plat_buf_alloc(struct rlc_context *ctx, size_t size)
         buf->next = NULL;
         buf->refcnt = 1;
         buf->readonly = false;
+        buf->ctx = ctx;
 
-        return buf;
+        return (struct rlc_buf){.frags = buf};
 }
 
-void rlc_plat_buf_incref(rlc_buf *buf)
+rlc_buf rlc_plat_buf_alloc_ro(struct rlc_context *ctx, uint8_t *data,
+                              size_t size)
 {
-        buf->refcnt++;
-}
+        struct rlc_buf buf;
+        struct rlc_buf_frag *frag;
 
-void rlc_plat_buf_decref(rlc_buf *buf, struct rlc_context *ctx)
-{
-        for (rlc_each_node_safe(rlc_buf, buf, buf, next)) {
-                if (--buf->refcnt > 0) {
-                        break;
-                }
-
-                rlc_dealloc(ctx, buf, RLC_ALLOC_BUF);
-        }
-}
-
-size_t rlc_plat_buf_cap(const rlc_buf *buf)
-{
-        return buf->cap;
-}
-
-size_t rlc_plat_buf_size(const rlc_buf *buf)
-{
-        const struct rlc_buf *cur;
-        size_t size;
-
-        size = 0;
-
-        for (rlc_each_node(buf, cur, next)) {
-                size += cur->size;
-        }
-
-        return size;
-}
-
-rlc_buf *rlc_plat_buf_chain_at(rlc_buf *buf, rlc_buf *next, size_t offset)
-{
-        struct rlc_buf *cur;
-        struct rlc_buf *last;
-        size_t bytes;
-
-        bytes = 0;
-
-        if (offset == 0) {
-                return rlc_plat_buf_chain_front(buf, next);
-        }
-
-        last = buf;
-
-        for (rlc_each_node(buf, cur, next)) {
-                if (bytes + cur->size > offset) {
-                        break;
-                }
-
-                bytes += cur->size;
-                last = cur;
-        }
-
-        if (last == NULL) {
+        buf = rlc_plat_buf_alloc(ctx, 0);
+        if (!rlc_plat_buf_okay(buf)) {
                 rlc_assert(0);
-                return buf;
+                return (struct rlc_buf){0};
         }
 
-        rlc_assert(bytes == offset);
+        frag = buf.frags;
 
-        if (last->next != NULL) {
-                rlc_plat_buf_chain_back(next, last->next);
-        }
-
-        last->next = next;
+        frag->readonly = true;
+        frag->data = data;
+        frag->size = size;
+        frag->cap = size;
+        frag->ctx = ctx;
 
         return buf;
 }
 
-rlc_buf *rlc_plat_buf_chain_back(rlc_buf *buf, rlc_buf *back)
+bool rlc_plat_buf_okay(rlc_buf buf)
 {
-        struct rlc_buf **lastp;
-        struct rlc_buf *cur;
+        return buf.frags != NULL;
+}
 
-        if (buf == NULL) {
-                return back;
+void rlc_plat_buf_incref(rlc_buf buf)
+{
+        buf.frags->refcnt++;
+}
+
+void rlc_plat_buf_decref(rlc_buf buf)
+{
+        struct rlc_buf_frag *cur;
+        struct rlc_buf_frag *next;
+
+        for (cur = buf.frags; cur != NULL; cur = next) {
+                next = cur->next;
+
+                if (--cur->refcnt > 0) {
+                        break;
+                }
+
+                rlc_dealloc(cur->ctx, cur, RLC_ALLOC_BUF);
+        }
+}
+
+struct rlc_buf_ci rlc_plat_buf_ci_init(rlc_buf *buf)
+{
+        /* TODO: Last pointer */
+        return (struct rlc_buf_ci){
+                .cur = buf->frags,
+                .lastp = &buf->frags,
+        };
+}
+
+struct rlc_buf_ci rlc_plat_buf_ci_next(struct rlc_buf_ci it)
+{
+        return (struct rlc_buf_ci){
+                .cur = it.cur->next,
+                .lastp = &it.cur->next,
+        };
+}
+
+bool rlc_plat_buf_ci_eoi(rlc_buf_ci it)
+{
+        return it.cur == NULL;
+}
+
+uint8_t *rlc_plat_buf_ci_data(struct rlc_buf_ci it)
+{
+        return it.cur->data;
+}
+
+uint8_t *rlc_plat_buf_ci_reserve_head(struct rlc_buf_ci it, size_t bytes)
+{
+        uint8_t *data;
+        rlc_assert(bytes <= rlc_buf_ci_headroom(it));
+
+        data = it.cur->data - bytes;
+        it.cur->size += bytes;
+
+        return data;
+}
+
+uint8_t *rlc_plat_buf_ci_release_head(struct rlc_buf_ci it, size_t bytes)
+{
+        uint8_t *data;
+
+        rlc_assert(bytes <= it.cur->size);
+
+        data = it.cur->data;
+        it.cur->size -= bytes;
+        it.cur->data += bytes;
+
+        return data;
+}
+
+uint8_t *rlc_plat_buf_ci_reserve_tail(struct rlc_buf_ci it, size_t bytes)
+{
+        uint8_t *data;
+
+        rlc_assert(bytes <= rlc_buf_ci_tailroom(it));
+
+        data = it.cur->data + it.cur->size;
+        it.cur->size += bytes;
+
+        return data;
+}
+
+uint8_t *rlc_plat_buf_ci_release_tail(struct rlc_buf_ci it, size_t bytes)
+{
+        rlc_assert(bytes <= it.cur->size);
+
+        it.cur->size -= bytes;
+
+        return it.cur->data + it.cur->size;
+}
+
+size_t rlc_plat_buf_ci_headroom(struct rlc_buf_ci it)
+{
+        uint8_t *base;
+
+        if (it.cur->readonly) {
+                base = it.cur->data;
+        } else {
+                base = rlc_buf_ci_data(it);
         }
 
-        lastp = NULL;
+        return it.cur->data - base;
+}
 
-        for (rlc_each_node(buf, cur, next)) {
+size_t rlc_plat_buf_ci_tailroom(struct rlc_buf_ci it)
+{
+        return it.cur->cap - it.cur->size - rlc_plat_buf_ci_headroom(it);
+}
+
+struct rlc_buf_ci rlc_plat_buf_ci_insert(struct rlc_buf_ci it, rlc_buf buf)
+{
+        struct rlc_buf_frag **lastp;
+        struct rlc_buf_frag *cur;
+
+        lastp = &buf.frags;
+
+        for (cur = buf.frags; cur != NULL; cur = cur->next) {
                 lastp = &cur->next;
         }
 
-        rlc_assert(lastp != NULL);
+        *lastp = it.cur;
+        *it.lastp = buf.frags;
 
-        *lastp = back;
-
-        return buf;
+        return (struct rlc_buf_ci){
+                .cur = buf.frags,
+                .lastp = it.lastp,
+        };
 }
 
-rlc_buf *rlc_plat_buf_chain_front(rlc_buf *buf, rlc_buf *front)
+void rlc_plat_buf_ci_detach(rlc_buf_ci it)
 {
-        return rlc_plat_buf_chain_back(front, buf);
+        *it.lastp = NULL;
+
+        rlc_plat_buf_decref((struct rlc_buf){it.cur});
 }
 
-static rlc_buf *create_view(const rlc_buf *parent, size_t offset,
-                            size_t max_size, struct rlc_context *ctx)
+struct rlc_buf_ci rlc_plat_buf_ci_remove(struct rlc_buf_ci it)
 {
-        struct rlc_buf *buf;
-        size_t chunklen;
+        struct rlc_buf_frag *buf;
 
-        buf = rlc_plat_buf_alloc(ctx, 0);
-        if (buf == NULL) {
-                rlc_assert(0);
-                return NULL;
-        }
+        buf = it.cur;
+        it.cur = it.cur->next;
+        *it.lastp = it.cur;
 
-        chunklen = rlc_min(parent->size - offset, max_size);
+        buf->next = NULL;
 
-        buf->readonly = true;
-        buf->data = parent->data + offset;
-        buf->size = chunklen;
-        buf->cap = chunklen;
+        rlc_plat_buf_decref((struct rlc_buf){buf});
 
-        return buf;
+        return it;
 }
 
-static const struct rlc_buf *buf_seek(const rlc_buf *buf, size_t offset,
-                                      size_t *count)
+size_t rlc_plat_buf_ci_size(struct rlc_buf_ci it)
 {
-        size_t bytes;
-        const struct rlc_buf *cur;
-
-        bytes = 0;
-
-        for (rlc_each_node(buf, cur, next)) {
-                if (bytes + cur->size > offset) {
-                        break;
-                }
-
-                bytes += cur->size;
-        }
-
-        if (count != NULL) {
-                *count = bytes;
-        }
-
-        return cur;
-}
-
-rlc_buf *rlc_plat_buf_view(rlc_buf *buf, size_t offset, size_t size,
-                           struct rlc_context *ctx)
-{
-        struct rlc_buf *head;
-        struct rlc_buf *cur;
-        struct rlc_buf *last;
-        const struct rlc_buf *parent;
-        size_t bytes;
-        size_t remaining;
-
-        parent = buf_seek(buf, offset, &bytes);
-        rlc_assert(parent != NULL);
-
-        head = create_view(parent, offset - bytes, size, ctx);
-        remaining = size - head->size;
-        last = head;
-
-        while (remaining > 0) {
-                parent = parent->next;
-                rlc_assert(parent != NULL);
-
-                cur = create_view(parent, 0, remaining, ctx);
-                remaining -= cur->size;
-
-                last->next = cur;
-
-                last = cur;
-        }
-
-        return head;
-}
-
-rlc_buf *rlc_plat_buf_clone(const rlc_buf *buf, size_t offset, size_t size,
-                            struct rlc_context *ctx)
-{
-        size_t bytes;
-        struct rlc_buf *ret;
-
-        ret = rlc_plat_buf_alloc(ctx, size);
-        if (ret == NULL) {
-                return NULL;
-        }
-
-        bytes = rlc_plat_buf_copy(buf, ret->data, offset, ret->cap);
-        rlc_assert(bytes == size);
-
-        ret->size = bytes;
-        return ret;
-}
-
-rlc_buf *rlc_plat_buf_strip_front(rlc_buf *buf, size_t size,
-                                  struct rlc_context *ctx)
-{
-        struct rlc_buf *cur;
-        size_t remaining;
-        size_t stripped;
-
-        rlc_assert(size != 0);
-
-        remaining = size;
-
-        for (rlc_each_node_safe(struct rlc_buf, buf, cur, next)) {
-                stripped = rlc_min(remaining, cur->size);
-                cur->data += stripped;
-                cur->size -= stripped;
-
-                remaining -= stripped;
-
-                if (remaining == 0) {
-                        break;
-                }
-
-                cur->next = NULL;
-                rlc_plat_buf_decref(cur, ctx);
-        }
-
-        return cur;
-}
-
-rlc_buf *rlc_plat_buf_strip_back(rlc_buf *buf, size_t size,
-                                 struct rlc_context *ctx)
-{
-        size_t total;
-        size_t bytes;
-        size_t offset;
-        struct rlc_buf *cur;
-        struct rlc_buf *del;
-
-        total = rlc_buf_size(buf);
-        rlc_assert(total >= size);
-
-        offset = total - size;
-
-        cur = (rlc_buf *)buf_seek(buf, offset, &bytes);
-        rlc_assert(cur != NULL);
-
-        cur->size = offset - bytes;
-
-        for (rlc_each_node_safe(struct rlc_buf, cur->next, del, next)) {
-                rlc_plat_buf_decref(del, ctx);
-        }
-
-        cur->next = NULL;
-        return buf;
-}
-
-size_t rlc_plat_buf_copy(const rlc_buf *buf, void *mem, size_t offset,
-                         size_t max_size)
-{
-        const struct rlc_buf *cur;
-        size_t bytes;
-        size_t copy_size;
-        size_t cur_offset;
-        uint8_t *data;
-        size_t remaining;
-
-        data = mem;
-        remaining = max_size;
-
-        cur = buf_seek(buf, offset, &bytes);
-        if (cur == NULL) {
-                return 0;
-        }
-
-        cur_offset = bytes - offset;
-
-        do {
-                copy_size = rlc_min(remaining, cur->size - cur_offset);
-                (void)memcpy(data, cur->data + cur_offset, copy_size);
-
-                cur_offset = 0;
-
-                remaining -= copy_size;
-                bytes += copy_size;
-                data += copy_size;
-
-                cur = cur->next;
-        } while (cur != NULL && remaining > 0);
-
-        return bytes;
-}
-
-void rlc_plat_buf_put(rlc_buf *buf, const void *mem, size_t size)
-{
-        rlc_assert(buf->size + size <= buf->cap);
-        rlc_assert(!buf->readonly);
-
-        (void)memcpy(buf->data + buf->size, mem, size);
-        buf->size += size;
+        return it.cur->size;
 }
