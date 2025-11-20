@@ -88,7 +88,7 @@ uint8_t *rlc_plat_buf_ci_reserve_head(struct rlc_buf_ci it, size_t bytes)
 
 uint8_t *rlc_plat_buf_ci_release_head(struct rlc_buf_ci it, size_t bytes)
 {
-        return net_buf_pull(it.cur, bytes);
+        return net_buf_pull_mem(it.cur, bytes);
 }
 
 uint8_t *rlc_plat_buf_ci_reserve_tail(struct rlc_buf_ci it, size_t bytes)
