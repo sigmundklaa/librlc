@@ -77,7 +77,7 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
         log_rx_status(last);
 
         size = rlc_status_size(ctx, last);
-        if (size > rlc_buf_cap(buf) - rlc_buf_size(buf)) {
+        if (size > rlc_buf_tailroom(*buf)) {
                 return -ENOSPC;
         }
 
@@ -128,7 +128,7 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
         size_t max_size;
         size_t remaining;
 
-        max_size = rlc_buf_cap(buf) - rlc_buf_size(buf);
+        max_size = rlc_buf_tailroom(*buf);
         remaining = max_size;
         last = NULL;
 
@@ -379,7 +379,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         struct rlc_pdu pdu;
         struct rlc_sdu *sdu;
         struct status_pool pool;
-        rlc_buf *buf;
+        rlc_buf buf;
         ptrdiff_t bytes;
         uint32_t next_sn;
 
@@ -389,7 +389,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         next_sn = rlc_window_base(&ctx->rx.win);
 
         buf = rlc_buf_alloc(ctx, max_size);
-        if (buf == NULL) {
+        if (!rlc_buf_okay(buf)) {
                 return -ENOMEM;
         }
 
@@ -399,7 +399,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
                 }
 
                 if (sdu->sn != next_sn) {
-                        bytes = create_nack_range(ctx, &pool, buf, sdu,
+                        bytes = create_nack_range(ctx, &pool, &buf, sdu,
                                                   next_sn);
                         if (bytes == -ENOSPC) {
                                 rlc_wrnf("Unable to transmit full status: MTU "
@@ -411,7 +411,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
                 }
 
                 if (sdu->state != RLC_DONE) {
-                        bytes = create_nack_offset(ctx, &pool, buf, sdu);
+                        bytes = create_nack_offset(ctx, &pool, &buf, sdu);
                         if (bytes == -ENOSPC) {
                                 rlc_wrnf("Unable to transmit full status: MTU "
                                          "too low");
@@ -425,7 +425,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         }
 
         if (status_count(&pool) > 0) {
-                encode_last(ctx, &pool, buf);
+                encode_last(ctx, &pool, &buf);
 
                 pdu.flags.ext = 1;
         }
@@ -599,8 +599,8 @@ void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
         }
 }
 
-rlc_buf *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                           rlc_buf *buf)
+void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
+                       rlc_buf *buf)
 {
         size_t offset;
         rlc_errno status;
@@ -610,7 +610,7 @@ rlc_buf *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         rlc_wrnf("Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32
                  ", %zu",
-                 pdu->sn, ctx->poll_sn, rlc_buf_size(buf));
+                 pdu->sn, ctx->poll_sn, rlc_buf_size(*buf));
 
         if (pdu->sn > ctx->poll_sn) {
                 stop_poll_retransmit(ctx);
@@ -619,7 +619,7 @@ rlc_buf *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         tx_nack_clear(ctx, pdu->sn);
 
         /* Iterate over every status */
-        while ((status = rlc_status_decode(ctx, &cur, &buf)) == 0) {
+        while ((status = rlc_status_decode(ctx, &cur, buf)) == 0) {
                 rlc_dbgf("TX AM STATUS; NACK_SN: %" PRIu32 ", OFFSET: %" PRIu32
                          "->%" PRIu32 ", RANGE: %" PRIu32,
                          cur.nack_sn, cur.offset.start, cur.offset.end,
@@ -635,8 +635,6 @@ rlc_buf *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         }
 
         tx_ack(ctx, pdu->sn);
-
-        return buf;
 }
 
 void rlc_arq_rx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)

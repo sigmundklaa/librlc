@@ -242,7 +242,7 @@ decode_status_header_(struct rlc_context *ctx, struct rlc_pdu *pdu,
 }
 
 rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                         rlc_buf **buf)
+                         rlc_buf *buf)
 {
         rlc_errno status;
         ptrdiff_t size;
@@ -314,8 +314,7 @@ rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
 
 done:
         if (status == 0) {
-                *buf = rlc_buf_strip_front(*buf, rlc_pdu_header_size(ctx, pdu),
-                                           ctx);
+                rlc_buf_strip_head(buf, rlc_pdu_header_size(ctx, pdu));
         }
 
         return status;
@@ -376,7 +375,7 @@ void rlc_status_encode(struct rlc_context *ctx,
 }
 
 rlc_errno rlc_status_decode(struct rlc_context *ctx,
-                            struct rlc_pdu_status *status, rlc_buf **buf)
+                            struct rlc_pdu_status *status, rlc_buf *buf)
 {
         uint8_t header[RLC_STATUS_MAX_SIZE];
         size_t req_size;
@@ -427,7 +426,7 @@ rlc_errno rlc_status_decode(struct rlc_context *ctx,
                 status->range = header[req_size - 1];
         }
 
-        *buf = rlc_buf_strip_front(*buf, req_size, ctx);
+        rlc_buf_strip_head(buf, req_size);
 
         return 0;
 }

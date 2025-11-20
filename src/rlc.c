@@ -87,7 +87,7 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
                         ctx->user_data);
 }
 
-rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf *buf,
+rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf buf,
                    struct rlc_sdu **sdu_out)
 {
         struct rlc_segment seg;
@@ -120,7 +120,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf *buf,
         if (status != 0) {
                 rlc_lock_release(&ctx->lock);
                 rlc_sdu_decref(ctx, sdu);
-                rlc_buf_decref(buf, ctx);
+                rlc_buf_decref(buf);
 
                 return status;
         }

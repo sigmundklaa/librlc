@@ -182,7 +182,7 @@ static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
 {
         struct rlc_segment unique;
         struct rlc_segment cur;
-        rlc_buf *insertbuf;
+        rlc_buf insertbuf;
         size_t offset;
         rlc_errno status;
 
@@ -204,45 +204,41 @@ static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
                  * we don't need to create a new buffer. This is the most likely
                  * case. */
                 if (!rlc_segment_okay(&seg)) {
-                        rlc_buf_incref(buf);
-                        insertbuf = buf;
+                        rlc_buf_incref(*buf);
 
                         if (unique.start != cur.start) {
-                                insertbuf = rlc_buf_strip_front(
-                                        insertbuf, unique.start - cur.start,
-                                        ctx);
+                                rlc_buf_strip_head(buf,
+                                                   unique.start - cur.start);
                         }
 
                         if (unique.end != cur.end) {
-                                insertbuf = rlc_buf_strip_back(
-                                        insertbuf, cur.end - unique.end, ctx);
+                                rlc_buf_strip_tail(buf, cur.end - unique.end);
                         }
+
+                        insertbuf = *buf;
                 } else {
                         offset = unique.start - cur.start;
                         insertbuf = rlc_buf_clone(
-                                buf, offset,
+                                *buf, offset,
                                 offset + (unique.end - unique.start), ctx);
 
                         /* Strip off the bytes that are now handled by the new
                          * buffer, in addition to the bytes that are already
                          * inserted (which is the difference between the start
                          * of the remaining and the end of the unique). */
-                        buf = rlc_buf_strip_front(
-                                buf,
-                                offset + rlc_buf_size(insertbuf) +
-                                        (seg.start - unique.end),
-                                ctx);
+                        rlc_buf_strip_head(buf,
+                                           offset + rlc_buf_size(insertbuf) +
+                                                   (seg.start - unique.end));
                 }
 
-                sdu->buffer = rlc_buf_chain_at(
-                        sdu->buffer, insertbuf,
-                        rlc_sdu_seg_byte_offset(sdu, unique.start));
+                rlc_buf_chain_at(&sdu->buffer, insertbuf,
+                                 rlc_sdu_seg_byte_offset(sdu, unique.start));
         } while (rlc_segment_okay(&seg));
 
         return status;
 }
 
-rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
+void rlc_rx_submit(struct rlc_context *ctx, rlc_buf buf)
 {
         ptrdiff_t status;
         uint32_t lowest;
@@ -259,13 +255,13 @@ rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
         }
 
         if (ctx->type == RLC_TM) {
-                rlc_event_rx_done_direct(ctx, buf);
+                rlc_event_rx_done_direct(ctx, &buf);
 
                 goto exit;
         }
 
         if (pdu.flags.is_status) {
-                buf = rlc_arq_rx_status(ctx, &pdu, buf);
+                rlc_arq_rx_status(ctx, &pdu, &buf);
 
                 goto exit;
         }
@@ -315,7 +311,7 @@ rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
                 .end = pdu.seg_offset + rlc_buf_size(buf),
         };
 
-        status = insert_buffer(ctx, sdu, buf, segment);
+        status = insert_buffer(ctx, sdu, &buf, segment);
         if (status != 0) {
                 rlc_errf("Buffer insertion failed: %" RLC_PRI_ERRNO,
                          (rlc_errno)status);
@@ -379,8 +375,7 @@ rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf)
         }
 exit:
         rlc_backend_tx_request(ctx, true);
+        rlc_buf_decref(buf);
 
         rlc_lock_release(&ctx->lock);
-
-        return buf;
 }

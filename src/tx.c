@@ -15,7 +15,7 @@
 static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              struct rlc_sdu *sdu, size_t max_size)
 {
-        rlc_buf *buf;
+        rlc_buf buf;
         ptrdiff_t ret;
 
         if (pdu->seg_offset + pdu->size > rlc_buf_size(sdu->buffer)) {

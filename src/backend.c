@@ -9,21 +9,21 @@
 #include "log.h"
 
 ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                                rlc_buf *buf)
+                                rlc_buf buf)
 {
         ptrdiff_t status;
         ptrdiff_t size;
-        rlc_buf *header;
+        rlc_buf header;
 
         header = rlc_buf_alloc(ctx, RLC_PDU_HEADER_MAX_SIZE);
-        if (header == NULL) {
+        if (!rlc_buf_okay(header)) {
                 rlc_panicf(ENOMEM, "Buffer alloc");
                 return -ENOMEM;
         }
 
-        rlc_pdu_encode(ctx, pdu, header);
+        rlc_pdu_encode(ctx, pdu, &header);
 
-        buf = rlc_buf_chain_front(buf, header);
+        rlc_buf_chain_front(&buf, header);
         size = rlc_buf_size(buf);
 
         /* Submit is given ownership of this buffer - it is free to modify it
