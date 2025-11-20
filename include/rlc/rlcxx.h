@@ -37,7 +37,7 @@ namespace detail
 template <class Context> inline Context &get_ctx(::rlc_context *ctx);
 
 template <class Context> struct methods {
-        static ::rlc_errno tx_submit_cb(::rlc_context *ctx, ::rlc_buf *buf);
+        static ::rlc_errno tx_submit_cb(::rlc_context *ctx, ::rlc_buf buf);
         static ::rlc_errno tx_request_cb(::rlc_context *ctx);
         static void event_cb(::rlc_context *ctx, const ::rlc_event *event);
         static void *alloc_cb(::rlc_context *ctx, std::size_t size,
@@ -69,25 +69,33 @@ class vector_buffer
                 : data(std::make_shared<std::vector<std::byte>>())
         {
                 const ::rlc_buf *cur;
+                rlc_buf_ci it;
 
-                for (rlc_each_node(native, cur, next)) {
-                        std::copy_n(
-                                reinterpret_cast<const std::byte *>(cur->data),
-                                cur->size, std::back_inserter(*data));
+                for (rlc_each_buf_ci(const_cast<::rlc_buf *>(native), it)) {
+                        std::copy_n(reinterpret_cast<const std::byte *>(
+                                            rlc_buf_ci_data(it)),
+                                    rlc_buf_ci_size(it),
+                                    std::back_inserter(*data));
                 }
         }
 
-        template <class Context>::rlc_buf *native(Context &ctx) const
+        vector_buffer(::rlc_buf native) : vector_buffer(&native)
         {
-                ::rlc_buf *buf;
+        }
+
+        template <class Context>::rlc_buf native(Context &ctx) const
+        {
+                ::rlc_buf buf;
 
                 buf = ::rlc_buf_alloc(&ctx.native(), data->size());
-                if (buf == NULL) {
+                if (!rlc_buf_okay(buf)) {
                         throw std::bad_alloc();
                 }
 
-                ::rlc_buf_put(buf, reinterpret_cast<const void *>(data->data()),
-                              data->size());
+                ::rlc_buf_put(
+                        &buf,
+                        reinterpret_cast<const std::uint8_t *>(data->data()),
+                        data->size());
 
                 return buf;
         }
@@ -157,7 +165,7 @@ class context
                                     std::strerror(ret));
                 }
 
-                ::rlc_buf_decref(native, &ctx_);
+                ::rlc_buf_decref(native);
 
                 return nullptr;
         }
@@ -169,12 +177,16 @@ class context
 
         void rx_submit(buffer_type &buf)
         {
-                auto native = ::rlc_rx_submit(&ctx_, buf.native(*this));
+                auto native = buf.native(*this);
+
+                ::rlc_rx_submit(&ctx_, native);
         }
 
         void rx_submit(const buffer_type &buf)
         {
-                auto native = ::rlc_rx_submit(&ctx_, buf.native(*this));
+                auto native = buf.native(*this);
+
+                ::rlc_rx_submit(&ctx_, native);
         }
 
         ::rlc_context &native()
@@ -222,14 +234,14 @@ template <class Context> inline Context &get_ctx(::rlc_context *ctx)
 
 template <class Context>
 ::rlc_errno methods<Context>::tx_submit_cb(::rlc_context *ctx_arg,
-                                           ::rlc_buf *buf)
+                                           ::rlc_buf buf)
 {
         auto &ctx = get_ctx<Context>(ctx_arg);
         try {
                 using buffer_type = typename Context::buffer_type;
                 auto bufcpy = buffer_type(buf);
 
-                ::rlc_buf_decref(buf, ctx_arg);
+                ::rlc_buf_decref(buf);
 
                 ctx.backend_->submit(ctx, bufcpy);
         } catch (const error &e) {

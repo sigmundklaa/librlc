@@ -30,7 +30,7 @@ enum rlc_alloc_type {
 };
 
 struct rlc_methods {
-        rlc_errno (*tx_submit)(struct rlc_context *, rlc_buf *);
+        rlc_errno (*tx_submit)(struct rlc_context *, rlc_buf);
         rlc_errno (*tx_request)(struct rlc_context *);
 
         void (*event)(struct rlc_context *, const struct rlc_event *);
@@ -152,7 +152,7 @@ typedef struct rlc_sdu {
         uint32_t sn;
         unsigned int retx_count; /* Number of retransmissions */
 
-        rlc_buf *buffer;
+        rlc_buf buffer;
 
         rlc_errno tx_status;
         rlc_sem tx_sem;
@@ -257,11 +257,11 @@ rlc_errno rlc_deinit(struct rlc_context *ctx);
 
 rlc_errno rlc_reset(struct rlc_context *ctx);
 
-rlc_errno rlc_send(rlc_context *ctx, rlc_buf *buf, struct rlc_sdu **sdu);
+rlc_errno rlc_send(rlc_context *ctx, rlc_buf buf, struct rlc_sdu **sdu);
 
 size_t rlc_tx_avail(struct rlc_context *ctx, size_t size);
 
-rlc_buf *rlc_rx_submit(struct rlc_context *ctx, rlc_buf *buf);
+void rlc_rx_submit(struct rlc_context *ctx, rlc_buf buf);
 
 static inline void *rlc_user_data(struct rlc_context *ctx)
 {

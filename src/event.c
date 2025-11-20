@@ -32,7 +32,7 @@ void rlc_event_rx_done_direct(struct rlc_context *ctx, rlc_buf *buf)
 {
         struct rlc_event event;
 
-        rlc_inff("RX; Full SDU delivered (%zuB)", rlc_buf_size(buf));
+        rlc_inff("RX; Full SDU delivered (%zuB)", rlc_buf_size(*buf));
 
         event.type = RLC_EVENT_RX_DONE_DIRECT;
         event.buf = buf;

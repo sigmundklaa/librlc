@@ -21,7 +21,7 @@ static inline rlc_errno rlc_tx_request(struct rlc_context *ctx)
         return methods->tx_request(ctx);
 }
 
-static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx, rlc_buf *buf)
+static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx, rlc_buf buf)
 {
         const struct rlc_methods *methods = ctx->methods;
         if (methods->tx_submit == NULL) {

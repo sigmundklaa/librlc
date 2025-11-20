@@ -9,14 +9,16 @@
 
 #include "harness.h"
 
+static struct rlc_context ctx;
+
 void setUp(void)
 {
-        harness_setup();
+        harness_setup(&ctx, RLC_AM);
 }
 
 void tearDown(void)
 {
-        harness_teardown();
+        harness_teardown(&ctx);
 }
 
 static void test_insert_segment_back(void)

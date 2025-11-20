@@ -2,6 +2,8 @@
 #ifndef HARNESS_H__
 #define HARNESS_H__
 
+#include <string.h>
+
 #include <rlc/rlc.h>
 
 #include "utils.h"
@@ -9,15 +11,12 @@
 static void *harness_alloc(struct rlc_context *c, size_t size,
                            enum rlc_alloc_type type)
 {
-        switch (type) {
-        case RLC_ALLOC_BUF:
-                size += sizeof(rlc_buf);
-                break;
-        default:
-                break;
+        void *ret = malloc(size);
+        if (ret != NULL) {
+                (void)memset(ret, 0, size);
         }
 
-        return malloc(size);
+        return ret;
 }
 
 static void harness_dealloc(struct rlc_context *ctx, void *mem,
@@ -26,9 +25,7 @@ static void harness_dealloc(struct rlc_context *ctx, void *mem,
         free(mem);
 }
 
-static struct rlc_context ctx;
-
-static void harness_setup(void)
+static void harness_setup(struct rlc_context *ctx, enum rlc_sdu_type type)
 {
         static const struct rlc_methods methods = {
                 .event = NULL,
@@ -41,15 +38,15 @@ static void harness_setup(void)
 
         rlc_errno status;
 
-        status = rlc_init(&ctx, RLC_AM, &conf, &methods, NULL);
+        status = rlc_init(ctx, type, &conf, &methods, NULL);
         assert(status == 0);
 }
 
-static void harness_teardown(void)
+static void harness_teardown(struct rlc_context *ctx)
 {
         rlc_errno status;
 
-        status = rlc_deinit(&ctx);
+        status = rlc_deinit(ctx);
         assert(status == 0);
 }
 
