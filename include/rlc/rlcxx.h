@@ -2,8 +2,9 @@
 #ifndef RLC_CXX_H__
 #define RLC_CXX_H__
 
+#include <gnb/gnb.h>
+
 #include <rlc/rlc.h>
-#include <rlc/buf.h>
 
 #ifdef __cplusplus
 
@@ -37,7 +38,7 @@ namespace detail
 template <class Context> inline Context &get_ctx(::rlc_context *ctx);
 
 template <class Context> struct methods {
-        static ::rlc_errno tx_submit_cb(::rlc_context *ctx, ::rlc_buf buf);
+        static ::rlc_errno tx_submit_cb(::rlc_context *ctx, ::gnb_h buf);
         static ::rlc_errno tx_request_cb(::rlc_context *ctx);
         static void event_cb(::rlc_context *ctx, const ::rlc_event *event);
         static void *alloc_cb(::rlc_context *ctx, std::size_t size,
@@ -65,37 +66,35 @@ class vector_buffer
         {
         }
 
-        vector_buffer(const ::rlc_buf *native)
+        vector_buffer(const ::gnb_h *native)
                 : data(std::make_shared<std::vector<std::byte>>())
         {
-                const ::rlc_buf *cur;
-                rlc_buf_ci it;
+                const ::gnb_h *cur;
+                gnb_ci it;
 
-                for (rlc_each_buf_ci(const_cast<::rlc_buf *>(native), it)) {
+                for (gnb_ci_each(const_cast<::gnb_h *>(native), it)) {
                         std::copy_n(reinterpret_cast<const std::byte *>(
-                                            rlc_buf_ci_data(it)),
-                                    rlc_buf_ci_size(it),
-                                    std::back_inserter(*data));
+                                            gnb_ci_data(it)),
+                                    gnb_ci_size(it), std::back_inserter(*data));
                 }
         }
 
-        vector_buffer(::rlc_buf native) : vector_buffer(&native)
+        vector_buffer(::gnb_h native) : vector_buffer(&native)
         {
         }
 
-        template <class Context>::rlc_buf native(Context &ctx) const
+        template <class Context>::gnb_h native(Context &ctx) const
         {
-                ::rlc_buf buf;
+                ::gnb_h buf;
 
-                buf = ::rlc_buf_alloc(&ctx.native(), data->size());
-                if (!rlc_buf_okay(buf)) {
+                buf = ::gnb_new(&ctx.native().alloc_gnb, data->size());
+                if (!gnb_okay(buf)) {
                         throw std::bad_alloc();
                 }
 
-                ::rlc_buf_put(
-                        &buf,
-                        reinterpret_cast<const std::uint8_t *>(data->data()),
-                        data->size());
+                ::gnb_put(&buf,
+                          reinterpret_cast<const std::uint8_t *>(data->data()),
+                          data->size());
 
                 return buf;
         }
@@ -165,7 +164,7 @@ class context
                                     std::strerror(ret));
                 }
 
-                ::rlc_buf_decref(native);
+                ::gnb_decref(native);
 
                 return nullptr;
         }
@@ -233,15 +232,14 @@ template <class Context> inline Context &get_ctx(::rlc_context *ctx)
 }
 
 template <class Context>
-::rlc_errno methods<Context>::tx_submit_cb(::rlc_context *ctx_arg,
-                                           ::rlc_buf buf)
+::rlc_errno methods<Context>::tx_submit_cb(::rlc_context *ctx_arg, ::gnb_h buf)
 {
         auto &ctx = get_ctx<Context>(ctx_arg);
         try {
                 using buffer_type = typename Context::buffer_type;
                 auto bufcpy = buffer_type(buf);
 
-                ::rlc_buf_decref(buf);
+                ::gnb_decref(buf);
 
                 ctx.backend_->submit(ctx, bufcpy);
         } catch (const error &e) {
@@ -275,14 +273,6 @@ void *methods<Context>::alloc_cb(::rlc_context *ctx, std::size_t size,
                                  alloc_type type)
 {
         auto &allocator = get_ctx<Context>(ctx).allocator_;
-
-        switch (type) {
-        case RLC_ALLOC_BUF:
-                size += sizeof(::rlc_buf);
-                break;
-        default:
-                break;
-        }
 
         auto mem = allocator.allocate(size + sizeof(size));
         std::memcpy(mem, &size, sizeof(size));

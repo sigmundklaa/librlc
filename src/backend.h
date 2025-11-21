@@ -18,7 +18,7 @@ RLC_BEGIN_DECL
  * @retval <0 Negative `rlc_errno` code.
  */
 ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                                rlc_buf buf);
+                                gnb_h buf);
 
 /**
  * @brief Request a transmission opportunity from the lower layer.

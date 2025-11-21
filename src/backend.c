@@ -1,5 +1,4 @@
 
-#include <rlc/buf.h>
 #include <rlc/sdu.h>
 
 #include "backend.h"
@@ -9,22 +8,22 @@
 #include "log.h"
 
 ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                                rlc_buf buf)
+                                gnb_h buf)
 {
         ptrdiff_t status;
         ptrdiff_t size;
-        rlc_buf header;
+        gnb_h header;
 
-        header = rlc_buf_alloc(ctx, RLC_PDU_HEADER_MAX_SIZE);
-        if (!rlc_buf_okay(header)) {
+        header = gnb_new(&ctx->alloc_gnb, RLC_PDU_HEADER_MAX_SIZE);
+        if (!gnb_okay(header)) {
                 rlc_panicf(ENOMEM, "Buffer alloc");
                 return -ENOMEM;
         }
 
         rlc_pdu_encode(ctx, pdu, &header);
 
-        rlc_buf_chain_front(&buf, header);
-        size = rlc_buf_size(buf);
+        gnb_chain_front(&buf, header);
+        size = gnb_size(buf);
 
         /* Submit is given ownership of this buffer - it is free to modify it
          * as it pleases. */

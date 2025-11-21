@@ -5,7 +5,6 @@ rlc_plat_define(
         init.c
         sync.c
         timer.c
-        buf.c
         log.c
 )
 

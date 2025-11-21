@@ -8,13 +8,23 @@
 #include <rlc/rlc.h>
 #include <rlc/timer.h>
 #include <rlc/plat.h>
-#include <rlc/buf.h>
 #include <rlc/sdu.h>
 
 #include "arq.h"
 #include "rx.h"
 #include "log.h"
 #include "backend.h"
+#include "methods.h"
+
+static void *rlc_alloc_gnb(struct gnb_allocator *allocator, size_t size)
+{
+        return rlc_alloc(allocator->data, size, RLC_ALLOC_BUF);
+}
+
+static void rlc_dealloc_gnb(struct gnb_allocator *allocator, void *mem)
+{
+        return rlc_dealloc(allocator->data, mem, RLC_ALLOC_BUF);
+}
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *config,
@@ -27,6 +37,10 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         ctx->methods = methods;
         ctx->conf = config;
         ctx->user_data = user_data;
+
+        ctx->alloc_gnb.alloc = rlc_alloc_gnb;
+        ctx->alloc_gnb.dealloc = rlc_dealloc_gnb;
+        ctx->alloc_gnb.data = ctx;
 
         rlc_lock_init(&ctx->lock);
 
@@ -87,8 +101,7 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
                         ctx->user_data);
 }
 
-rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf buf,
-                   struct rlc_sdu **sdu_out)
+rlc_errno rlc_send(struct rlc_context *ctx, gnb_h buf, struct rlc_sdu **sdu_out)
 {
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
@@ -103,7 +116,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf buf,
                 return -ENOMEM;
         }
 
-        rlc_buf_incref(buf);
+        gnb_incref(buf);
 
         sdu->sn = ctx->tx.next_sn++;
         sdu->buffer = buf;
@@ -111,7 +124,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf buf,
         rlc_lock_acquire(&ctx->lock);
 
         seg.start = 0;
-        seg.end = rlc_buf_size(sdu->buffer);
+        seg.end = gnb_size(sdu->buffer);
 
         rlc_dbgf("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
                  sdu->sn, seg.start, seg.end);
@@ -120,7 +133,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, rlc_buf buf,
         if (status != 0) {
                 rlc_lock_release(&ctx->lock);
                 rlc_sdu_decref(ctx, sdu);
-                rlc_buf_decref(buf);
+                gnb_decref(buf);
 
                 return status;
         }

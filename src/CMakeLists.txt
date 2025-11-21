@@ -7,7 +7,6 @@ target_sources(
         encode.c
         event.c
         sdu.c
-        buf.c
         timer.c
         arq.c
         rx.c

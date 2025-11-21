@@ -3,7 +3,6 @@
 #include <string.h>
 #include <unity/unity.h>
 
-#include <rlc/buf.h>
 #include <rlc/rlc.h>
 
 #include "encode.h"
@@ -13,12 +12,12 @@
 #define buf_init(ctx_, buf_, data_)                                            \
         do {                                                                   \
                 buf_ = alloc_buf(&ctx, 10);                                    \
-                data_ = rlc_buf_ci_data(rlc_buf_ci_init(&buf_));               \
+                data_ = gnb_ci_data(gnb_ci_init(&buf_));                       \
         } while (0)
 
 #define buf_reset(ctx_, buf_, data_)                                           \
         do {                                                                   \
-                rlc_buf_decref(buf_);                                          \
+                gnb_decref(buf_);                                              \
                 buf_init(ctx_, buf_, data_);                                   \
         } while (0)
 
@@ -34,10 +33,10 @@ void tearDown(void)
         harness_teardown(&dummy_ctx);
 }
 
-static rlc_buf alloc_buf(struct rlc_context *ctx, size_t size)
+static gnb_h alloc_buf(struct rlc_context *ctx, size_t size)
 {
-        rlc_buf ret = rlc_buf_alloc(ctx, size);
-        TEST_ASSERT(rlc_buf_okay(ret));
+        gnb_h ret = gnb_new(&ctx->alloc_gnb, size);
+        TEST_ASSERT(gnb_okay(ret));
 
         return ret;
 }
@@ -61,7 +60,7 @@ static void test_encode_umd(void)
                 .flags.is_first = 1,
         };
         uint8_t expect[10];
-        rlc_buf buf;
+        gnb_h buf;
         uint8_t *data;
 
         buf_init(&ctx, buf, data);
@@ -70,7 +69,7 @@ static void test_encode_umd(void)
 
         /* Test full SDU */
         rlc_pdu_encode(&ctx, &pdu, &buf);
-        TEST_ASSERT_EQUAL_size_t(1, rlc_buf_size(buf));
+        TEST_ASSERT_EQUAL_size_t(1, gnb_size(buf));
 
         expect[0] = 0b00 << 6;
         TEST_ASSERT_EQUAL_MEMORY(expect, data, 1);
@@ -81,7 +80,7 @@ static void test_encode_umd(void)
         /* Test first of SDU */
         pdu.flags.is_last = 0;
         rlc_pdu_encode(&ctx, &pdu, &buf);
-        TEST_ASSERT_EQUAL_size_t(1, rlc_buf_size(buf));
+        TEST_ASSERT_EQUAL_size_t(1, gnb_size(buf));
 
         expect[0] = (0b01 << 6) | 0x2a;
         TEST_ASSERT_EQUAL_MEMORY(expect, data, 1);
@@ -92,7 +91,7 @@ static void test_encode_umd(void)
         /* Test not first, not last */
         pdu.flags.is_first = 0;
         rlc_pdu_encode(&ctx, &pdu, &buf);
-        TEST_ASSERT_EQUAL_size_t(3, rlc_buf_size(buf));
+        TEST_ASSERT_EQUAL_size_t(3, gnb_size(buf));
 
         expect[0] = (0b11 << 6) | 0x2a;
         expect[1] = 0x55;
@@ -105,7 +104,7 @@ static void test_encode_umd(void)
         /* Test 12 bit SN */
         conf.sn_width = RLC_SN_12BIT;
         rlc_pdu_encode(&ctx, &pdu, &buf);
-        TEST_ASSERT_EQUAL_size_t(4, rlc_buf_size(buf));
+        TEST_ASSERT_EQUAL_size_t(4, gnb_size(buf));
 
         expect[0] = (0b11 << 6) | 0xa;
         expect[1] = 0xaa;
@@ -113,7 +112,7 @@ static void test_encode_umd(void)
         expect[3] = 0x55;
         TEST_ASSERT_EQUAL_MEMORY(expect, data, 4);
 
-        rlc_buf_decref(buf);
+        gnb_decref(buf);
 }
 
 static void test_decode_umd(void)
@@ -128,13 +127,12 @@ static void test_decode_umd(void)
                 .methods = dummy_ctx.methods,
         };
         struct rlc_pdu pdu;
-        rlc_buf buf;
+        gnb_h buf;
         uint8_t *data;
 
         /* Without SN and SO */
         buf_init(&ctx, buf, data);
-        (void)rlc_buf_ci_reserve_tail(rlc_buf_ci_init(&buf),
-                                      rlc_buf_tailroom(buf));
+        (void)gnb_ci_reserve_tail(gnb_ci_init(&buf), gnb_tailroom(buf));
 
         data[0] = 0b00 << 6;
         status = rlc_pdu_decode(&ctx, &pdu, &buf);
@@ -144,8 +142,7 @@ static void test_decode_umd(void)
 
         /* With SN */
         buf_reset(&ctx, buf, data);
-        (void)rlc_buf_ci_reserve_tail(rlc_buf_ci_init(&buf),
-                                      rlc_buf_tailroom(buf));
+        (void)gnb_ci_reserve_tail(gnb_ci_init(&buf), gnb_tailroom(buf));
         data[0] = (0b01 << 6) | 0x2a;
         status = rlc_pdu_decode(&ctx, &pdu, &buf);
         TEST_ASSERT_EQUAL_INT(0, status);
@@ -155,8 +152,7 @@ static void test_decode_umd(void)
 
         /* With SN and SO */
         buf_reset(&ctx, buf, data);
-        (void)rlc_buf_ci_reserve_tail(rlc_buf_ci_init(&buf),
-                                      rlc_buf_tailroom(buf));
+        (void)gnb_ci_reserve_tail(gnb_ci_init(&buf), gnb_tailroom(buf));
         data[0] = (0b11 << 6) | 0x2a;
         data[1] = 0x55;
         data[2] = 0x55;
@@ -169,8 +165,7 @@ static void test_decode_umd(void)
 
         /* 12bit */
         buf_reset(&ctx, buf, data);
-        (void)rlc_buf_ci_reserve_tail(rlc_buf_ci_init(&buf),
-                                      rlc_buf_tailroom(buf));
+        (void)gnb_ci_reserve_tail(gnb_ci_init(&buf), gnb_tailroom(buf));
         conf.sn_width = RLC_SN_12BIT;
         data[0] = (0b11 << 6) | 0xa;
         data[1] = 0xaa;
@@ -183,7 +178,7 @@ static void test_decode_umd(void)
         TEST_ASSERT_EQUAL_INT(0xaaa, pdu.sn);
         TEST_ASSERT_EQUAL_INT(0x5555, pdu.seg_offset);
 
-        rlc_buf_decref(buf);
+        gnb_decref(buf);
 }
 
 static void test_encode_status(void)
@@ -210,7 +205,7 @@ static void test_encode_status(void)
                 .flags.is_status = 1,
                 .sn = status.nack_sn,
         };
-        rlc_buf buf;
+        gnb_h buf;
         uint8_t *data;
 
         buf_init(&ctx, buf, data);
@@ -235,9 +230,9 @@ static void test_encode_status(void)
         TEST_ASSERT_EQUAL_UINT8(0xab, data[5]);
         TEST_ASSERT_EQUAL_UINT8(0xcd, data[6]);
         TEST_ASSERT_EQUAL_UINT8(0xea, data[7]);
-        TEST_ASSERT_EQUAL_size_t(8, rlc_buf_size(buf));
+        TEST_ASSERT_EQUAL_size_t(8, gnb_size(buf));
 
-        rlc_buf_decref(buf);
+        gnb_decref(buf);
 }
 
 static void test_decode_status(void)
@@ -253,12 +248,12 @@ static void test_decode_status(void)
         ssize_t ret;
         struct rlc_pdu_status status;
         struct rlc_pdu pdu;
-        rlc_buf buf;
+        gnb_h buf;
         uint8_t *data;
         uint32_t sn;
 
         buf_init(&ctx, buf, data);
-        (void)rlc_buf_ci_reserve_tail(rlc_buf_ci_init(&buf), 3);
+        (void)gnb_ci_reserve_tail(gnb_ci_init(&buf), 3);
 
         sn = 0x12343;
         data[0] = (sn >> 14) & 0xf;
@@ -271,8 +266,7 @@ static void test_decode_status(void)
         TEST_ASSERT_EQUAL_INT32(sn, pdu.sn);
 
         buf_reset(&ctx, buf, data);
-        (void)rlc_buf_ci_reserve_tail(rlc_buf_ci_init(&buf),
-                                      rlc_buf_tailroom(buf));
+        (void)gnb_ci_reserve_tail(gnb_ci_init(&buf), gnb_tailroom(buf));
 
         (void)memset(&status, 0, sizeof(status));
 
@@ -298,7 +292,7 @@ static void test_decode_status(void)
         TEST_ASSERT_EQUAL_INT(1, status.ext.has_range);
         TEST_ASSERT_EQUAL_INT(0, status.ext.has_more);
 
-        rlc_buf_decref(buf);
+        gnb_decref(buf);
 }
 
 int main(void)

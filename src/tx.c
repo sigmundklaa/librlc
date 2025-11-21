@@ -1,7 +1,6 @@
 
 #include <string.h>
 
-#include <rlc/buf.h>
 #include <rlc/sdu.h>
 #include <rlc/rlc.h>
 
@@ -15,15 +14,16 @@
 static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              struct rlc_sdu *sdu, size_t max_size)
 {
-        rlc_buf buf;
+        gnb_h buf;
         ptrdiff_t ret;
 
-        if (pdu->seg_offset + pdu->size > rlc_buf_size(sdu->buffer)) {
+        if (pdu->seg_offset + pdu->size > gnb_size(sdu->buffer)) {
                 return -ENODATA;
         }
 
         rlc_arq_tx_register(ctx, pdu);
-        buf = rlc_buf_view(sdu->buffer, pdu->seg_offset, pdu->size, ctx);
+        buf = gnb_view(sdu->buffer, pdu->seg_offset, pdu->size,
+                       &ctx->alloc_gnb);
 
         ret = rlc_backend_tx_submit(ctx, pdu, buf);
 
