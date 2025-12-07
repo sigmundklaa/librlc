@@ -214,17 +214,23 @@ static gnb_ci buf_balance(gnb_ci buf_it, gnb_ci nxt_it, size_t min_sz)
         }
 
         if (cur_sz < min_sz) {
-                copy_sz = min_sz - cur_sz;
-                (void)memcpy(gnb_ci_reserve_tail(buf_it, copy_sz),
-                             gnb_ci_release_head(nxt_it, copy_sz), copy_sz);
+                copy_sz = rlc_min(min_sz - cur_sz, tail_sz);
+                if (copy_sz > 0) {
+                        (void)memcpy(gnb_ci_reserve_tail(buf_it, copy_sz),
+                                     gnb_ci_release_head(nxt_it, copy_sz),
+                                     copy_sz);
+                }
 
                 return nxt_it;
         }
 
         if (nxt_sz < min_sz) {
-                copy_sz = min_sz - nxt_sz;
-                (void)memcpy(gnb_ci_reserve_head(nxt_it, copy_sz),
-                             gnb_ci_release_tail(buf_it, copy_sz), copy_sz);
+                copy_sz = rlc_min(min_sz - nxt_sz, head_sz);
+                if (copy_sz > 0) {
+                        (void)memcpy(gnb_ci_reserve_head(nxt_it, copy_sz),
+                                     gnb_ci_release_tail(buf_it, copy_sz),
+                                     copy_sz);
+                }
 
                 return nxt_it;
         }
