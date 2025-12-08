@@ -1,4 +1,6 @@
 name: rlc
 build:
+  depends:
+    - gnb
   cmake: zephyr
   kconfig: zephyr/Kconfig
