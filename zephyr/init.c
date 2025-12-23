@@ -1,14 +1,25 @@
 
 #include <zephyr/kernel.h>
 
-int rlc_plat_init(char c)
+#include <rlc_plat.h>
+#include <rlc/rlc.h>
+
+extern int rlc_zephyr_timer_reset(rlc_context *ctx);
+
+rlc_errno rlc_plat_init(rlc_platform *plat)
 {
-        ARG_UNUSED(c);
+        ARG_UNUSED(plat);
         return 0;
 }
 
-int rlc_plat_deinit(char c)
+rlc_errno rlc_plat_reset(rlc_platform *plat)
 {
-        ARG_UNUSED(c);
+        return rlc_zephyr_timer_reset(
+                CONTAINER_OF(plat, struct rlc_context, platform));
+}
+
+rlc_errno rlc_plat_deinit(rlc_platform *plat)
+{
+        ARG_UNUSED(plat);
         return 0;
 }

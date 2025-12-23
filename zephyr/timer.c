@@ -3,6 +3,7 @@
 #include <zephyr/sys/bitarray.h>
 
 #include <rlc/timer.h>
+#include <rlc/rlc.h>
 
 #define CONFIG_RLC_TIMER_MAX (100)
 
@@ -56,6 +57,28 @@ static void timer_expiry(struct k_work *work)
         if (info->flags & RLC_TIMER_SINGLE) {
                 release(info);
         }
+}
+
+int rlc_zephyr_timer_reset(rlc_context *ctx)
+{
+        struct timer_info *cur;
+        size_t i;
+        int bit;
+        struct k_work_sync sync;
+
+        for (i = 0; i < ARRAY_SIZE(pool); i++) {
+                cur = &pool[i];
+
+                if (sys_bitarray_test_bit(&pool_bitarray, i, &bit) != 0) {
+                        __ASSERT_NO_MSG(0);
+                }
+
+                if (bit && cur->ctx == ctx) {
+                        k_work_cancel_delayable_sync(&cur->dwork, &sync);
+                }
+        }
+
+        return 0;
 }
 
 bool rlc_plat_timer_okay(rlc_timer timer_arg)
