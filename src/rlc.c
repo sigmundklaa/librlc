@@ -98,14 +98,32 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
 rlc_errno rlc_reset(struct rlc_context *ctx)
 {
         rlc_errno status;
+        struct rlc_sdu *sdu;
 
-        status = rlc_deinit(ctx);
+        status = rlc_plat_reset(&ctx->platform);
         if (status != 0) {
                 return status;
         }
 
-        return rlc_init(ctx, ctx->type, ctx->conf, ctx->methods,
-                        ctx->user_data);
+        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
+                rlc_sdu_decref(ctx, sdu);
+        }
+
+        ctx->rx.next_highest = 0;
+        ctx->rx.highest_ack = 0;
+        ctx->rx.next_status_trigger = 0;
+        ctx->tx.next_sn = 0;
+        ctx->tx.retx_count = 0;
+        ctx->tx.pdu_without_poll = 0;
+        ctx->tx.byte_without_poll = 0;
+        ctx->poll_sn = 0;
+        ctx->force_poll = 0;
+        ctx->gen_status = 0;
+
+        rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
+        rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
+
+        return 0;
 }
 
 rlc_errno rlc_send(struct rlc_context *ctx, gnb_h buf, struct rlc_sdu **sdu_out)
