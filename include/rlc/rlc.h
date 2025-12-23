@@ -217,6 +217,8 @@ struct rlc_event {
         };
 };
 
+#define rlc_array_size(x) (sizeof(x) / sizeof((x)[0]))
+
 #define rlc_each_node(start_, tptr_, prop_name_)                               \
         tptr_ = start_;                                                        \
         tptr_ != NULL;                                                         \
@@ -248,9 +250,9 @@ struct rlc_event {
                                          ? NULL                                \
                                          : rlc_ens_safe__(next__)->prop_name_
 
-#define rlc_each_item(arr_, cur_, len_)                                        \
+#define rlc_each_item(arr_, cur_)                                              \
         cur_ = &arr_[0];                                                       \
-        cur_ < &arr_[len_];                                                    \
+        cur_ < &arr_[rlc_array_size(arr_)];                                    \
         cur_++
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
