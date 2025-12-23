@@ -33,6 +33,11 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         rlc_errno status;
         (void)memset(ctx, 0, sizeof(*ctx));
 
+        status = rlc_plat_init(&ctx->platform);
+        if (status != 0) {
+                return status;
+        }
+
         ctx->type = type;
         ctx->methods = methods;
         ctx->conf = config;
@@ -85,7 +90,9 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
 
         rlc_lock_deinit(&ctx->lock);
 
-        return 0;
+        status = rlc_plat_deinit(&ctx->platform);
+
+        return status;
 }
 
 rlc_errno rlc_reset(struct rlc_context *ctx)

@@ -126,6 +126,8 @@ typedef struct rlc_context {
 
         struct gnb_allocator alloc_gnb;
 
+        rlc_platform platform;
+
         void *user_data;
 } rlc_context;
 
