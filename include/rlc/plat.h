@@ -15,6 +15,7 @@ RLC_BEGIN_DECL
 struct rlc_context;
 
 rlc_errno rlc_plat_init(rlc_platform *plat);
+rlc_errno rlc_plat_reset(rlc_platform *plat);
 rlc_errno rlc_plat_deinit(rlc_platform *plat);
 
 void rlc_plat_lock_init(rlc_lock *lock);

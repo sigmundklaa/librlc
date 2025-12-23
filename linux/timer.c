@@ -5,331 +5,47 @@
 #include <sys/eventfd.h>
 #include <errno.h>
 #include <poll.h>
+#include <stdatomic.h>
 
 #include <rlc/timer.h>
 #include <rlc/rlc.h>
 #include <rlc/sync.h>
 
+#include "timer.h"
 #include "utils.h"
 #include "log.h"
+#include "atomic_mask.h"
 
-enum timer_state {
-        TIMER_STALE,
-        TIMER_ACTIVE,
-        TIMER_FIRING,
+#define BIT_USED   (1 << 0) /* Set by client, unset by worker */
+#define BIT_ZOMBIE (1 << 1) /* Set by client, unset by worker */
+#define BIT_ACTIVE (1 << 2) /* Set/unset by worker, unset by client */
+#define BIT_SCHED  (1 << 3) /* Set by client, unset by worker */
+
+enum {
+        WORK_STATE_NORMAL,
+        WORK_STATE_EXIT,
+        WORK_STATE_RESET,
 };
 
-struct timer_info {
-        rlc_timer_cb cb;
-        struct rlc_context *ctx;
-
-        int fd;
-        rlc_timer id;
-        enum timer_state state;
-        enum timer_state next_state;
-        unsigned int flags;
-
-        struct timer_info *next;
-};
-
-struct dyn_array {
-        void *mem;
-        size_t size;
-        size_t cap;
-        size_t elem_size;
-};
-
-static rlc_lock lock_;
-static pthread_t thread_h_;
-static struct timer_info *timer_list_;
-static rlc_timer next_id_;
-static int event_fd_; /* Used to wake up the worker thread to readjust the
-                         fd_set */
-
-static void timer_del_(rlc_timer id);
-
-static void *dyn_array_push(struct dyn_array *arr)
+static struct rlc_linux_timer_manager *get_man(struct rlc_context *ctx)
 {
-        size_t new_cap;
-
-        if (arr->mem == NULL || arr->size >= arr->cap) {
-                new_cap = rlc_max(1, arr->cap * 2);
-
-                arr->mem = realloc(arr->mem, arr->elem_size * new_cap);
-                if (arr->mem == NULL) {
-                        return NULL;
-                }
-
-                arr->cap = new_cap;
-        }
-
-        return (uint8_t *)arr->mem + (arr->elem_size * arr->size++);
+        return &ctx->platform.timer_man;
 }
 
-static void pfd_push(struct dyn_array *arr, int fd)
-{
-        struct pollfd *pfd;
-
-        pfd = dyn_array_push(arr);
-        if (pfd == NULL) {
-                rlc_panicf(ENOMEM, "Unable to poll timer");
-                return;
-        }
-
-        pfd->fd = fd;
-        pfd->events = POLLIN;
-        pfd->revents = 0;
-}
-
-static struct timer_info *timer_from_fd_(int fd)
-{
-        struct timer_info *t;
-
-        for (rlc_each_node(timer_list_, t, next)) {
-                if (t->fd == fd) {
-                        return t;
-                }
-        }
-
-        return NULL;
-}
-
-static void timer_alarm_(struct timer_info *t)
-{
-        if (t->cb == NULL) {
-                return;
-        }
-
-        rlc_timer_alarm(t->id, t->ctx, t->cb);
-}
-
-static void *worker_(void *arg)
-{
-        int num_ready;
-        size_t i;
-        uint64_t dummy;
-        struct timer_info *cur;
-        struct pollfd *pfd;
-        struct dyn_array pfds;
-
-        (void)arg;
-
-        pfds.mem = NULL;
-        pfds.cap = 0;
-        pfds.elem_size = sizeof(*pfd);
-
-        for (;;) {
-                pfds.size = 0;
-
-                pfd_push(&pfds, event_fd_);
-
-                rlc_lock_acquire(&lock_);
-
-                for (rlc_each_node(timer_list_, cur, next)) {
-                        cur->state = cur->next_state;
-
-                        if (cur->state != TIMER_ACTIVE) {
-                                continue;
-                        }
-
-                        pfd_push(&pfds, cur->fd);
-                }
-
-                rlc_lock_release(&lock_);
-
-                num_ready = poll(pfds.mem, pfds.size, -1);
-                if (num_ready < 0) {
-                        rlc_errf("Polling timers returned %" RLC_PRI_ERRNO,
-                                 errno);
-                        continue;
-                }
-
-                rlc_lock_acquire(&lock_);
-
-                pfd = &((struct pollfd *)pfds.mem)[0];
-                if (pfd->revents & POLLIN) {
-                        /* Reset set of fds being watched */
-                        rlc_dbgf("Timer thread reloaded");
-                        (void)read(pfd->fd, &dummy, sizeof(dummy));
-
-                        rlc_lock_release(&lock_);
-                        continue;
-                }
-
-                for (i = 1; i < pfds.size; i++) {
-                        pfd = &((struct pollfd *)pfds.mem)[i];
-
-                        if (pfd->revents & POLLIN) {
-                                rlc_dbgf("Timer alarm");
-                                (void)read(pfd->fd, &dummy, sizeof(dummy));
-
-                                cur = timer_from_fd_(pfd->fd);
-                                if (cur == NULL) {
-                                        rlc_errf("Unrecognized timer fd: %i",
-                                                 pfd->fd);
-                                        continue;
-                                }
-
-                                cur->state = TIMER_FIRING;
-                                cur->next_state = TIMER_FIRING;
-
-                                rlc_lock_release(&lock_);
-
-                                timer_alarm_(cur);
-                                rlc_lock_acquire(&lock_);
-
-                                if (cur->flags & RLC_TIMER_SINGLE) {
-                                        timer_del_(cur->id);
-                                } else if (cur->next_state == TIMER_FIRING) {
-                                        /* If state has not been changed by
-                                         * a call within the callback, then make
-                                         * the timer go stale. */
-                                        cur->next_state = TIMER_STALE;
-                                }
-                        }
-                }
-
-                rlc_lock_release(&lock_);
-        }
-
-        return NULL;
-}
-
-static struct timer_info *timer_add_(rlc_timer_cb cb, struct rlc_context *ctx,
-                                     unsigned int flags)
-{
-        struct timer_info *t;
-        struct timer_info *cur;
-        struct timer_info **lastp;
-
-        t = malloc(sizeof(*t));
-        if (t == NULL) {
-                return NULL;
-        }
-
-        t->next = NULL;
-        t->ctx = ctx;
-        t->cb = cb;
-        t->id = next_id_++;
-        t->next_state = TIMER_STALE;
-        t->state = TIMER_STALE;
-        t->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-        t->flags = flags;
-
-        if (t->fd < 0) {
-                free(t);
-                return NULL;
-        }
-
-        lastp = &timer_list_;
-
-        for (rlc_each_node(timer_list_, cur, next)) {
-                lastp = &cur->next;
-        }
-
-        *lastp = t;
-        return t;
-}
-
-static struct timer_info *timer_get_(rlc_timer id)
-{
-        struct timer_info *cur;
-
-        for (rlc_each_node(timer_list_, cur, next)) {
-                if (cur->id == id) {
-                        return cur;
-                }
-        }
-
-        return NULL;
-}
-
-static void timer_del_(rlc_timer id)
-{
-        struct timer_info *cur;
-        struct timer_info **lastp;
-
-        lastp = &timer_list_;
-
-        for (rlc_each_node(timer_list_, cur, next)) {
-                if (cur->id == id) {
-                        *lastp = cur->next;
-                        close(cur->fd);
-                        free(cur);
-                        return;
-                }
-
-                lastp = &cur->next;
-        }
-}
-
-static void trigger_reset_(void)
+static void trigger_reset(struct rlc_linux_timer_manager *man)
 {
         uint64_t count;
         int size;
 
         count = 1;
 
-        size = write(event_fd_, &count, sizeof(count));
+        size = write(man->event_fd, &count, sizeof(count));
         rlc_assert(size == sizeof(count));
 
         rlc_dbgf("Triggering reset");
 }
 
-void rlc_linux_timer_api_init(void)
-{
-        int status;
-
-        rlc_lock_init(&lock_);
-
-        event_fd_ = eventfd(0, EFD_SEMAPHORE);
-        if (event_fd_ < 0) {
-                rlc_panicf(errno, "Unable to create eventfd");
-                return;
-        }
-
-        status = pthread_create(&thread_h_, NULL, worker_, NULL);
-        if (status != 0) {
-                rlc_panicf(status, "Unable to create thread");
-                return;
-        }
-}
-
-bool rlc_plat_timer_okay(rlc_timer timer)
-{
-        return timer != -1;
-}
-
-rlc_timer rlc_plat_timer_install(rlc_timer_cb cb, struct rlc_context *ctx,
-                                 unsigned int flags)
-{
-        struct timer_info *t;
-        rlc_timer id;
-
-        rlc_lock_acquire(&lock_);
-        t = timer_add_(cb, ctx, flags);
-
-        if (t == NULL) {
-                id = -1;
-        } else {
-                id = t->id;
-        }
-
-        rlc_lock_release(&lock_);
-        return id;
-}
-
-rlc_errno rlc_plat_timer_uninstall(rlc_timer timer)
-{
-        rlc_lock_acquire(&lock_);
-        trigger_reset_();
-        timer_del_(timer);
-        rlc_lock_release(&lock_);
-
-        return 0;
-}
-
-static void to_itimerspec_(struct itimerspec *spec, uint32_t time_us)
+static void to_itimerspec(struct itimerspec *spec, uint32_t time_us)
 {
         spec->it_interval.tv_sec = 0;
         spec->it_interval.tv_nsec = 0;
@@ -342,19 +58,24 @@ static void to_itimerspec_(struct itimerspec *spec, uint32_t time_us)
         }
 }
 
-static rlc_errno timer_restart_(struct timer_info *t, uint32_t delay_us)
+static rlc_errno timer_restart(struct rlc_linux_timer_info *t,
+                               uint32_t delay_us)
 {
         rlc_errno status;
         struct itimerspec spec;
         uint64_t dummy;
         size_t drain_size;
 
-        t->next_state = TIMER_ACTIVE;
+        /* Make sure timer does not fire and/or start before we schedule
+         * it again. */
+        mask_clear(&t->state, BIT_ACTIVE | BIT_SCHED);
 
-        to_itimerspec_(&spec, delay_us);
+        to_itimerspec(&spec, delay_us);
 
         status = timerfd_settime(t->fd, 0, &spec, NULL);
-        trigger_reset_();
+
+        mask_set(&t->state, BIT_SCHED);
+        trigger_reset(get_man(t->ctx));
 
         if (status < 0) {
                 return -errno;
@@ -363,106 +84,332 @@ static rlc_errno timer_restart_(struct timer_info *t, uint32_t delay_us)
         return status;
 }
 
-rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
+static bool timer_valid(struct rlc_linux_timer_info *t)
 {
-        rlc_errno status;
-        struct timer_info *t;
+        return mask_get(&t->state, BIT_USED | BIT_ZOMBIE) == BIT_USED;
+}
 
-        rlc_lock_acquire(&lock_);
+static void timer_cleanup(struct rlc_linux_timer_info *t)
+{
+        close(t->fd);
 
-        t = timer_get_(timer);
-        if (t == NULL) {
-                rlc_lock_release(&lock_);
-                return -EINVAL;
+        /* Reset state to default */
+        atomic_store(&t->state, 0);
+}
+
+static struct rlc_linux_timer_info *
+timer_from_fd(struct rlc_linux_timer_manager *man, int fd)
+{
+        struct rlc_linux_timer_info *t;
+
+        for (rlc_each_item(man->timers, t)) {
+                if (!timer_valid(t)) {
+                        continue;
+                }
+
+                if (t->fd == fd) {
+                        return t;
+                }
         }
 
-        if (t->state != TIMER_STALE || t->next_state != TIMER_STALE) {
-                rlc_lock_release(&lock_);
+        return NULL;
+}
 
+static struct rlc_linux_timer_info *
+timer_alloc(struct rlc_linux_timer_manager *man)
+{
+        struct rlc_linux_timer_info *cur;
+
+        for (rlc_each_item(man->timers, cur)) {
+                if (mask_set_strict(&cur->state, BIT_USED)) {
+                        return cur;
+                }
+        }
+
+        return NULL;
+}
+
+static struct rlc_linux_timer_info *
+timer_add(rlc_timer_cb cb, struct rlc_context *ctx, unsigned int flags)
+{
+        struct rlc_linux_timer_info *t;
+        struct rlc_linux_timer_info *cur;
+
+        t = timer_alloc(get_man(ctx));
+        if (t == NULL) {
+                return NULL;
+        }
+
+        t->ctx = ctx;
+        t->cb = cb;
+        t->state = 0;
+        t->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+        t->flags = flags;
+
+        if (t->fd < 0) {
+                return NULL;
+        }
+
+        mask_set(&t->state, BIT_USED);
+
+        return t;
+}
+
+static void timer_alarm(struct rlc_linux_timer_info *t)
+{
+        if (t->cb == NULL) {
+                return;
+        }
+
+        rlc_timer_alarm(t, t->ctx, t->cb);
+}
+
+static void pfd_push(struct pollfd **arrptr, int fd)
+{
+        struct pollfd *pfd;
+
+        pfd = *arrptr;
+        pfd->fd = fd;
+        pfd->events = POLLIN;
+        pfd->revents = 0;
+
+        *arrptr += 1;
+}
+
+static void reset_timers(struct rlc_linux_timer_manager *man)
+{
+        struct rlc_linux_timer_info *cur;
+
+        for (rlc_each_item(man->timers, cur)) {
+                if (!mask_test(&cur->state, BIT_USED)) {
+                        continue;
+                }
+
+                if (cur->flags & RLC_TIMER_SINGLE) {
+                        timer_cleanup(cur);
+                } else {
+                        mask_clear(&cur->state, BIT_ACTIVE | BIT_SCHED);
+                }
+        }
+}
+
+static void *worker_(void *man_arg)
+{
+        struct rlc_linux_timer_manager *man;
+        int num_ready;
+        size_t i;
+        size_t count;
+        uint64_t dummy;
+        unsigned int state;
+        struct rlc_linux_timer_info *cur;
+        struct pollfd *pfd;
+        struct pollfd pfds[RLC_LINUX_TIMER_COUNT_MAX];
+
+        man = man_arg;
+
+        for (;;) {
+                pfd = pfds;
+                pfd_push(&pfd, man->event_fd);
+
+                state = atomic_load(&man->work_state);
+
+                if (state == WORK_STATE_EXIT) {
+                        rlc_inff("Exiting timer worker thread");
+                        break;
+                } else if (state == WORK_STATE_RESET) {
+                        reset_timers(man);
+
+                        atomic_store(&man->work_state, WORK_STATE_NORMAL);
+                        continue;
+                } else {
+                        for (rlc_each_item(man->timers, cur)) {
+                                if (!mask_test(&cur->state, BIT_USED)) {
+                                        continue;
+                                }
+
+                                if (mask_test(&cur->state, BIT_ZOMBIE)) {
+                                        timer_cleanup(cur);
+                                        continue;
+                                }
+
+                                /* Set active if scheduled bit is set */
+                                if (mask_test(&cur->state, BIT_ACTIVE) ||
+                                    mask_cas(&cur->state, BIT_SCHED,
+                                             BIT_ACTIVE)) {
+                                        pfd_push(&pfd, cur->fd);
+                                        mask_clear(&cur->state, BIT_SCHED);
+                                }
+                        }
+                }
+
+                count = pfd - pfds;
+
+                num_ready = poll(pfds, count, -1);
+                if (num_ready < 0) {
+                        rlc_errf("Polling timers returned %" RLC_PRI_ERRNO,
+                                 errno);
+                        continue;
+                }
+
+                pfd = &pfds[0];
+                if (pfd->revents & POLLIN) {
+                        /* Reset set of fds being watched */
+                        rlc_dbgf("Timer thread reloaded");
+                        (void)read(pfd->fd, &dummy, sizeof(dummy));
+                        continue;
+                }
+
+                for (; pfd < &pfds[count]; pfd++) {
+                        if (pfd->revents & POLLIN) {
+                                rlc_dbgf("Timer alarm");
+                                (void)read(pfd->fd, &dummy, sizeof(dummy));
+
+                                cur = timer_from_fd(man, pfd->fd);
+                                if (cur == NULL) {
+                                        rlc_errf("Unrecognized timer fd: %i",
+                                                 pfd->fd);
+                                        continue;
+                                }
+
+                                /* Reset by client */
+                                if (!mask_test(&cur->state, BIT_ACTIVE)) {
+                                        continue;
+                                }
+
+                                timer_alarm(cur);
+
+                                if (cur->flags & RLC_TIMER_SINGLE) {
+                                        mask_set(&cur->state, BIT_ZOMBIE);
+                                } else {
+                                        mask_clear(&cur->state, BIT_ACTIVE);
+                                }
+                        }
+                }
+        }
+
+        return NULL;
+}
+
+int rlc_linux_timer_manager_init(struct rlc_linux_timer_manager *man)
+{
+        int status;
+
+        man->event_fd = eventfd(0, EFD_SEMAPHORE);
+        if (man->event_fd < 0) {
+                rlc_panicf(errno, "Unable to create eventfd");
+                return -errno;
+        }
+
+        status = pthread_create(&man->thread_h, NULL, worker_, man);
+        if (status != 0) {
+                rlc_panicf(status, "Unable to create thread");
+                return -errno;
+        }
+
+        return 0;
+}
+
+int rlc_linux_timer_manager_reset(struct rlc_linux_timer_manager *man)
+{
+        atomic_store(&man->work_state, WORK_STATE_RESET);
+        trigger_reset(man);
+
+        /* Wait for worker thread to go out of reset */
+        while (atomic_load(&man->work_state) == WORK_STATE_RESET) {
+        }
+
+        return 0;
+}
+
+int rlc_linux_timer_manager_deinit(struct rlc_linux_timer_manager *man)
+{
+        int status;
+
+        atomic_store(&man->work_state, WORK_STATE_EXIT);
+        trigger_reset(man);
+
+        status = pthread_join(man->thread_h, NULL);
+        if (status != 0) {
+                rlc_panicf(status, "Failed to join thread");
+        }
+
+        (void)close(man->event_fd);
+
+        return 0;
+}
+
+bool rlc_plat_timer_okay(struct rlc_linux_timer_info *t)
+{
+        return t != NULL;
+}
+
+struct rlc_linux_timer_info *rlc_plat_timer_install(rlc_timer_cb cb,
+                                                    struct rlc_context *ctx,
+                                                    unsigned int flags)
+{
+        struct rlc_linux_timer_info *t;
+        rlc_timer id;
+
+        return timer_add(cb, ctx, flags);
+}
+
+rlc_errno rlc_plat_timer_uninstall(struct rlc_linux_timer_info *t)
+{
+        (void)rlc_plat_timer_stop(t);
+
+        /* Perform cleanup when worker is done */
+        mask_set(&t->state, BIT_ZOMBIE);
+
+        return 0;
+}
+
+rlc_errno rlc_plat_timer_start(struct rlc_linux_timer_info *t,
+                               uint32_t delay_us)
+{
+        rlc_errno status;
+
+        /* Already scheduled or running */
+        if (mask_get(&t->state, BIT_ACTIVE | BIT_SCHED)) {
                 return 0;
         }
 
-        status = timer_restart_(t, delay_us);
-        rlc_lock_release(&lock_);
+        status = timer_restart(t, delay_us);
 
         return status;
 }
 
-rlc_errno rlc_plat_timer_restart(rlc_timer timer, uint32_t delay_us)
+rlc_errno rlc_plat_timer_restart(struct rlc_linux_timer_info *t,
+                                 uint32_t delay_us)
 {
-        rlc_errno status;
-        struct timer_info *t;
-
-        rlc_lock_acquire(&lock_);
-
-        t = timer_get_(timer);
-        if (t == NULL) {
-                rlc_lock_release(&lock_);
-                return -EINVAL;
-        }
-
-        status = timer_restart_(t, delay_us);
-        rlc_lock_release(&lock_);
-
-        return status;
+        return timer_restart(t, delay_us);
 }
 
-rlc_errno rlc_plat_timer_stop(rlc_timer timer)
+rlc_errno rlc_plat_timer_stop(struct rlc_linux_timer_info *t)
 {
         rlc_errno status;
-        struct timer_info *t;
         struct itimerspec spec;
 
-        rlc_lock_acquire(&lock_);
+        mask_clear(&t->state, BIT_ACTIVE | BIT_SCHED);
 
-        trigger_reset_();
-
-        t = timer_get_(timer);
-        if (t == NULL) {
-                rlc_lock_release(&lock_);
-                return -EINVAL;
-        }
-
+        /* Reset timers so that we don't get a spurious event when the previous
+         * time elapses. */
         spec = (struct itimerspec){0};
         status = timerfd_settime(t->fd, 0, &spec, NULL);
         if (status < 0) {
                 status = -errno;
         }
 
-        t->next_state = TIMER_STALE;
-
-        rlc_lock_release(&lock_);
+        trigger_reset(get_man(t->ctx));
 
         return status;
 }
 
-bool rlc_plat_timer_active(rlc_timer timer)
+bool rlc_plat_timer_active(struct rlc_linux_timer_info *t)
 {
-        struct timer_info *t;
-        bool ret;
-
-        rlc_lock_acquire(&lock_);
-        t = timer_get_(timer);
-        /* Use a counter/id to track changes */
-        ret = t != NULL && t->state == t->next_state && t->state != TIMER_STALE;
-        rlc_lock_release(&lock_);
-
-        return ret;
+        return mask_test(&t->state, BIT_ACTIVE);
 }
 
-unsigned int rlc_plat_timer_flags(rlc_timer timer)
+unsigned int rlc_plat_timer_flags(struct rlc_linux_timer_info *t)
 {
-        struct timer_info *t;
-        unsigned int flags;
-
-        rlc_lock_acquire(&lock_);
-
-        t = timer_get_(timer);
-        rlc_assert(t != NULL);
-
-        flags = t->flags;
-
-        rlc_lock_release(&lock_);
-
-        return flags;
+        return t->flags;
 }
