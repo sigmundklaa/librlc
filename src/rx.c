@@ -192,94 +192,6 @@ rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
         return rlc_timer_uninstall(ctx->t_reassembly);
 }
 
-static gnb_ci buf_balance(gnb_ci buf_it, gnb_ci nxt_it, size_t min_sz)
-{
-        size_t tail_sz;
-        size_t head_sz;
-        size_t nxt_sz;
-        size_t cur_sz;
-        size_t copy_sz;
-
-        cur_sz = gnb_ci_size(buf_it);
-        nxt_sz = gnb_ci_size(nxt_it);
-        tail_sz = gnb_ci_tailroom(buf_it);
-        head_sz = gnb_ci_headroom(nxt_it);
-
-        /* All of next can fit in current - move over */
-        if (nxt_sz <= tail_sz) {
-                (void)memcpy(gnb_ci_reserve_tail(buf_it, nxt_sz),
-                             gnb_ci_release_head(nxt_it, nxt_sz), nxt_sz);
-
-                (void)gnb_ci_remove(nxt_it);
-                return buf_it;
-        }
-
-        /* All of current can fit in next - move over */
-        if (cur_sz <= head_sz) {
-                (void)memcpy(gnb_ci_reserve_head(nxt_it, cur_sz),
-                             gnb_ci_release_tail(buf_it, cur_sz), cur_sz);
-
-                return gnb_ci_remove(buf_it);
-        }
-
-        /* Not enough to split the two. TODO: Should maybe move over to head
-         * anyways, to allow for future buffers to merge with the next? */
-        if (cur_sz + nxt_sz < min_sz * 2) {
-                return nxt_it;
-        }
-
-        if (cur_sz < min_sz) {
-                copy_sz = rlc_min(min_sz - cur_sz, tail_sz);
-                if (copy_sz > 0) {
-                        (void)memcpy(gnb_ci_reserve_tail(buf_it, copy_sz),
-                                     gnb_ci_release_head(nxt_it, copy_sz),
-                                     copy_sz);
-                }
-
-                return nxt_it;
-        }
-
-        if (nxt_sz < min_sz) {
-                copy_sz = rlc_min(min_sz - nxt_sz, head_sz);
-                if (copy_sz > 0) {
-                        (void)memcpy(gnb_ci_reserve_head(nxt_it, copy_sz),
-                                     gnb_ci_release_tail(buf_it, copy_sz),
-                                     copy_sz);
-                }
-
-                return nxt_it;
-        }
-
-        return nxt_it;
-}
-
-void gnb_defrag(gnb_h *buf, size_t min_size)
-{
-        size_t cur_size;
-        size_t nxt_size;
-        gnb_ci buf_it;
-        gnb_ci nxt_it;
-
-        buf_it = gnb_ci_init(buf);
-
-        for (; !gnb_ci_eoi(buf_it);) {
-                nxt_it = gnb_ci_next(buf_it);
-                if (gnb_ci_eoi(nxt_it)) {
-                        break;
-                }
-
-                cur_size = gnb_ci_size(buf_it);
-                nxt_size = gnb_ci_size(nxt_it);
-
-                if (cur_size >= min_size && nxt_size >= min_size) {
-                        buf_it = gnb_ci_next(nxt_it);
-                        continue;
-                }
-
-                buf_it = buf_balance(buf_it, nxt_it, min_size);
-        }
-}
-
 static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
                                gnb_h *buf, struct rlc_segment seg)
 {
@@ -432,8 +344,6 @@ void rlc_rx_submit(struct rlc_context *ctx, gnb_h buf)
 
         if (rlc_sdu_is_rx_done(sdu)) {
                 rlc_inff("RX; SN: %" PRIu32 " completed", sdu->sn);
-
-                gnb_defrag(&sdu->buffer, 40);
 
                 /* In acknowledged mode, we must wait until after receiving
                  * the status before deallocating. */
