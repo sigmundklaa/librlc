@@ -82,6 +82,24 @@ static bool should_stop_reassembly(struct rlc_context *ctx)
         return false;
 }
 
+static void deliver_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        rlc_inff("Delivering SDU %i", sdu->sn);
+
+        rlc_event_rx_done(ctx, sdu);
+        rlc_sdu_remove(ctx, sdu);
+        rlc_sdu_decref(ctx, sdu);
+}
+
+static void drop_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
+{
+        rlc_wrnf("Dropping SDU %i", sdu->sn);
+
+        rlc_event_rx_drop(ctx, sdu);
+        rlc_sdu_remove(ctx, sdu);
+        rlc_sdu_decref(ctx, sdu);
+}
+
 static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
@@ -101,16 +119,15 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
         }
 
         ctx->rx.highest_ack = lowest;
+        rlc_window_move_to(&ctx->rx.win, lowest);
 
-        /* When failing reception, the context is pretty much corrupted as
-         * SDUs need to be received in order. So, this currently does not
-         * advance the `rx.next`, potentially making the context stuck at this
-         * SDU. This, however, needs to be handled outside the RLC layer. */
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir == RLC_RX && sdu->sn < ctx->rx.highest_ack) {
-                        rlc_event_rx_drop(ctx, sdu);
-                        rlc_sdu_remove(ctx, sdu);
-                        rlc_sdu_decref(ctx, sdu);
+                if (sdu->dir == RLC_RX && sdu->sn < lowest) {
+                        if (sdu->state == RLC_DONE) {
+                                deliver_sdu(ctx, sdu);
+                        } else {
+                                drop_sdu(ctx, sdu);
+                        }
                 }
         }
 
@@ -151,12 +168,9 @@ static void highest_ack_update(struct rlc_context *ctx, uint32_t next)
                 }
 
                 if (sdu->sn < next) {
-                        rlc_inff("Delivering SDU %i", sdu->sn);
                         rlc_assert(sdu->state == RLC_DONE);
 
-                        rlc_event_rx_done(ctx, sdu);
-                        rlc_sdu_remove(ctx, sdu);
-                        rlc_sdu_decref(ctx, sdu);
+                        deliver_sdu(ctx, sdu);
                 }
         }
 }
