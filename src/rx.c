@@ -151,9 +151,10 @@ static void highest_ack_update(struct rlc_context *ctx, uint32_t next)
                 }
 
                 if (sdu->sn < next) {
-                        rlc_dbgf("Removing SDU: state %i", sdu->state);
+                        rlc_inff("Delivering SDU %i", sdu->sn);
                         rlc_assert(sdu->state == RLC_DONE);
 
+                        rlc_event_rx_done(ctx, sdu);
                         rlc_sdu_remove(ctx, sdu);
                         rlc_sdu_decref(ctx, sdu);
                 }
@@ -419,7 +420,6 @@ void rlc_rx_submit(struct rlc_context *ctx, gnb_h buf)
                 rlc_inff("RX; SN: %" PRIu32 " completed", sdu->sn);
 
                 gnb_defrag(&sdu->buffer, 40);
-                rlc_event_rx_done(ctx, sdu);
 
                 /* In acknowledged mode, we must wait until after receiving
                  * the status before deallocating. */
