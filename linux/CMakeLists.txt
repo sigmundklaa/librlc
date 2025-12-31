@@ -5,6 +5,7 @@ target_sources(
         sync.c
         timer.c
         init.c
+        log.c
 )
 
 target_include_directories(
