@@ -10,6 +10,7 @@
 #include "event.h"
 #include "encode.h"
 #include "log.h"
+#include "common.h"
 
 /* Section 5.2.3.2.4, "when t-Reassembly expires" */
 static bool should_restart_reassembly(struct rlc_context *ctx)

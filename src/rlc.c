@@ -14,6 +14,7 @@
 #include "rx.h"
 #include "log.h"
 #include "backend.h"
+#include "common.h"
 #include "methods.h"
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
@@ -38,21 +39,24 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         ctx->alloc_misc = misc_allocator;
         ctx->alloc_buf = buf_allocator;
 
-        rlc_lock_init(&ctx->lock);
+        status = gabs_mutex_init(&ctx->lock);
+        if (status != 0) {
+                return status;
+        }
 
         rlc_window_init(&ctx->tx.win, 0, config->window_size);
         rlc_window_init(&ctx->rx.win, 0, config->window_size);
 
         status = rlc_arq_init(ctx);
         if (status != 0) {
-                rlc_lock_deinit(&ctx->lock);
+                (void)gabs_mutex_deinit(&ctx->lock);
                 return status;
         }
 
         status = rlc_rx_init(ctx);
         if (status != 0) {
                 (void)rlc_arq_deinit(ctx);
-                rlc_lock_deinit(&ctx->lock);
+                (void)gabs_mutex_deinit(&ctx->lock);
 
                 return status;
         }
@@ -79,7 +83,10 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
                 return status;
         }
 
-        rlc_lock_deinit(&ctx->lock);
+        status = gabs_mutex_deinit(&ctx->lock);
+        if (status != 0) {
+                return status;
+        }
 
         status = rlc_plat_deinit(&ctx->platform);
 

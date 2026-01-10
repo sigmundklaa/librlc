@@ -229,8 +229,6 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
                         tx_win_shift(ctx);
                 }
 
-                rlc_sem_up(&sdu->tx_sem);
-
                 rlc_event_tx_done(ctx, sdu);
                 rlc_sdu_decref(ctx, sdu);
         }

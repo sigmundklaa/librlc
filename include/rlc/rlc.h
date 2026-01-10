@@ -8,12 +8,12 @@
 
 #include <gabs/pbuf.h>
 #include <gabs/alloc.h>
+#include <gabs/mutex.h>
 
 #include <rlc/plat.h>
 #include <rlc/decl.h>
 #include <rlc/window.h>
 #include <rlc/timer.h>
-#include <rlc/sync.h>
 
 RLC_BEGIN_DECL
 
@@ -114,7 +114,7 @@ typedef struct rlc_context {
 
         bool force_poll;
 
-        rlc_lock lock;
+        gabs_mutex lock;
 
         /* Generate status PDU on next available opportunity. AM only*/
         bool gen_status;
@@ -160,7 +160,6 @@ typedef struct rlc_sdu {
         gabs_pbuf buffer;
 
         rlc_errno tx_status;
-        rlc_sem tx_sem;
 
         /* TX mode: unsent segments */
         /* RX mode: received segments */

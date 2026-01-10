@@ -222,10 +222,6 @@ struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir)
         sdu->dir = dir;
         sdu->refcount = 1;
 
-        if (sdu->dir == RLC_TX) {
-                rlc_sem_init(&sdu->tx_sem, 0);
-        }
-
         return sdu;
 }
 
@@ -246,7 +242,6 @@ void rlc_sdu_decref(struct rlc_context *ctx, struct rlc_sdu *sdu)
                         rlc_dealloc(ctx, seg, RLC_ALLOC_SDU_SEGMENT);
                 }
 
-                rlc_sem_deinit(&sdu->tx_sem);
                 rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);
         }
 }

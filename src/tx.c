@@ -9,6 +9,7 @@
 #include "methods.h"
 #include "arq.h"
 #include "backend.h"
+#include "common.h"
 #include "log.h"
 
 static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
@@ -191,7 +192,6 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
                 }
 
                 if (ctx->type != RLC_AM && pdu.flags.is_last) {
-                        rlc_sem_up(&sdu->tx_sem);
                         rlc_event_tx_done(ctx, sdu);
                         rlc_sdu_remove(ctx, sdu);
                         rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);

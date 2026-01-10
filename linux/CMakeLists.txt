@@ -2,7 +2,6 @@
 target_sources(
     rlc
     PRIVATE
-        sync.c
         timer.c
         init.c
         log.c
