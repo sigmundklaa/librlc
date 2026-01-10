@@ -1,6 +1,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <inttypes.h>
 
 #include <rlc/sdu.h>
 #include <rlc/utils.h>
