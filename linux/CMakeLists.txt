@@ -4,7 +4,6 @@ target_sources(
     PRIVATE
         timer.c
         init.c
-        log.c
 )
 
 target_include_directories(

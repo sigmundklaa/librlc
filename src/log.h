@@ -13,6 +13,4 @@ void rlc_log_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu);
 
 RLC_END_DECL
 
-#include <rlc_log.h>
-
 #endif /* RLC_LOG_H__ */

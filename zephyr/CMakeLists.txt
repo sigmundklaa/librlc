@@ -26,6 +26,5 @@ zephyr_library_sources(
     ${ZEPHYR_CURRENT_MODULE_DIR}/src/sdu.c
     ${ZEPHYR_CURRENT_MODULE_DIR}/src/timer.c
     ${ZEPHYR_CURRENT_CMAKE_DIR}/init.c
-    ${ZEPHYR_CURRENT_CMAKE_DIR}/log.c
     ${ZEPHYR_CURRENT_CMAKE_DIR}/timer.c
 )
