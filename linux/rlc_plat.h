@@ -17,9 +17,7 @@ RLC_BEGIN_DECL
 
 struct rlc_linux_timer_manager;
 
-typedef pthread_mutex_t rlc_lock;
 typedef struct rlc_linux_timer_info *rlc_timer;
-typedef sem_t rlc_sem;
 
 typedef struct rlc_platform_linux {
         struct rlc_linux_timer_manager timer_man;
