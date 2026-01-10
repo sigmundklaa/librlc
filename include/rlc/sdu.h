@@ -2,9 +2,62 @@
 #ifndef RLC_SDU_H__
 #define RLC_SDU_H__
 
-#include <rlc/rlc.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+#include <gabs/pbuf.h>
+
+#include <rlc/errno.h>
+#include <rlc/decl.h>
+#include <rlc/segment.h>
+
+struct rlc_context;
 
 RLC_BEGIN_DECL
+
+enum rlc_sn_width {
+        RLC_SN_6BIT,
+        RLC_SN_12BIT,
+        RLC_SN_18BIT,
+};
+
+struct rlc_sdu_segment {
+        struct rlc_segment seg;
+        struct rlc_sdu_segment *next;
+};
+
+typedef struct rlc_sdu {
+        enum rlc_sdu_dir {
+                RLC_TX,
+                RLC_RX,
+        } dir;
+
+        enum rlc_sdu_state {
+                RLC_READY,
+                RLC_WAIT,
+                RLC_DONE,
+        } state;
+
+        struct {
+                bool rx_last_received: 1;
+        } flags;
+
+        unsigned int refcount;
+
+        /* RLC specification state variables */
+        uint32_t sn;
+        unsigned int retx_count; /* Number of retransmissions */
+
+        gabs_pbuf buffer;
+
+        rlc_errno tx_status;
+
+        /* TX mode: unsent segments */
+        /* RX mode: received segments */
+        struct rlc_sdu_segment *segments;
+
+        struct rlc_sdu *next;
+} rlc_sdu;
 
 /** @brief Allocate SDU with direction @p dir */
 struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir);

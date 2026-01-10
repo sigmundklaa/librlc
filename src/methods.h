@@ -7,8 +7,6 @@
 
 #include <rlc/rlc.h>
 
-#include "utils.h"
-
 RLC_BEGIN_DECL
 
 static inline rlc_errno rlc_tx_request(struct rlc_context *ctx)
@@ -31,8 +29,7 @@ static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx, gabs_pbuf buf)
         return methods->tx_submit(ctx, buf);
 }
 
-static inline void *rlc_alloc(struct rlc_context *ctx, size_t size,
-                              enum rlc_alloc_type type)
+static inline void *rlc_alloc(struct rlc_context *ctx, size_t size)
 {
         void *mem;
         if (gabs_alloc(ctx->alloc_misc, size, &mem) != 0) {
@@ -42,8 +39,7 @@ static inline void *rlc_alloc(struct rlc_context *ctx, size_t size,
         return mem;
 }
 
-static inline void rlc_dealloc(struct rlc_context *ctx, void *mem,
-                               enum rlc_alloc_type type)
+static inline void rlc_dealloc(struct rlc_context *ctx, void *mem)
 {
         (void)gabs_dealloc(ctx->alloc_misc, mem);
 }

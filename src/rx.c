@@ -178,7 +178,7 @@ static void highest_ack_update(struct rlc_context *ctx, uint32_t next)
 
 rlc_errno rlc_rx_init(struct rlc_context *ctx)
 {
-        if (ctx->type != RLC_TM) {
+        if (ctx->conf->type != RLC_TM) {
                 ctx->t_reassembly = rlc_timer_install(alarm_reassembly, ctx, 0);
                 if (!rlc_timer_okay(ctx->t_reassembly)) {
                         return -ENOTSUP;
@@ -272,7 +272,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 goto exit;
         }
 
-        if (ctx->type == RLC_TM) {
+        if (ctx->conf->type == RLC_TM) {
                 rlc_event_rx_done_direct(ctx, &buf);
 
                 goto exit;
@@ -284,7 +284,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 goto exit;
         }
 
-        if (ctx->type == RLC_AM && pdu.flags.polled) {
+        if (ctx->conf->type == RLC_AM && pdu.flags.polled) {
                 rlc_arq_rx_register(ctx, &pdu);
         }
 
@@ -359,7 +359,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 
                 /* In acknowledged mode, we must wait until after receiving
                  * the status before deallocating. */
-                if (ctx->type == RLC_AM) {
+                if (ctx->conf->type == RLC_AM) {
                         lowest = rlc_min(lowest_sn_not_recv(ctx),
                                          ctx->rx.next_highest);
 
@@ -379,7 +379,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 }
         }
 
-        if (ctx->type == RLC_AM || ctx->type == RLC_UM) {
+        if (ctx->conf->type == RLC_AM || ctx->conf->type == RLC_UM) {
                 if (rlc_timer_active(ctx->t_reassembly) &&
                     should_stop_reassembly(ctx)) {
                         gabs_log_dbgf(ctx->logger, "Stopping t-Reassembly");

@@ -5,7 +5,6 @@
 
 #include <rlc/rlc.h>
 
-#include "utils.h"
 #include "encode.h"
 #include "log.h"
 
@@ -115,7 +114,7 @@ static void from_si_(struct rlc_pdu *pdu, enum seg_info si)
         }
 }
 
-static bool has_sn_(const struct rlc_pdu *pdu, enum rlc_sdu_type type)
+static bool has_sn_(const struct rlc_pdu *pdu, enum rlc_service_type type)
 {
         return (type != RLC_UM || !(pdu->flags.is_last && pdu->flags.is_first));
 }
@@ -165,7 +164,7 @@ void rlc_pdu_encode(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         (void)memset(data, 0, sizeof(data));
 
-        switch (ctx->type) {
+        switch (ctx->conf->type) {
         case RLC_TM:
                 /* Nothing to be done */
                 return;
@@ -182,7 +181,7 @@ void rlc_pdu_encode(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         full_width = 0;
         size = 0;
 
-        if (ctx->type == RLC_AM) {
+        if (ctx->conf->type == RLC_AM) {
                 /* Data bit and polled bit */
                 bit_copy_mem_(data, (0b1 << 1) | pdu->flags.polled, 0, 2);
 
@@ -196,12 +195,14 @@ void rlc_pdu_encode(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         /* Reserve necessary amount bits so that the end of the SN is aligned at
          * the end of a byte */
-        if ((ctx->type == RLC_UM && ctx->conf->sn_width == RLC_SN_12BIT) ||
-            (ctx->type == RLC_AM && ctx->conf->sn_width == RLC_SN_18BIT)) {
+        if ((ctx->conf->type == RLC_UM &&
+             ctx->conf->sn_width == RLC_SN_12BIT) ||
+            (ctx->conf->type == RLC_AM &&
+             ctx->conf->sn_width == RLC_SN_18BIT)) {
                 full_width += 2;
         }
 
-        if (has_sn_(pdu, ctx->type)) {
+        if (has_sn_(pdu, ctx->conf->type)) {
                 bit_copy_mem_(data, pdu->sn, full_width,
                               sn_num_bits_(ctx->conf->sn_width));
                 full_width += sn_num_bits_(ctx->conf->sn_width);
@@ -249,7 +250,7 @@ rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
         size_t sn_size;
         uint8_t header[RLC_PDU_HEADER_MAX_SIZE];
 
-        if (ctx->type == RLC_TM) {
+        if (ctx->conf->type == RLC_TM) {
                 return 0;
         }
 
@@ -268,7 +269,7 @@ rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
                 return size;
         }
 
-        if (ctx->type == RLC_AM) {
+        if (ctx->conf->type == RLC_AM) {
                 pdu->flags.is_status = (~(header[0] >> 7)) & 1;
                 if (pdu->flags.is_status) {
                         status = decode_status_header_(ctx, pdu, header);
@@ -279,7 +280,7 @@ rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
 
                 from_si_(pdu, (header[0] >> 4) & 0x3);
 
-                if (has_sn_(pdu, ctx->type)) {
+                if (has_sn_(pdu, ctx->conf->type)) {
                         if (ctx->conf->sn_width == RLC_SN_12BIT) {
                                 pdu->sn =
                                         ((header[0] & 0xf) << 8) | (header[1]);
@@ -291,7 +292,7 @@ rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
         } else {
                 from_si_(pdu, (header[0] >> 6) & 0x3);
 
-                if (has_sn_(pdu, ctx->type)) {
+                if (has_sn_(pdu, ctx->conf->type)) {
                         if (ctx->conf->sn_width == RLC_SN_6BIT) {
                                 pdu->sn = header[0] & 0x3f;
                         } else {
@@ -323,7 +324,7 @@ done:
 size_t rlc_pdu_header_size(const struct rlc_context *ctx,
                            const struct rlc_pdu *pdu)
 {
-        switch (ctx->type) {
+        switch (ctx->conf->type) {
         case RLC_AM:
         case RLC_UM:
                 return sn_num_bytes_(ctx->conf->sn_width) +

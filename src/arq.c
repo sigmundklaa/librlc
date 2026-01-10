@@ -11,9 +11,7 @@
 #include "encode.h"
 #include "methods.h"
 #include "event.h"
-#include "utils.h"
 #include "log.h"
-#include "tx.h"
 
 struct status_pool {
         struct rlc_pdu_status mem[2];
@@ -255,7 +253,7 @@ static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
                                 break;
                         }
 
-                        rlc_dealloc(ctx, seg, RLC_ALLOC_SDU_SEGMENT);
+                        rlc_dealloc(ctx, seg);
                 }
         }
 }
@@ -584,7 +582,7 @@ bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
 {
         const struct rlc_sdu *cur;
 
-        if (ctx->type != RLC_AM) {
+        if (ctx->conf->type != RLC_AM) {
                 return false;
         }
 
@@ -669,7 +667,7 @@ void rlc_arq_rx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
 
 rlc_errno rlc_arq_init(struct rlc_context *ctx)
 {
-        if (ctx->type == RLC_AM) {
+        if (ctx->conf->type == RLC_AM) {
                 ctx->t_poll_retransmit =
                         rlc_timer_install(alarm_poll_retransmit, ctx, 0);
                 if (!rlc_timer_okay(ctx->t_poll_retransmit)) {

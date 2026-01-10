@@ -4,8 +4,6 @@
 
 #include <rlc/rlc.h>
 
-#include "utils.h"
-
 static inline void rlc_lock_acquire(gabs_mutex *lock)
 {
         int status;

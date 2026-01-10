@@ -1,10 +1,10 @@
 
 #include <rlc/sdu.h>
+#include <rlc/utils.h>
 
 #include "backend.h"
 #include "encode.h"
 #include "methods.h"
-#include "utils.h"
 #include "log.h"
 
 ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,

@@ -11,14 +11,10 @@
 #include <rlc/sdu.h>
 
 #include "arq.h"
-#include "rx.h"
 #include "log.h"
-#include "backend.h"
-#include "common.h"
 
-rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
-                   const struct rlc_config *config,
-                   const struct rlc_methods *methods, void *user_data,
+rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_config *config,
+                   const struct rlc_methods *methods,
                    const gabs_allocator_h *misc_allocator,
                    const gabs_allocator_h *buf_allocator)
 {
@@ -30,10 +26,10 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                 return status;
         }
 
-        ctx->type = type;
+        /* TODO: logger */
+
         ctx->methods = methods;
         ctx->conf = config;
-        ctx->user_data = user_data;
 
         ctx->alloc_misc = misc_allocator;
         ctx->alloc_buf = buf_allocator;
@@ -120,59 +116,5 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
         rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
 
-        return 0;
-}
-
-rlc_errno rlc_send(struct rlc_context *ctx, gabs_pbuf buf,
-                   struct rlc_sdu **sdu_out)
-{
-        struct rlc_segment seg;
-        struct rlc_sdu *sdu;
-        rlc_errno status;
-
-        if (!rlc_window_has(&ctx->tx.win, ctx->tx.next_sn)) {
-                return -ENOSPC;
-        }
-
-        sdu = rlc_sdu_alloc(ctx, RLC_TX);
-        if (sdu == NULL) {
-                return -ENOMEM;
-        }
-
-        gabs_pbuf_incref(buf);
-
-        sdu->sn = ctx->tx.next_sn++;
-        sdu->buffer = buf;
-
-        rlc_lock_acquire(&ctx->lock);
-
-        seg.start = 0;
-        seg.end = gabs_pbuf_size(sdu->buffer);
-
-        gabs_log_dbgf(ctx->logger,
-                      "TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32
-                      "->%" PRIu32,
-                      sdu->sn, seg.start, seg.end);
-
-        status = rlc_sdu_seg_insert_all(ctx, sdu, seg);
-        if (status != 0) {
-                rlc_lock_release(&ctx->lock);
-                rlc_sdu_decref(ctx, sdu);
-                gabs_pbuf_decref(buf);
-
-                return status;
-        }
-
-        rlc_sdu_insert(ctx, sdu);
-
-        if (sdu_out != NULL) {
-                *sdu_out = sdu;
-
-                rlc_sdu_incref(sdu);
-        }
-
-        rlc_lock_release(&ctx->lock);
-
-        rlc_backend_tx_request(ctx, false);
         return 0;
 }

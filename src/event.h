@@ -4,8 +4,6 @@
 
 #include <rlc/rlc.h>
 
-#include "utils.h"
-
 RLC_BEGIN_DECL
 
 void rlc_event_fire(struct rlc_context *ctx, struct rlc_event *event);

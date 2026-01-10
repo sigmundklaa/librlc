@@ -104,14 +104,14 @@ rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
                  * one */
                 if (slot != NULL) {
                         left->next = slot->next;
-                        rlc_dealloc(ctx, slot, RLC_ALLOC_SDU_SEGMENT);
+                        rlc_dealloc(ctx, slot);
                 }
 
                 slot = left;
         }
 
         if (slot == NULL) {
-                slot = rlc_alloc(ctx, sizeof(*slot), RLC_ALLOC_SDU_SEGMENT);
+                slot = rlc_alloc(ctx, sizeof(*slot));
                 if (slot == NULL) {
                         rlc_assert(0);
                         return -ENOMEM;
@@ -212,7 +212,7 @@ struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir)
 {
         struct rlc_sdu *sdu;
 
-        sdu = rlc_alloc(ctx, sizeof(*sdu), RLC_ALLOC_SDU);
+        sdu = rlc_alloc(ctx, sizeof(*sdu));
         if (sdu == NULL) {
                 return NULL;
         }
@@ -239,10 +239,10 @@ void rlc_sdu_decref(struct rlc_context *ctx, struct rlc_sdu *sdu)
 
                 for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments,
                                         seg, next)) {
-                        rlc_dealloc(ctx, seg, RLC_ALLOC_SDU_SEGMENT);
+                        rlc_dealloc(ctx, seg);
                 }
 
-                rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);
+                rlc_dealloc(ctx, sdu);
         }
 }
 

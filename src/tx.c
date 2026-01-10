@@ -46,7 +46,7 @@ static void pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 {
         size_t hsize;
 
-        if (ctx->type == RLC_UM && pdu->flags.is_first) {
+        if (ctx->conf->type == RLC_UM && pdu->flags.is_first) {
                 /* If size plus the header can be fit as is both SN and SO can
                  * be omitted */
                 if (max_size - 1 >= pdu->size) {
@@ -74,7 +74,7 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         pdu->sn = sdu->sn;
         pdu->size = segment->seg.end - segment->seg.start;
         if (pdu->size == 0) {
-                rlc_assert(ctx->type == RLC_AM);
+                rlc_assert(ctx->conf->type == RLC_AM);
 
                 sdu->state = RLC_WAIT;
                 return false;
@@ -197,10 +197,10 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
                                 (rlc_errno)ret);
                 }
 
-                if (ctx->type != RLC_AM && pdu.flags.is_last) {
+                if (ctx->conf->type != RLC_AM && pdu.flags.is_last) {
                         rlc_event_tx_done(ctx, sdu);
                         rlc_sdu_remove(ctx, sdu);
-                        rlc_dealloc(ctx, sdu, RLC_ALLOC_SDU);
+                        rlc_dealloc(ctx, sdu);
                 }
 
                 size += (size_t)ret;
@@ -228,4 +228,58 @@ size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
         rlc_lock_release(&ctx->lock);
 
         return size;
+}
+
+rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
+                 struct rlc_sdu **sdu_out)
+{
+        struct rlc_segment seg;
+        struct rlc_sdu *sdu;
+        rlc_errno status;
+
+        if (!rlc_window_has(&ctx->tx.win, ctx->tx.next_sn)) {
+                return -ENOSPC;
+        }
+
+        sdu = rlc_sdu_alloc(ctx, RLC_TX);
+        if (sdu == NULL) {
+                return -ENOMEM;
+        }
+
+        gabs_pbuf_incref(buf);
+
+        sdu->sn = ctx->tx.next_sn++;
+        sdu->buffer = buf;
+
+        rlc_lock_acquire(&ctx->lock);
+
+        seg.start = 0;
+        seg.end = gabs_pbuf_size(sdu->buffer);
+
+        gabs_log_dbgf(ctx->logger,
+                      "TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32
+                      "->%" PRIu32,
+                      sdu->sn, seg.start, seg.end);
+
+        status = rlc_sdu_seg_insert_all(ctx, sdu, seg);
+        if (status != 0) {
+                rlc_lock_release(&ctx->lock);
+                rlc_sdu_decref(ctx, sdu);
+                gabs_pbuf_decref(buf);
+
+                return status;
+        }
+
+        rlc_sdu_insert(ctx, sdu);
+
+        if (sdu_out != NULL) {
+                *sdu_out = sdu;
+
+                rlc_sdu_incref(sdu);
+        }
+
+        rlc_lock_release(&ctx->lock);
+
+        rlc_backend_tx_request(ctx, false);
+        return 0;
 }

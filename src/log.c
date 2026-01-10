@@ -3,9 +3,9 @@
 #include <stdio.h>
 
 #include <rlc/sdu.h>
+#include <rlc/utils.h>
 
 #include "log.h"
-#include "utils.h"
 
 static const char *sdu_state_str(enum rlc_sdu_state state)
 {
