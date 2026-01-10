@@ -9,10 +9,8 @@
 
 #include <rlc/timer.h>
 #include <rlc/rlc.h>
-#include <rlc/sync.h>
 
 #include "timer.h"
-#include "utils.h"
 #include "log.h"
 #include "atomic_mask.h"
 
