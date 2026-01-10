@@ -21,7 +21,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_config *config,
         rlc_errno status;
         (void)memset(ctx, 0, sizeof(*ctx));
 
-        status = rlc_plat_init(&ctx->platform);
+        status = rlc_plat_init(&ctx->platform, ctx);
         if (status != 0) {
                 return status;
         }

@@ -6,9 +6,10 @@
 
 extern int rlc_zephyr_timer_reset(rlc_context *ctx);
 
-rlc_errno rlc_plat_init(rlc_platform *plat)
+rlc_errno rlc_plat_init(rlc_platform *plat, rlc_context *ctx)
 {
         ARG_UNUSED(plat);
+        ARG_UNUSED(ctx);
         return 0;
 }
 
