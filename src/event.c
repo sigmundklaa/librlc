@@ -28,11 +28,11 @@ void rlc_event_rx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
         rlc_event_fire(ctx, &event);
 }
 
-void rlc_event_rx_done_direct(struct rlc_context *ctx, gnb_h *buf)
+void rlc_event_rx_done_direct(struct rlc_context *ctx, gabs_pbuf *buf)
 {
         struct rlc_event event;
 
-        rlc_inff("RX; Full SDU delivered (%zuB)", gnb_size(*buf));
+        rlc_inff("RX; Full SDU delivered (%zuB)", gabs_pbuf_size(*buf));
 
         event.type = RLC_EVENT_RX_DONE_DIRECT;
         event.buf = buf;
@@ -45,7 +45,7 @@ void rlc_event_tx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
         struct rlc_event event;
 
         rlc_inff("TX; SDU %" PRIu32 " transmitted (%zuB)", sdu->sn,
-                 gnb_size(sdu->buffer));
+                 gabs_pbuf_size(sdu->buffer));
 
         event.type = RLC_EVENT_TX_DONE;
         event.sdu = sdu;

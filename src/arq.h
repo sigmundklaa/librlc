@@ -51,10 +51,10 @@ void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu);
  * @param ctx
  * @param pdu
  * @param buf Buffer with status segments following the header
- * @return gnb_h* @p buf (potentially modified).
+ * @return gabs_pbuf* @p buf (potentially modified).
  */
-gnb_h *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                           gnb_h *buf);
+gabs_pbuf *rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
+                             gabs_pbuf *buf);
 
 /**
  * @brief Register @p pdu as being received.

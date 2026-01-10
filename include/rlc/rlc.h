@@ -6,7 +6,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include <gnb/gnb.h>
+#include <gabs/pbuf.h>
+#include <gabs/alloc.h>
 
 #include <rlc/plat.h>
 #include <rlc/decl.h>
@@ -32,13 +33,10 @@ enum rlc_alloc_type {
 };
 
 struct rlc_methods {
-        rlc_errno (*tx_submit)(struct rlc_context *, gnb_h);
+        rlc_errno (*tx_submit)(struct rlc_context *, gabs_pbuf);
         rlc_errno (*tx_request)(struct rlc_context *);
 
         void (*event)(struct rlc_context *, const struct rlc_event *);
-
-        void *(*mem_alloc)(struct rlc_context *, size_t, enum rlc_alloc_type);
-        void (*mem_dealloc)(struct rlc_context *, void *, enum rlc_alloc_type);
 };
 
 enum rlc_sdu_type {
@@ -124,7 +122,8 @@ typedef struct rlc_context {
         struct rlc_sdu *sdus;
         const struct rlc_methods *methods;
 
-        struct gnb_allocator alloc_gnb;
+        const gabs_allocator_h *alloc_buf;
+        const gabs_allocator_h *alloc_misc;
 
         rlc_platform platform;
 
@@ -158,7 +157,7 @@ typedef struct rlc_sdu {
         uint32_t sn;
         unsigned int retx_count; /* Number of retransmissions */
 
-        gnb_h buffer;
+        gabs_pbuf buffer;
 
         rlc_errno tx_status;
         rlc_sem tx_sem;
@@ -215,7 +214,7 @@ struct rlc_event {
 
         union {
                 struct rlc_sdu *sdu;
-                gnb_h *buf; /* RX_DONE_DIRECT */
+                gabs_pbuf *buf; /* RX_DONE_DIRECT */
         };
 };
 
@@ -259,17 +258,19 @@ struct rlc_event {
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *conf,
-                   const struct rlc_methods *methods, void *user_data);
+                   const struct rlc_methods *methods, void *user_data,
+                   const gabs_allocator_h *misc_allocator,
+                   const gabs_allocator_h *buf_allocator);
 
 rlc_errno rlc_deinit(struct rlc_context *ctx);
 
 rlc_errno rlc_reset(struct rlc_context *ctx);
 
-rlc_errno rlc_send(rlc_context *ctx, gnb_h buf, struct rlc_sdu **sdu);
+rlc_errno rlc_send(rlc_context *ctx, gabs_pbuf buf, struct rlc_sdu **sdu);
 
 size_t rlc_tx_avail(struct rlc_context *ctx, size_t size);
 
-void rlc_rx_submit(struct rlc_context *ctx, gnb_h buf);
+void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf);
 
 static inline void *rlc_user_data(struct rlc_context *ctx)
 {

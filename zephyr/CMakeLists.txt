@@ -2,13 +2,15 @@
 zephyr_library()
 zephyr_interface_library_named(rlc_iface)
 
+gabs_require(gabs-mutex gabs-semaphore gabs-log gabs-pbuf)
+
 target_include_directories(
     rlc_iface
     INTERFACE
         ${ZEPHYR_CURRENT_CMAKE_DIR}
         ${ZEPHYR_CURRENT_MODULE_DIR}/include
 )
-target_link_libraries(rlc_iface INTERFACE gnb_iface)
+target_link_libraries(rlc_iface INTERFACE gabs_iface)
 
 zephyr_library_link_libraries(rlc_iface)
 

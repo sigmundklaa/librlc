@@ -16,19 +16,11 @@
 #include "backend.h"
 #include "methods.h"
 
-static void *rlc_alloc_gnb(struct gnb_allocator *allocator, size_t size)
-{
-        return rlc_alloc(allocator->data, size, RLC_ALLOC_BUF);
-}
-
-static void rlc_dealloc_gnb(struct gnb_allocator *allocator, void *mem)
-{
-        return rlc_dealloc(allocator->data, mem, RLC_ALLOC_BUF);
-}
-
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *config,
-                   const struct rlc_methods *methods, void *user_data)
+                   const struct rlc_methods *methods, void *user_data,
+                   const gabs_allocator_h *misc_allocator,
+                   const gabs_allocator_h *buf_allocator)
 {
         rlc_errno status;
         (void)memset(ctx, 0, sizeof(*ctx));
@@ -43,9 +35,8 @@ rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
         ctx->conf = config;
         ctx->user_data = user_data;
 
-        ctx->alloc_gnb.alloc = rlc_alloc_gnb;
-        ctx->alloc_gnb.dealloc = rlc_dealloc_gnb;
-        ctx->alloc_gnb.data = ctx;
+        ctx->alloc_misc = misc_allocator;
+        ctx->alloc_buf = buf_allocator;
 
         rlc_lock_init(&ctx->lock);
 
@@ -126,7 +117,8 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         return 0;
 }
 
-rlc_errno rlc_send(struct rlc_context *ctx, gnb_h buf, struct rlc_sdu **sdu_out)
+rlc_errno rlc_send(struct rlc_context *ctx, gabs_pbuf buf,
+                   struct rlc_sdu **sdu_out)
 {
         struct rlc_segment seg;
         struct rlc_sdu *sdu;
@@ -141,7 +133,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, gnb_h buf, struct rlc_sdu **sdu_out)
                 return -ENOMEM;
         }
 
-        gnb_incref(buf);
+        gabs_pbuf_incref(buf);
 
         sdu->sn = ctx->tx.next_sn++;
         sdu->buffer = buf;
@@ -149,7 +141,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, gnb_h buf, struct rlc_sdu **sdu_out)
         rlc_lock_acquire(&ctx->lock);
 
         seg.start = 0;
-        seg.end = gnb_size(sdu->buffer);
+        seg.end = gabs_pbuf_size(sdu->buffer);
 
         rlc_dbgf("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
                  sdu->sn, seg.start, seg.end);
@@ -158,7 +150,7 @@ rlc_errno rlc_send(struct rlc_context *ctx, gnb_h buf, struct rlc_sdu **sdu_out)
         if (status != 0) {
                 rlc_lock_release(&ctx->lock);
                 rlc_sdu_decref(ctx, sdu);
-                gnb_decref(buf);
+                gabs_pbuf_decref(buf);
 
                 return status;
         }

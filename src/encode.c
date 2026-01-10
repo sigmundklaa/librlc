@@ -132,7 +132,7 @@ static size_t bytes_ceil_(size_t num_bits)
 }
 
 static void encode_status_header_(const struct rlc_context *ctx,
-                                  const struct rlc_pdu *pdu, gnb_h *buf)
+                                  const struct rlc_pdu *pdu, gabs_pbuf *buf)
 {
         size_t full_width;
         size_t sn_width;
@@ -152,11 +152,11 @@ static void encode_status_header_(const struct rlc_context *ctx,
         bit_copy_mem_(data, pdu->flags.ext, full_width, 1);
         full_width += 1;
 
-        gnb_put(buf, data, bytes_ceil_(full_width));
+        gabs_pbuf_put(buf, data, bytes_ceil_(full_width));
 }
 
 void rlc_pdu_encode(struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                    gnb_h *buf)
+                    gabs_pbuf *buf)
 {
         size_t size;
         size_t full_width;
@@ -213,7 +213,7 @@ void rlc_pdu_encode(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                 }
         }
 
-        gnb_put(buf, data, bytes_ceil_(full_width));
+        gabs_pbuf_put(buf, data, bytes_ceil_(full_width));
 }
 
 static rlc_errno
@@ -242,7 +242,7 @@ decode_status_header_(struct rlc_context *ctx, struct rlc_pdu *pdu,
 }
 
 rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
-                         gnb_h *buf)
+                         gabs_pbuf *buf)
 {
         rlc_errno status;
         ptrdiff_t size;
@@ -259,7 +259,7 @@ rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
 
         sn_size = sn_num_bytes_(ctx->conf->sn_width);
 
-        size = gnb_copy(*buf, header, 0, sizeof(header));
+        size = gabs_pbuf_copy(*buf, header, 0, sizeof(header));
         if (size < sn_size) {
                 if (size >= 0) {
                         return -ENODATA;
@@ -314,7 +314,7 @@ rlc_errno rlc_pdu_decode(struct rlc_context *ctx, struct rlc_pdu *pdu,
 
 done:
         if (status == 0) {
-                gnb_strip_head(buf, rlc_pdu_header_size(ctx, pdu));
+                gabs_pbuf_strip_head(buf, rlc_pdu_header_size(ctx, pdu));
         }
 
         return status;
@@ -337,7 +337,7 @@ size_t rlc_pdu_header_size(const struct rlc_context *ctx,
 }
 
 void rlc_status_encode(struct rlc_context *ctx,
-                       const struct rlc_pdu_status *status, gnb_h *buf)
+                       const struct rlc_pdu_status *status, gabs_pbuf *buf)
 {
         size_t full_width;
         size_t sn_width;
@@ -371,11 +371,11 @@ void rlc_status_encode(struct rlc_context *ctx,
                 full_width += 8;
         }
 
-        gnb_put(buf, data, bytes_ceil_(full_width));
+        gabs_pbuf_put(buf, data, bytes_ceil_(full_width));
 }
 
 rlc_errno rlc_status_decode(struct rlc_context *ctx,
-                            struct rlc_pdu_status *status, gnb_h *buf)
+                            struct rlc_pdu_status *status, gabs_pbuf *buf)
 {
         uint8_t header[RLC_STATUS_MAX_SIZE];
         size_t req_size;
@@ -384,7 +384,7 @@ rlc_errno rlc_status_decode(struct rlc_context *ctx,
 
         req_size = sn_num_bytes_(ctx->conf->sn_width);
 
-        size = gnb_copy(*buf, header, 0, sizeof(header));
+        size = gabs_pbuf_copy(*buf, header, 0, sizeof(header));
         if (size < req_size) {
                 return -ENODATA;
         }
@@ -426,7 +426,7 @@ rlc_errno rlc_status_decode(struct rlc_context *ctx,
                 status->range = header[req_size - 1];
         }
 
-        gnb_strip_head(buf, req_size);
+        gabs_pbuf_strip_head(buf, req_size);
 
         return 0;
 }

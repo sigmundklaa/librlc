@@ -193,11 +193,11 @@ rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
 }
 
 static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                               gnb_h *buf, struct rlc_segment seg)
+                               gabs_pbuf *buf, struct rlc_segment seg)
 {
         struct rlc_segment unique;
         struct rlc_segment cur;
-        gnb_h insertbuf;
+        gabs_pbuf insertbuf;
         size_t offset;
         rlc_errno status;
 
@@ -219,40 +219,42 @@ static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
                  * we don't need to create a new buffer. This is the most likely
                  * case. */
                 if (!rlc_segment_okay(&seg)) {
-                        gnb_incref(*buf);
+                        gabs_pbuf_incref(*buf);
 
                         if (unique.start != cur.start) {
-                                gnb_strip_head(buf, unique.start - cur.start);
+                                gabs_pbuf_strip_head(buf,
+                                                     unique.start - cur.start);
                         }
 
                         if (unique.end != cur.end) {
-                                gnb_strip_tail(buf, cur.end - unique.end);
+                                gabs_pbuf_strip_tail(buf, cur.end - unique.end);
                         }
 
                         insertbuf = *buf;
                 } else {
                         offset = unique.start - cur.start;
-                        insertbuf =
-                                gnb_clone(*buf, offset,
-                                          offset + (unique.end - unique.start),
-                                          &ctx->alloc_gnb);
+                        insertbuf = gabs_pbuf_clone(
+                                *buf, offset,
+                                offset + (unique.end - unique.start),
+                                ctx->alloc_buf);
 
                         /* Strip off the bytes that are now handled by the new
                          * buffer, in addition to the bytes that are already
                          * inserted (which is the difference between the start
                          * of the remaining and the end of the unique). */
-                        gnb_strip_head(buf, offset + gnb_size(insertbuf) +
-                                                    (seg.start - unique.end));
+                        gabs_pbuf_strip_head(
+                                buf, offset + gabs_pbuf_size(insertbuf) +
+                                             (seg.start - unique.end));
                 }
 
-                gnb_chain_at(&sdu->buffer, insertbuf,
-                             rlc_sdu_seg_byte_offset(sdu, unique.start));
+                gabs_pbuf_chain_at(&sdu->buffer, insertbuf,
+                                   rlc_sdu_seg_byte_offset(sdu, unique.start));
         } while (rlc_segment_okay(&seg));
 
         return status;
 }
 
-void rlc_rx_submit(struct rlc_context *ctx, gnb_h buf)
+void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 {
         ptrdiff_t status;
         uint32_t lowest;
@@ -318,11 +320,11 @@ void rlc_rx_submit(struct rlc_context *ctx, gnb_h buf)
         }
 
         rlc_dbgf("RX; SN: %" PRIu32 ", RANGE: %" PRIu32 "->%zu", pdu.sn,
-                 pdu.seg_offset, pdu.seg_offset + gnb_size(buf));
+                 pdu.seg_offset, pdu.seg_offset + gabs_pbuf_size(buf));
 
         segment = (struct rlc_segment){
                 .start = pdu.seg_offset,
-                .end = pdu.seg_offset + gnb_size(buf),
+                .end = pdu.seg_offset + gabs_pbuf_size(buf),
         };
 
         status = insert_buffer(ctx, sdu, &buf, segment);
@@ -387,7 +389,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gnb_h buf)
         }
 exit:
         rlc_backend_tx_request(ctx, true);
-        gnb_decref(buf);
+        gabs_pbuf_decref(buf);
 
         rlc_lock_release(&ctx->lock);
 }

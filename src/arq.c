@@ -2,6 +2,8 @@
 #include <string.h>
 #include <errno.h>
 
+#include <gabs/pbuf.h>
+
 #include <rlc/rlc.h>
 #include <rlc/sdu.h>
 
@@ -65,7 +67,7 @@ static void log_rx_status(struct rlc_pdu_status *status)
 }
 
 static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
-                             gnb_h *buf)
+                             gabs_pbuf *buf)
 {
         struct rlc_pdu_status *last;
         size_t size;
@@ -76,7 +78,7 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
         log_rx_status(last);
 
         size = rlc_status_size(ctx, last);
-        if (size > gnb_tailroom(*buf)) {
+        if (size > gabs_pbuf_tailroom(*buf)) {
                 return -ENOSPC;
         }
 
@@ -86,7 +88,7 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
 }
 
 static ptrdiff_t create_nack_range(struct rlc_context *ctx,
-                                   struct status_pool *pool, gnb_h *buf,
+                                   struct status_pool *pool, gabs_pbuf *buf,
                                    struct rlc_sdu *sdu_next, uint32_t sn)
 {
         struct rlc_pdu_status *cur_status;
@@ -117,7 +119,7 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
 }
 
 static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
-                                    struct status_pool *pool, gnb_h *buf,
+                                    struct status_pool *pool, gabs_pbuf *buf,
                                     struct rlc_sdu *sdu)
 {
         struct rlc_pdu_status *cur_status;
@@ -127,7 +129,7 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
         size_t max_size;
         size_t remaining;
 
-        max_size = gnb_tailroom(*buf);
+        max_size = gabs_pbuf_tailroom(*buf);
         remaining = max_size;
         last = NULL;
 
@@ -314,7 +316,7 @@ static void process_nack_offset(struct rlc_context *ctx,
 
         if (cur->ext.has_offset) {
                 if (cur->offset.end == RLC_STATUS_SO_MAX) {
-                        cur->offset.end = gnb_size(sdu->buffer);
+                        cur->offset.end = gabs_pbuf_size(sdu->buffer);
                 }
 
                 retransmit_sdu(ctx, sdu, &cur->offset);
@@ -334,7 +336,7 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
         }
 
         seg.start = 0;
-        seg.end = gnb_size(sdu->buffer);
+        seg.end = gabs_pbuf_size(sdu->buffer);
 
         retransmit_sdu(ctx, sdu, &cur->offset);
 }
@@ -355,7 +357,7 @@ static void process_nack_range(struct rlc_context *ctx,
 
                 if (rlc_window_has(&nack_win, sdu->sn)) {
                         seg.start = 0;
-                        seg.end = gnb_size(sdu->buffer);
+                        seg.end = gabs_pbuf_size(sdu->buffer);
 
                         /* NOTE: May remove SDU */
                         retransmit_sdu(ctx, sdu, &seg);
@@ -378,7 +380,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         struct rlc_pdu pdu;
         struct rlc_sdu *sdu;
         struct status_pool pool;
-        gnb_h buf;
+        gabs_pbuf buf;
         ptrdiff_t bytes;
         uint32_t next_sn;
 
@@ -387,8 +389,8 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
 
         next_sn = rlc_window_base(&ctx->rx.win);
 
-        buf = gnb_new(&ctx->alloc_gnb, max_size);
-        if (!gnb_okay(buf)) {
+        buf = gabs_pbuf_new(ctx->alloc_buf, max_size);
+        if (!gabs_pbuf_okay(buf)) {
                 return -ENOMEM;
         }
 
@@ -599,7 +601,7 @@ void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
 }
 
 void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
-                       gnb_h *buf)
+                       gabs_pbuf *buf)
 {
         size_t offset;
         rlc_errno status;
@@ -609,7 +611,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         rlc_wrnf("Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32
                  ", %zu",
-                 pdu->sn, ctx->poll_sn, gnb_size(*buf));
+                 pdu->sn, ctx->poll_sn, gabs_pbuf_size(*buf));
 
         if (pdu->sn > ctx->poll_sn) {
                 stop_poll_retransmit(ctx);

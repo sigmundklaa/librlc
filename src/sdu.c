@@ -239,7 +239,7 @@ void rlc_sdu_decref(struct rlc_context *ctx, struct rlc_sdu *sdu)
         struct rlc_sdu_segment *seg;
 
         if (--sdu->refcount == 0) {
-                gnb_decref(sdu->buffer);
+                gabs_pbuf_decref(sdu->buffer);
 
                 for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments,
                                         seg, next)) {

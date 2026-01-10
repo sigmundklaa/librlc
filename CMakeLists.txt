@@ -5,29 +5,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-if(NOT RLC_GNB_REPOSITORY)
-    set(RLC_GNB_REPOSITORY git@github.com:sigmundklaa/libgnb.git)
-endif()
-
-if(NOT RLC_GNB_TAG)
-    set(RLC_GNB_TAG main)
+if(NOT GABS_LIBRARY)
+    message(FATAL_ERROR "Gabs not found")
 endif()
 
 option(RLC_LINUX "Compile for Linux" ON)
 
 add_library(rlc)
-include(FetchContent)
 
 target_include_directories(rlc PUBLIC include)
+target_link_libraries(rlc PUBLIC ${GABS_LIBRARY})
 
-FetchContent_Declare(
-    gnb-git
-    GIT_REPOSITORY ${RLC_GNB_REPOSITORY}
-    GIT_TAG ${RLC_GNB_TAG}
-)
-FetchContent_MakeAvailable(gnb-git)
-
-target_link_libraries(rlc PUBLIC gnb)
+gabs_require(gabs-mutex gabs-semaphore gabs-log gabs-pbuf)
 
 add_subdirectory(src)
 
@@ -42,6 +31,3 @@ endif()
 if(RLC_LINUX)
     add_subdirectory(linux)
 endif()
-
-unset(CACHE{RLC_GNB_REPOSITORY})
-unset(CACHE{RLC_GNB_TAG})

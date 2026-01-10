@@ -21,7 +21,7 @@ static inline rlc_errno rlc_tx_request(struct rlc_context *ctx)
         return methods->tx_request(ctx);
 }
 
-static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx, gnb_h buf)
+static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 {
         const struct rlc_methods *methods = ctx->methods;
         if (methods->tx_submit == NULL) {
@@ -34,13 +34,10 @@ static inline rlc_errno rlc_tx_submit(struct rlc_context *ctx, gnb_h buf)
 static inline void *rlc_alloc(struct rlc_context *ctx, size_t size,
                               enum rlc_alloc_type type)
 {
-        const struct rlc_methods *methods = ctx->methods;
         void *mem;
-        if (methods->mem_alloc == NULL) {
+        if (gabs_alloc(ctx->alloc_misc, size, &mem) != 0) {
                 return NULL;
         }
-
-        mem = methods->mem_alloc(ctx, size, type);
 
         return mem;
 }
@@ -48,12 +45,7 @@ static inline void *rlc_alloc(struct rlc_context *ctx, size_t size,
 static inline void rlc_dealloc(struct rlc_context *ctx, void *mem,
                                enum rlc_alloc_type type)
 {
-        const struct rlc_methods *methods = ctx->methods;
-        if (methods->mem_dealloc == NULL) {
-                return;
-        }
-
-        methods->mem_dealloc(ctx, mem, type);
+        (void)gabs_dealloc(ctx->alloc_misc, mem);
 }
 
 RLC_END_DECL

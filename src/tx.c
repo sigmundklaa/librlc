@@ -14,16 +14,16 @@
 static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              struct rlc_sdu *sdu, size_t max_size)
 {
-        gnb_h buf;
+        gabs_pbuf buf;
         ptrdiff_t ret;
 
-        if (pdu->seg_offset + pdu->size > gnb_size(sdu->buffer)) {
+        if (pdu->seg_offset + pdu->size > gabs_pbuf_size(sdu->buffer)) {
                 return -ENODATA;
         }
 
         rlc_arq_tx_register(ctx, pdu);
-        buf = gnb_view(sdu->buffer, pdu->seg_offset, pdu->size,
-                       &ctx->alloc_gnb);
+        buf = gabs_pbuf_view(sdu->buffer, pdu->seg_offset, pdu->size,
+                             ctx->alloc_buf);
 
         ret = rlc_backend_tx_submit(ctx, pdu, buf);
 
