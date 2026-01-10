@@ -9,6 +9,7 @@
 #include <gabs/pbuf.h>
 #include <gabs/alloc.h>
 #include <gabs/mutex.h>
+#include <gabs/log.h>
 
 #include <rlc/plat.h>
 #include <rlc/decl.h>
@@ -115,6 +116,8 @@ typedef struct rlc_context {
         bool force_poll;
 
         gabs_mutex lock;
+
+        const gabs_logger_h *logger;
 
         /* Generate status PDU on next available opportunity. AM only*/
         bool gen_status;

@@ -44,7 +44,7 @@ static size_t status_count(struct status_pool *pool)
 
 static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
 {
-        rlc_dbgf("Retransmitting poll");
+        gabs_log_dbgf(ctx->logger, "Retransmitting poll");
 
         ctx->force_poll = true;
 
@@ -54,16 +54,19 @@ static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
 /* Callback is not necessary, we only use the timer for the state */
 static void alarm_status_prohibit(rlc_timer timer, struct rlc_context *ctx)
 {
-        rlc_dbgf("Status prohibit expired");
+        gabs_log_dbgf(ctx->logger, "Status prohibit expired");
 
         rlc_backend_tx_request(ctx, false);
 }
 
-static void log_rx_status(struct rlc_pdu_status *status)
+static void log_rx_status(const gabs_logger_h *logger,
+                          struct rlc_pdu_status *status)
 {
-        rlc_dbgf("RX AM STATUS; Detected missing; SN: "
-                 "%" PRIu32 ", RANGE:  %" PRIu32 "->%" PRIu32,
-                 status->nack_sn, status->offset.start, status->offset.end);
+        gabs_log_dbgf(logger,
+                      "RX AM STATUS; Detected missing; SN: "
+                      "%" PRIu32 ", RANGE:  %" PRIu32 "->%" PRIu32,
+                      status->nack_sn, status->offset.start,
+                      status->offset.end);
 }
 
 static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
@@ -75,7 +78,7 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
         last = status_last(pool);
         last->ext.has_more = 1;
 
-        log_rx_status(last);
+        log_rx_status(ctx->logger, last);
 
         size = rlc_status_size(ctx, last);
         if (size > gabs_pbuf_tailroom(*buf)) {
@@ -95,8 +98,9 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
         ptrdiff_t ret;
         uint32_t range_diff;
 
-        rlc_dbgf("Generating NACK range: %" PRIu32 "->%" PRIu32, sn,
-                 sdu_next->sn);
+        gabs_log_dbgf(ctx->logger,
+                      "Generating NACK range: %" PRIu32 "->%" PRIu32, sn,
+                      sdu_next->sn);
         rlc_assert(sdu_next->sn >= sn);
 
         ret = 0;
@@ -165,8 +169,8 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                         cur_status->offset.end = RLC_STATUS_SO_MAX;
                 }
 
-                rlc_dbgf("%" PRIu32 "->%" PRIu32, cur_status->offset.start,
-                         cur_status->offset.end);
+                gabs_log_dbgf(ctx->logger, "%" PRIu32 "->%" PRIu32,
+                              cur_status->offset.start, cur_status->offset.end);
 
                 /* Encode the last status instead of the current
                  * one, so that the E1 bit can be set
@@ -203,7 +207,7 @@ static void tx_win_shift(struct rlc_context *ctx)
         }
 
         rlc_window_move_to(&ctx->tx.win, lowest);
-        rlc_dbgf("TX AM: TX_NEXT_ACK=%" PRIu32, lowest);
+        gabs_log_dbgf(ctx->logger, "TX AM: TX_NEXT_ACK=%" PRIu32, lowest);
 }
 
 static void tx_ack(struct rlc_context *ctx, uint16_t sn)
@@ -211,7 +215,7 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
         struct rlc_sdu *sdu;
         struct rlc_sdu **lastp;
 
-        rlc_dbgf("TX AM STATUS ACK; ACK_SN: %" PRIu32, sn);
+        gabs_log_dbgf(ctx->logger, "TX AM STATUS ACK; ACK_SN: %" PRIu32, sn);
 
         lastp = &ctx->sdus;
 
@@ -276,19 +280,24 @@ static void retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
                 return;
         } else if (status != 0) {
-                rlc_errf("Unable to insert segment: %" RLC_PRI_ERRNO, status);
+                gabs_log_errf(ctx->logger,
+                              "Unable to insert segment: %" RLC_PRI_ERRNO,
+                              status);
                 rlc_assert(0);
 
                 return;
         }
 
-        rlc_dbgf("Marking SDU SN=%" PRIu32 " for (re)transmission", sdu->sn);
+        gabs_log_dbgf(ctx->logger,
+                      "Marking SDU SN=%" PRIu32 " for (re)transmission",
+                      sdu->sn);
 
         sdu->state = RLC_READY;
         sdu->retx_count++;
 
         if (sdu->retx_count >= ctx->conf->max_retx_threshhold) {
-                rlc_errf("Transmit failed; exceeded retry limit");
+                gabs_log_errf(ctx->logger,
+                              "Transmit failed; exceeded retry limit");
 
                 rlc_event_tx_fail(ctx, sdu);
                 rlc_sdu_remove(ctx, sdu);
@@ -303,7 +312,7 @@ static void process_nack_offset(struct rlc_context *ctx,
 
         sdu = rlc_sdu_get(ctx, cur->nack_sn, RLC_TX);
         if (sdu == NULL) {
-                rlc_errf("Unrecognized SN: %u", cur->nack_sn);
+                gabs_log_errf(ctx->logger, "Unrecognized SN: %u", cur->nack_sn);
 
                 return;
         }
@@ -328,7 +337,8 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
 
         sdu = rlc_sdu_get(ctx, cur->nack_sn, RLC_TX);
         if (sdu == NULL) {
-                rlc_errf("Unknown SDU: %" PRIu32, cur->nack_sn);
+                gabs_log_errf(ctx->logger, "Unknown SDU: %" PRIu32,
+                              cur->nack_sn);
 
                 return;
         }
@@ -401,8 +411,10 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
                         bytes = create_nack_range(ctx, &pool, &buf, sdu,
                                                   next_sn);
                         if (bytes == -ENOSPC) {
-                                rlc_wrnf("Unable to transmit full status: MTU "
-                                         "too low");
+                                gabs_log_wrnf(
+                                        ctx->logger,
+                                        "Unable to transmit full status: MTU "
+                                        "too low");
                                 break;
                         }
 
@@ -412,8 +424,10 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
                 if (sdu->state != RLC_DONE) {
                         bytes = create_nack_offset(ctx, &pool, &buf, sdu);
                         if (bytes == -ENOSPC) {
-                                rlc_wrnf("Unable to transmit full status: MTU "
-                                         "too low");
+                                gabs_log_wrnf(
+                                        ctx->logger,
+                                        "Unable to transmit full status: MTU "
+                                        "too low");
                                 break;
                         }
 
@@ -441,18 +455,21 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         status = rlc_timer_start(ctx->t_status_prohibit,
                                  ctx->conf->time_status_prohibit_us);
         if (status != 0) {
-                rlc_errf("Unable to start t-statusProhibit: %" RLC_PRI_ERRNO,
-                         status);
+                gabs_log_errf(
+                        ctx->logger,
+                        "Unable to start t-statusProhibit: %" RLC_PRI_ERRNO,
+                        status);
 
                 rlc_assert(0);
         }
 
-        rlc_dbgf("Submitting status PDU: SN=%i", pdu.sn);
+        gabs_log_dbgf(ctx->logger, "Submitting status PDU: SN=%i", pdu.sn);
 
         ret = rlc_backend_tx_submit(ctx, &pdu, buf);
         if (ret < 0) {
-                rlc_errf("Submitting status failed: %" RLC_PRI_ERRNO,
-                         (rlc_errno)ret);
+                gabs_log_errf(ctx->logger,
+                              "Submitting status failed: %" RLC_PRI_ERRNO,
+                              (rlc_errno)ret);
 
                 ret = 0;
         }
@@ -514,15 +531,19 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
                 header_size = rlc_pdu_header_size(ctx, &pdu);
                 if (header_size > max_size) {
                         /* TODO: issue tx request? */
-                        rlc_errf("Transmit window can not fit minimal header; "
-                                 "needs %zu, has %zu",
-                                 header_size, max_size);
+                        gabs_log_errf(
+                                ctx->logger,
+                                "Transmit window can not fit minimal header; "
+                                "needs %zu, has %zu",
+                                header_size, max_size);
                         return ret;
                 }
 
                 sdu = highest_sn_submitted(ctx);
                 if (sdu == NULL) {
-                        rlc_wrnf("Unable to get SDU to retransmit poll with");
+                        gabs_log_wrnf(
+                                ctx->logger,
+                                "Unable to get SDU to retransmit poll with");
                         return ret;
                 }
 
@@ -607,9 +628,10 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         offset = rlc_pdu_header_size(ctx, pdu);
 
-        rlc_wrnf("Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32
-                 ", %zu",
-                 pdu->sn, ctx->poll_sn, gabs_pbuf_size(*buf));
+        gabs_log_wrnf(ctx->logger,
+                      "Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32
+                      ", %zu",
+                      pdu->sn, ctx->poll_sn, gabs_pbuf_size(*buf));
 
         if (pdu->sn > ctx->poll_sn) {
                 stop_poll_retransmit(ctx);
@@ -619,10 +641,12 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         /* Iterate over every status */
         while ((status = rlc_status_decode(ctx, &cur, buf)) == 0) {
-                rlc_dbgf("TX AM STATUS; NACK_SN: %" PRIu32 ", OFFSET: %" PRIu32
-                         "->%" PRIu32 ", RANGE: %" PRIu32,
-                         cur.nack_sn, cur.offset.start, cur.offset.end,
-                         cur.range);
+                gabs_log_dbgf(ctx->logger,
+                              "TX AM STATUS; NACK_SN: %" PRIu32
+                              ", OFFSET: %" PRIu32 "->%" PRIu32
+                              ", RANGE: %" PRIu32,
+                              cur.nack_sn, cur.offset.start, cur.offset.end,
+                              cur.range);
 
                 if (cur.ext.has_range) {
                         process_nack_range(ctx, &cur);

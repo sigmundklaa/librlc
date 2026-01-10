@@ -85,7 +85,7 @@ static bool should_stop_reassembly(struct rlc_context *ctx)
 
 static void deliver_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
-        rlc_inff("Delivering SDU %i", sdu->sn);
+        gabs_log_inff(ctx->logger, "Delivering SDU %i", sdu->sn);
 
         rlc_event_rx_done(ctx, sdu);
         rlc_sdu_remove(ctx, sdu);
@@ -94,7 +94,7 @@ static void deliver_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
 
 static void drop_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
-        rlc_wrnf("Dropping SDU %i", sdu->sn);
+        gabs_log_wrnf(ctx->logger, "Dropping SDU %i", sdu->sn);
 
         rlc_event_rx_drop(ctx, sdu);
         rlc_sdu_remove(ctx, sdu);
@@ -106,7 +106,7 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
         struct rlc_sdu *sdu;
         uint32_t lowest;
 
-        rlc_dbgf("Reassembly alarm");
+        gabs_log_dbgf(ctx->logger, "Reassembly alarm");
 
         lowest = ctx->rx.next_highest;
 
@@ -267,7 +267,8 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 
         status = rlc_pdu_decode(ctx, &pdu, &buf);
         if (status != 0) {
-                rlc_errf("Decode failed: %" RLC_PRI_ERRNO, (rlc_errno)status);
+                gabs_log_errf(ctx->logger, "Decode failed: %" RLC_PRI_ERRNO,
+                              (rlc_errno)status);
                 goto exit;
         }
 
@@ -291,19 +292,23 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 
         if (sdu == NULL) {
                 if (!rlc_window_has(&ctx->rx.win, pdu.sn)) {
-                        rlc_wrnf("RX; SN %" PRIu32
-                                 " outside RX window (%" PRIu32 "->%" PRIu32
-                                 "), dropping (highest_status=%" PRIu32 ")",
-                                 pdu.sn, rlc_window_base(&ctx->rx.win),
-                                 rlc_window_end(&ctx->rx.win),
-                                 ctx->rx.highest_ack);
+                        gabs_log_wrnf(
+                                ctx->logger,
+                                "RX; SN %" PRIu32 " outside RX window (%" PRIu32
+                                "->%" PRIu32
+                                "), dropping (highest_status=%" PRIu32 ")",
+                                pdu.sn, rlc_window_base(&ctx->rx.win),
+                                rlc_window_end(&ctx->rx.win),
+                                ctx->rx.highest_ack);
                         goto exit;
                 }
 
                 sdu = rlc_sdu_alloc(ctx, RLC_RX);
                 if (sdu == NULL) {
-                        rlc_errf("RX; SDU alloc failed (%" RLC_PRI_ERRNO ")",
-                                 -ENOMEM);
+                        gabs_log_errf(ctx->logger,
+                                      "RX; SDU alloc failed (%" RLC_PRI_ERRNO
+                                      ")",
+                                      -ENOMEM);
                         goto exit;
                 }
 
@@ -314,14 +319,16 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
         }
 
         if (sdu->state != RLC_READY) {
-                rlc_wrnf("RX; Received SN=%" PRIu32
-                         " when not ready, discarding",
-                         sdu->sn);
+                gabs_log_wrnf(ctx->logger,
+                              "RX; Received SN=%" PRIu32
+                              " when not ready, discarding",
+                              sdu->sn);
                 goto exit;
         }
 
-        rlc_dbgf("RX; SN: %" PRIu32 ", RANGE: %" PRIu32 "->%zu", pdu.sn,
-                 pdu.seg_offset, pdu.seg_offset + gabs_pbuf_size(buf));
+        gabs_log_dbgf(ctx->logger,
+                      "RX; SN: %" PRIu32 ", RANGE: %" PRIu32 "->%zu", pdu.sn,
+                      pdu.seg_offset, pdu.seg_offset + gabs_pbuf_size(buf));
 
         segment = (struct rlc_segment){
                 .start = pdu.seg_offset,
@@ -330,8 +337,9 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 
         status = insert_buffer(ctx, sdu, &buf, segment);
         if (status != 0) {
-                rlc_errf("Buffer insertion failed: %" RLC_PRI_ERRNO,
-                         (rlc_errno)status);
+                gabs_log_errf(ctx->logger,
+                              "Buffer insertion failed: %" RLC_PRI_ERRNO,
+                              (rlc_errno)status);
                 goto exit;
         }
 
@@ -343,10 +351,11 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 ctx->rx.next_highest = sdu->sn + 1;
         }
 
-        rlc_log_sdu(sdu);
+        rlc_log_sdu(ctx->logger, sdu);
 
         if (rlc_sdu_is_rx_done(sdu)) {
-                rlc_inff("RX; SN: %" PRIu32 " completed", sdu->sn);
+                gabs_log_inff(ctx->logger, "RX; SN: %" PRIu32 " completed",
+                              sdu->sn);
 
                 /* In acknowledged mode, we must wait until after receiving
                  * the status before deallocating. */
@@ -373,7 +382,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
         if (ctx->type == RLC_AM || ctx->type == RLC_UM) {
                 if (rlc_timer_active(ctx->t_reassembly) &&
                     should_stop_reassembly(ctx)) {
-                        rlc_dbgf("Stopping t-Reassembly");
+                        gabs_log_dbgf(ctx->logger, "Stopping t-Reassembly");
                         (void)rlc_timer_stop(ctx->t_reassembly);
                 }
 
@@ -381,7 +390,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                  * case. */
                 if (!rlc_timer_active(ctx->t_reassembly) &&
                     should_start_reassembly(ctx)) {
-                        rlc_dbgf("Starting t-Reassembly");
+                        gabs_log_dbgf(ctx->logger, "Starting t-Reassembly");
 
                         ctx->rx.next_status_trigger = ctx->rx.next_highest;
                         (void)rlc_timer_start(ctx->t_reassembly,

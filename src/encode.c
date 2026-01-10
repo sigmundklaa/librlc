@@ -225,7 +225,7 @@ decode_status_header_(struct rlc_context *ctx, struct rlc_pdu *pdu,
         /* CPT is reserved and must always be zero */
         cpt = (header[0] >> 4) & 0x7;
         if (cpt != 0) {
-                rlc_errf("CPT is non-zero: %d", cpt);
+                gabs_log_errf(ctx->logger, "CPT is non-zero: %d", cpt);
                 return -ENOTSUP;
         }
 

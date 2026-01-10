@@ -126,17 +126,19 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 status = rlc_timer_restart(ctx->t_poll_retransmit,
                                            ctx->conf->time_poll_retransmit_us);
                 if (status == 0) {
-                        rlc_dbgf("Started t-PollRetransmit");
+                        gabs_log_dbgf(ctx->logger, "Started t-PollRetransmit");
                 } else {
-                        rlc_errf("Unable to start t-PollRetransmit: "
-                                 "%" RLC_PRI_ERRNO,
-                                 status);
+                        gabs_log_errf(ctx->logger,
+                                      "Unable to start t-PollRetransmit: "
+                                      "%" RLC_PRI_ERRNO,
+                                      status);
                 }
 
-                rlc_dbgf("TX; Polling %" PRIu32 " for status", pdu->sn);
+                gabs_log_dbgf(ctx->logger, "TX; Polling %" PRIu32 " for status",
+                              pdu->sn);
         }
 
-        rlc_log_sdu(sdu);
+        rlc_log_sdu(ctx->logger, sdu);
 
         return true;
 }
@@ -181,14 +183,18 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
                         continue;
                 }
 
-                rlc_dbgf("TX PDU; SN: %" PRIu32 ", range: %" PRIu32 "->"
-                         "%zu",
-                         pdu.sn, pdu.seg_offset, pdu.seg_offset + pdu.size);
+                gabs_log_dbgf(ctx->logger,
+                              "TX PDU; SN: %" PRIu32 ", range: %" PRIu32 "->"
+                              "%zu",
+                              pdu.sn, pdu.seg_offset,
+                              pdu.seg_offset + pdu.size);
 
                 ret = tx_pdu_view(ctx, &pdu, sdu, max_size);
                 if (ret <= 0) {
-                        rlc_errf("PDU submit failed: error %" RLC_PRI_ERRNO,
-                                 (rlc_errno)ret);
+                        gabs_log_errf(
+                                ctx->logger,
+                                "PDU submit failed: error %" RLC_PRI_ERRNO,
+                                (rlc_errno)ret);
                 }
 
                 if (ctx->type != RLC_AM && pdu.flags.is_last) {
@@ -212,7 +218,7 @@ size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
 {
         rlc_lock_acquire(&ctx->lock);
 
-        rlc_dbgf("TX availability for context %p", ctx);
+        gabs_log_dbgf(ctx->logger, "TX availability for context %p", ctx);
 
         size -= rlc_arq_tx_yield(ctx, size);
         if (size > 0) {

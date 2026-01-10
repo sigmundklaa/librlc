@@ -6,8 +6,6 @@
 
 #include <rlc/rlc.h>
 
-#include "log.h"
-
 RLC_BEGIN_DECL
 
 #define rlc_max(a, b)   (((a) > (b)) ? (a) : (b))
@@ -18,8 +16,6 @@ RLC_BEGIN_DECL
 
 #define rlc_panicf(status_, fmt_, ...)                                         \
         do {                                                                   \
-                rlc_errf(fmt_ " (paniced with status %" RLC_PRI_ERRNO ")",     \
-                         ##__VA_ARGS__, status_);                              \
                 rlc_assert(0);                                                 \
         } while (0)
 

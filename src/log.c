@@ -45,48 +45,51 @@ static const char *fmt_segments(const struct rlc_sdu *sdu, char *buf,
         return buf;
 }
 
-static void log_tx_sdu(const struct rlc_sdu *sdu)
+static void log_tx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
 {
         char buf[128];
 
         (void)memset(buf, 0, sizeof(buf));
 
-        rlc_dbgf("SDU %" PRIu32 ": {\n\t"
-                 "state: %s\n\t"
-                 "rc: %u\n\t"
-                 "retx_count: %u\n\t"
-                 "segments: {\n"
-                 "%s"
-                 "\t}\n"
-                 "}",
-                 sdu->sn, sdu_state_str(sdu->state), sdu->refcount,
-                 sdu->retx_count, fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
+        gabs_log_dbgf(logger,
+                      "SDU %" PRIu32 ": {\n\t"
+                      "state: %s\n\t"
+                      "rc: %u\n\t"
+                      "retx_count: %u\n\t"
+                      "segments: {\n"
+                      "%s"
+                      "\t}\n"
+                      "}",
+                      sdu->sn, sdu_state_str(sdu->state), sdu->refcount,
+                      sdu->retx_count,
+                      fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
 }
 
-static void log_rx_sdu(const struct rlc_sdu *sdu)
+static void log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
 {
         char buf[128];
 
         (void)memset(buf, 0, sizeof(buf));
 
-        rlc_dbgf("SDU %" PRIu32 ": {\n\t"
-                 "state: %s\n\t"
-                 "rc: %u\n\t"
-                 "last_received: %d\n\t"
-                 "segments: {\n"
-                 "%s"
-                 "\t}\n"
-                 "}",
-                 sdu->sn, sdu_state_str(sdu->state), sdu->refcount,
-                 sdu->flags.rx_last_received,
-                 fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
+        gabs_log_dbgf(logger,
+                      "SDU %" PRIu32 ": {\n\t"
+                      "state: %s\n\t"
+                      "rc: %u\n\t"
+                      "last_received: %d\n\t"
+                      "segments: {\n"
+                      "%s"
+                      "\t}\n"
+                      "}",
+                      sdu->sn, sdu_state_str(sdu->state), sdu->refcount,
+                      sdu->flags.rx_last_received,
+                      fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
 }
 
-void rlc_log_sdu(const struct rlc_sdu *sdu)
+void rlc_log_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
 {
         if (sdu->dir == RLC_TX) {
-                log_tx_sdu(sdu);
+                log_tx_sdu(logger, sdu);
         } else {
-                log_rx_sdu(sdu);
+                log_rx_sdu(logger, sdu);
         }
 }

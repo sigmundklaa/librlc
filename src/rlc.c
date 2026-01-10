@@ -15,7 +15,6 @@
 #include "log.h"
 #include "backend.h"
 #include "common.h"
-#include "methods.h"
 
 rlc_errno rlc_init(struct rlc_context *ctx, enum rlc_sdu_type type,
                    const struct rlc_config *config,
@@ -150,8 +149,10 @@ rlc_errno rlc_send(struct rlc_context *ctx, gabs_pbuf buf,
         seg.start = 0;
         seg.end = gabs_pbuf_size(sdu->buffer);
 
-        rlc_dbgf("TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32 "->%" PRIu32,
-                 sdu->sn, seg.start, seg.end);
+        gabs_log_dbgf(ctx->logger,
+                      "TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32
+                      "->%" PRIu32,
+                      sdu->sn, seg.start, seg.end);
 
         status = rlc_sdu_seg_insert_all(ctx, sdu, seg);
         if (status != 0) {
