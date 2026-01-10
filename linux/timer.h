@@ -5,6 +5,7 @@
 #include <pthread.h>
 
 #include <rlc/decl.h>
+#include <gabs/log.h>
 
 RLC_BEGIN_DECL
 
@@ -35,6 +36,7 @@ struct rlc_linux_timer_manager {
         int event_fd; /* Used to wake up the worker thread to
                                 readjust the fd_set */
         atomic_uint work_state;
+        const gabs_logger_h *logger;
 };
 
 RLC_END_DECL

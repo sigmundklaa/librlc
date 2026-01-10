@@ -5,6 +5,7 @@
 #include <sys/eventfd.h>
 #include <errno.h>
 #include <poll.h>
+#include <unistd.h>
 #include <stdatomic.h>
 
 #include <rlc/timer.h>
@@ -40,7 +41,7 @@ static void trigger_reset(struct rlc_linux_timer_manager *man)
         size = write(man->event_fd, &count, sizeof(count));
         rlc_assert(size == sizeof(count));
 
-        rlc_dbgf("Triggering reset");
+        gabs_log_dbgf(man->logger, "Triggering reset");
 }
 
 static void to_itimerspec(struct itimerspec *spec, uint32_t time_us)
@@ -61,8 +62,6 @@ static rlc_errno timer_restart(struct rlc_linux_timer_info *t,
 {
         rlc_errno status;
         struct itimerspec spec;
-        uint64_t dummy;
-        size_t drain_size;
 
         /* Make sure timer does not fire and/or start before we schedule
          * it again. */
@@ -195,7 +194,6 @@ static void *worker_(void *man_arg)
 {
         struct rlc_linux_timer_manager *man;
         int num_ready;
-        size_t i;
         size_t count;
         uint64_t dummy;
         unsigned int state;
@@ -212,7 +210,8 @@ static void *worker_(void *man_arg)
                 state = atomic_load(&man->work_state);
 
                 if (state == WORK_STATE_EXIT) {
-                        rlc_inff("Exiting timer worker thread");
+                        gabs_log_inff(man->logger,
+                                      "Exiting timer worker thread");
                         break;
                 } else if (state == WORK_STATE_RESET) {
                         reset_timers(man);
@@ -244,28 +243,31 @@ static void *worker_(void *man_arg)
 
                 num_ready = poll(pfds, count, -1);
                 if (num_ready < 0) {
-                        rlc_errf("Polling timers returned %" RLC_PRI_ERRNO,
-                                 errno);
+                        gabs_log_errf(man->logger,
+                                      "Polling timers returned %" RLC_PRI_ERRNO,
+                                      errno);
                         continue;
                 }
 
                 pfd = &pfds[0];
                 if (pfd->revents & POLLIN) {
                         /* Reset set of fds being watched */
-                        rlc_dbgf("Timer thread reloaded");
+                        gabs_log_dbgf(man->logger, "Timer thread reloaded");
                         (void)read(pfd->fd, &dummy, sizeof(dummy));
                         continue;
                 }
 
                 for (; pfd < &pfds[count]; pfd++) {
                         if (pfd->revents & POLLIN) {
-                                rlc_dbgf("Timer alarm");
+                                gabs_log_dbgf(man->logger, "Timer alarm");
                                 (void)read(pfd->fd, &dummy, sizeof(dummy));
 
                                 cur = timer_from_fd(man, pfd->fd);
                                 if (cur == NULL) {
-                                        rlc_errf("Unrecognized timer fd: %i",
-                                                 pfd->fd);
+                                        gabs_log_errf(
+                                                man->logger,
+                                                "Unrecognized timer fd: %i",
+                                                pfd->fd);
                                         continue;
                                 }
 
@@ -288,9 +290,12 @@ static void *worker_(void *man_arg)
         return NULL;
 }
 
-int rlc_linux_timer_manager_init(struct rlc_linux_timer_manager *man)
+int rlc_linux_timer_manager_init(struct rlc_linux_timer_manager *man,
+                                 struct rlc_context *ctx)
 {
         int status;
+
+        man->logger = ctx->logger;
 
         man->event_fd = eventfd(0, EFD_SEMAPHORE);
         if (man->event_fd < 0) {
