@@ -13,8 +13,19 @@
 #include "arq.h"
 #include "log.h"
 
-rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_config *config,
-                   const struct rlc_methods *methods,
+static const struct rlc_config default_config = {
+        .type = RLC_AM,
+        .window_size = 10,
+        .pdu_without_poll_max = 3,
+        .byte_without_poll_max = 1500,
+        .time_reassembly_us = 500e3,
+        .time_poll_retransmit_us = 50e3,
+        .time_status_prohibit_us = 5e3,
+        .max_retx_threshhold = 3,
+        .sn_width = RLC_SN_18BIT,
+};
+
+rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
                    const gabs_allocator_h *misc_allocator,
                    const gabs_allocator_h *buf_allocator)
 {
@@ -26,10 +37,8 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_config *config,
                 return status;
         }
 
-        /* TODO: logger */
-
+        ctx->conf = &default_config;
         ctx->methods = methods;
-        ctx->conf = config;
 
         ctx->alloc_misc = misc_allocator;
         ctx->alloc_buf = buf_allocator;
@@ -39,8 +48,8 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_config *config,
                 return status;
         }
 
-        rlc_window_init(&ctx->tx.win, 0, config->window_size);
-        rlc_window_init(&ctx->rx.win, 0, config->window_size);
+        rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
+        rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
 
         status = rlc_arq_init(ctx);
         if (status != 0) {

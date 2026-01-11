@@ -57,7 +57,6 @@ struct rlc_config {
         enum rlc_service_type type;
 
         size_t window_size;
-        size_t buffer_size;
 
         size_t pdu_without_poll_max;
         size_t byte_without_poll_max;
@@ -126,10 +125,31 @@ typedef struct rlc_context {
         rlc_platform platform;
 } rlc_context;
 
-rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_config *conf,
-                   const struct rlc_methods *methods,
+rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
                    const gabs_allocator_h *misc_allocator,
                    const gabs_allocator_h *buf_allocator);
+
+static inline void rlc_set_logger(struct rlc_context *ctx,
+                                  const gabs_logger_h *logger)
+{
+        ctx->logger = logger;
+}
+
+static inline const gabs_logger_h *rlc_get_logger(struct rlc_context *ctx)
+{
+        return ctx->logger;
+}
+
+static inline void rlc_set_config(struct rlc_context *ctx,
+                                  const struct rlc_config *conf)
+{
+        ctx->conf = conf;
+}
+
+static inline const struct rlc_config *rlc_get_config(struct rlc_context *ctx)
+{
+        return ctx->conf;
+}
 
 rlc_errno rlc_deinit(struct rlc_context *ctx);
 
