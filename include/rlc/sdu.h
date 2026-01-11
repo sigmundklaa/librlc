@@ -21,22 +21,25 @@ enum rlc_sn_width {
         RLC_SN_18BIT,
 };
 
+enum rlc_sdu_dir {
+        RLC_TX,
+        RLC_RX,
+};
+
+enum rlc_sdu_state {
+        RLC_READY,
+        RLC_WAIT,
+        RLC_DONE,
+};
+
 struct rlc_sdu_segment {
         struct rlc_segment seg;
         struct rlc_sdu_segment *next;
 };
 
 typedef struct rlc_sdu {
-        enum rlc_sdu_dir {
-                RLC_TX,
-                RLC_RX,
-        } dir;
-
-        enum rlc_sdu_state {
-                RLC_READY,
-                RLC_WAIT,
-                RLC_DONE,
-        } state;
+        enum rlc_sdu_dir dir;
+        enum rlc_sdu_state state;
 
         struct {
                 bool rx_last_received: 1;
