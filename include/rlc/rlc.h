@@ -21,24 +21,10 @@
 #include <rlc/utils.h>
 #include <rlc/rx.h>
 #include <rlc/tx.h>
+#include <rlc/event.h>
+#include <rlc/sched.h>
 
 RLC_BEGIN_DECL
-
-struct rlc_event {
-        enum rlc_event_type {
-                RLC_EVENT_RX_DONE,
-                RLC_EVENT_RX_DONE_DIRECT,
-                RLC_EVENT_RX_FAIL,
-
-                RLC_EVENT_TX_DONE,
-                RLC_EVENT_TX_FAIL
-        } type;
-
-        union {
-                struct rlc_sdu *sdu;
-                gabs_pbuf *buf; /* RX_DONE_DIRECT */
-        };
-};
 
 struct rlc_methods {
         rlc_errno (*tx_submit)(struct rlc_context *, gabs_pbuf);
@@ -115,6 +101,7 @@ typedef struct rlc_context {
         gabs_mutex lock;
 
         struct rlc_sdu *sdus;
+        struct rlc_sched sched;
 
         const struct rlc_methods *methods;
 

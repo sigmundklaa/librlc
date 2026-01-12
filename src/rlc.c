@@ -11,6 +11,7 @@
 #include <rlc/sdu.h>
 
 #include "arq.h"
+#include "common.h"
 #include "log.h"
 
 static const struct rlc_config default_config = {
@@ -48,11 +49,18 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
                 return status;
         }
 
+        status = rlc_sched_init(&ctx->sched);
+        if (status != 0) {
+                (void)gabs_mutex_deinit(&ctx->lock);
+                return status;
+        }
+
         rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
         rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
 
         status = rlc_arq_init(ctx);
         if (status != 0) {
+                (void)rlc_sched_deinit(&ctx->sched);
                 (void)gabs_mutex_deinit(&ctx->lock);
                 return status;
         }
@@ -60,6 +68,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
         status = rlc_rx_init(ctx);
         if (status != 0) {
                 (void)rlc_arq_deinit(ctx);
+                (void)rlc_sched_deinit(&ctx->sched);
                 (void)gabs_mutex_deinit(&ctx->lock);
 
                 return status;
@@ -87,6 +96,11 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
                 return status;
         }
 
+        status = rlc_sched_deinit(&ctx->sched);
+        if (status != 0) {
+                return status;
+        }
+
         status = gabs_mutex_deinit(&ctx->lock);
         if (status != 0) {
                 return status;
@@ -102,10 +116,14 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         rlc_errno status;
         struct rlc_sdu *sdu;
 
+        rlc_lock_acquire(&ctx->lock);
+
         status = rlc_plat_reset(&ctx->platform);
         if (status != 0) {
-                return status;
+                goto exit;
         }
+
+        rlc_sched_reset(&ctx->sched);
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 rlc_sdu_decref(ctx, sdu);
@@ -126,5 +144,8 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
         rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
 
-        return 0;
+exit:
+        rlc_lock_release(&ctx->lock);
+
+        return status;
 }

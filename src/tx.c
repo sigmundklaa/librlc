@@ -5,7 +5,6 @@
 #include <rlc/rlc.h>
 
 #include "encode.h"
-#include "event.h"
 #include "methods.h"
 #include "arq.h"
 #include "backend.h"
@@ -227,6 +226,8 @@ size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
 
         rlc_lock_release(&ctx->lock);
 
+        rlc_sched_yield(&ctx->sched);
+
         return size;
 }
 
@@ -280,6 +281,8 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
 
         rlc_lock_release(&ctx->lock);
 
+        rlc_sched_yield(&ctx->sched);
         rlc_backend_tx_request(ctx, false);
+
         return 0;
 }

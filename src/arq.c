@@ -10,7 +10,6 @@
 #include "backend.h"
 #include "encode.h"
 #include "methods.h"
-#include "event.h"
 #include "log.h"
 
 struct status_pool {

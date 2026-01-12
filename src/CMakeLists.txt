@@ -12,4 +12,5 @@ target_sources(
         rx.c
         tx.c
         backend.c
+        sched.c
 )

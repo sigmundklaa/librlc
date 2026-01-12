@@ -7,7 +7,6 @@
 
 #include "arq.h"
 #include "backend.h"
-#include "event.h"
 #include "encode.h"
 #include "log.h"
 #include "common.h"
@@ -402,4 +401,5 @@ exit:
         gabs_pbuf_decref(buf);
 
         rlc_lock_release(&ctx->lock);
+        rlc_sched_yield(&ctx->sched);
 }
