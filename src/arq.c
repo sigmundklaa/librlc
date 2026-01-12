@@ -626,7 +626,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         offset = rlc_pdu_header_size(ctx, pdu);
 
-        gabs_log_wrnf(ctx->logger,
+        gabs_log_dbgf(ctx->logger,
                       "Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32
                       ", %zu",
                       pdu->sn, ctx->poll_sn, gabs_pbuf_size(*buf));
