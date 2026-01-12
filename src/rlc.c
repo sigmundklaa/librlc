@@ -121,6 +121,7 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         ctx->poll_sn = 0;
         ctx->force_poll = 0;
         ctx->gen_status = 0;
+        ctx->sdus = NULL;
 
         rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
         rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
