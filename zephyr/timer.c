@@ -52,7 +52,7 @@ static void timer_expiry(struct k_work *work)
         dwork = k_work_delayable_from_work(work);
         info = CONTAINER_OF(dwork, struct timer_info, dwork);
 
-        info->callback(info, info->ctx);
+        rlc_timer_alarm(info, info->ctx, info->callback);
 
         if (info->flags & RLC_TIMER_SINGLE) {
                 release(info);
