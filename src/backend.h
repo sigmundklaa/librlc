@@ -22,14 +22,8 @@ ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
 
 /**
  * @brief Request a transmission opportunity from the lower layer.
- *
- * If @p offload is `true`, the request will be offloaded to another thread
- * such that it is safe to call in a recursive context.
- *
- * @param ctx
- * @param offload Whether or not to offload to another thread
  */
-void rlc_backend_tx_request(struct rlc_context *ctx, bool offload);
+void rlc_backend_tx_request(struct rlc_context *ctx);
 
 RLC_END_DECL
 

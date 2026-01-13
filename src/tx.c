@@ -281,8 +281,8 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
 
         rlc_lock_release(&ctx->lock);
 
+        rlc_backend_tx_request(ctx);
         rlc_sched_yield(&ctx->sched);
-        rlc_backend_tx_request(ctx, false);
 
         return 0;
 }

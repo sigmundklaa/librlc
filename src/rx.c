@@ -397,7 +397,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 }
         }
 exit:
-        rlc_backend_tx_request(ctx, true);
+        rlc_backend_tx_request(ctx);
         gabs_pbuf_decref(buf);
 
         rlc_lock_release(&ctx->lock);

@@ -113,7 +113,7 @@ ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
         return size;
 }
 
-void rlc_backend_tx_request(struct rlc_context *ctx, bool offload)
+void rlc_backend_tx_request(struct rlc_context *ctx)
 {
         offload_call(ctx, offload_tx_request, (union offload_arg){0});
 }

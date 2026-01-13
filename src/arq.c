@@ -45,7 +45,7 @@ static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
 
         ctx->force_poll = true;
 
-        rlc_backend_tx_request(ctx, false);
+        rlc_backend_tx_request(ctx);
 }
 
 /* Callback is not necessary, we only use the timer for the state */
@@ -53,7 +53,7 @@ static void alarm_status_prohibit(rlc_timer timer, struct rlc_context *ctx)
 {
         gabs_log_dbgf(ctx->logger, "Status prohibit expired");
 
-        rlc_backend_tx_request(ctx, false);
+        rlc_backend_tx_request(ctx);
 }
 
 static void log_rx_status(const gabs_logger_h *logger,
