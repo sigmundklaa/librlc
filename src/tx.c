@@ -11,6 +11,17 @@
 #include "common.h"
 #include "log.h"
 
+static void print_sdu_buf(const gabs_logger_h *logger, gabs_pbuf buf)
+{
+        gabs_pbuf_ci it;
+
+        gabs_pbuf_ci_foreach(&buf, it)
+        {
+                gabs_log_dbgf(logger, "SDU buf frag: %zu",
+                              gabs_pbuf_ci_size(it));
+        }
+}
+
 static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              struct rlc_sdu *sdu, size_t max_size)
 {
@@ -24,6 +35,10 @@ static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
         rlc_arq_tx_register(ctx, pdu);
         buf = gabs_pbuf_view(sdu->buffer, pdu->seg_offset, pdu->size,
                              ctx->alloc_buf);
+        gabs_log_dbgf(ctx->logger, "Sending PDU: size %zu, buffer size: %zu",
+                      pdu->size, gabs_pbuf_size(buf));
+        print_sdu_buf(ctx->logger, sdu->buffer);
+        print_sdu_buf(ctx->logger, buf);
 
         ret = rlc_backend_tx_submit(ctx, pdu, buf);
 
@@ -39,25 +54,34 @@ static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
  * @param ctx
  * @param pdu
  * @param max_size
+ * @return bool Whether or not PDU is still valid
  */
-static void pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
+static bool pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
                             size_t max_size)
 {
         size_t hsize;
+        size_t diff;
 
         if (ctx->conf->type == RLC_UM && pdu->flags.is_first) {
                 /* If size plus the header can be fit as is both SN and SO can
                  * be omitted */
                 if (max_size - 1 >= pdu->size) {
                         pdu->flags.is_last = 1;
-                        return;
+                        return true;
                 }
         }
 
         hsize = rlc_pdu_header_size(ctx, pdu);
         if (pdu->size + hsize > max_size) {
-                pdu->size -= pdu->size + hsize - max_size;
+                diff = pdu->size + hsize - max_size;
+                if (diff > pdu->size) {
+                        return false;
+                }
+
+                pdu->size -= diff;
         }
+
+        return true;
 }
 
 static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
@@ -82,7 +106,9 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         pdu->seg_offset = segment->seg.start;
         pdu->flags.is_first = pdu->seg_offset == 0;
 
-        pdu_size_adjust(ctx, pdu, size_avail);
+        if (!pdu_size_adjust(ctx, pdu, size_avail)) {
+                return false;
+        }
 
         /* Only the last segment should be updated. Any previous segment
          * is added for retransmission, and should only be updated when
@@ -178,8 +204,9 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
 
                 (void)memset(&pdu, 0, sizeof(pdu));
 
+                /* TODO: Could continue, but needs to prevent forever loop */
                 if (!serve_sdu(ctx, sdu, &pdu, max_size)) {
-                        continue;
+                        break;
                 }
 
                 gabs_log_dbgf(ctx->logger,
