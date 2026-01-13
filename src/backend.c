@@ -47,6 +47,8 @@ static void offload_tx_submit(struct rlc_sched_item *item)
         struct offload_item *offload;
 
         offload = offload_get(item);
+        gabs_log_dbgf(offload->ctx->logger, "Executing TX submit");
+
         status = rlc_tx_submit(offload->ctx, offload->arg.buf);
         if (status != 0) {
                 gabs_log_errf(offload->ctx->logger, "Unable to TX: %i", status);
@@ -61,6 +63,8 @@ static void offload_tx_request(struct rlc_sched_item *item)
         struct offload_item *offload;
 
         offload = offload_get(item);
+        gabs_log_dbgf(offload->ctx->logger, "Executing TX request");
+
         status = rlc_tx_request(offload->ctx);
         if (status != 0) {
                 gabs_log_errf(offload->ctx->logger, "Unable to request TX: %i",
@@ -97,6 +101,8 @@ ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
         ptrdiff_t size;
         gabs_pbuf header;
 
+        gabs_log_dbgf(ctx->logger, "Scheduling TX submit");
+
         header = gabs_pbuf_new(ctx->alloc_buf, RLC_PDU_HEADER_MAX_SIZE);
         if (!gabs_pbuf_okay(header)) {
                 rlc_panicf(ENOMEM, "Buffer alloc");
@@ -115,5 +121,7 @@ ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
 
 void rlc_backend_tx_request(struct rlc_context *ctx)
 {
+        gabs_log_dbgf(ctx->logger, "Scheduling TX request");
+
         offload_call(ctx, offload_tx_request, (union offload_arg){0});
 }
