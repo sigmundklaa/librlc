@@ -104,12 +104,10 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
         uint32_t lowest;
-        uint32_t next;
 
         gabs_log_dbgf(ctx->logger, "Reassembly alarm");
 
         lowest = ctx->rx.next_highest;
-        next = rlc_window_base(&ctx->rx.win);
 
         /* Find the SDU with the lowest SN that is >= RX_Next_status_trigger,
          * and set the highest status to that SN */
@@ -118,13 +116,10 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
                         continue;
                 }
 
-                if (next >= ctx->rx.next_status_trigger &&
-                    sdu->state != RLC_DONE) {
-                        lowest = next;
-                        break;
+                if (sdu->sn >= ctx->rx.next_status_trigger &&
+                    sdu->sn < lowest && sdu->state != RLC_DONE) {
+                        lowest = sdu->sn;
                 }
-
-                next += 1;
         }
 
         ctx->rx.highest_ack = lowest;
@@ -150,40 +145,28 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 
 static uint32_t lowest_sn_not_recv(struct rlc_context *ctx)
 {
-        uint32_t next;
+        uint32_t lowest;
         struct rlc_sdu *cur;
 
-        next = rlc_window_base(&ctx->rx.win);
+        lowest = UINT32_MAX;
 
         for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->dir != RLC_RX) {
-                        continue;
+                if (cur->dir == RLC_RX && cur->sn < lowest &&
+                    !rlc_sdu_is_rx_done(cur)) {
+                        lowest = cur->sn;
                 }
-
-                if (cur->sn != next || cur->state != RLC_DONE) {
-                        return next;
-                }
-
-                next += 1;
         }
 
-        return UINT32_MAX;
+        return lowest;
 }
 
 static void deliver_ready(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
-        uint32_t next;
-
-        next = rlc_window_base(&ctx->rx.win);
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir != RLC_RX) {
                         continue;
-                }
-
-                if (sdu->sn != next) {
-                        break;
                 }
 
                 if (sdu->state != RLC_DONE) {
@@ -191,7 +174,6 @@ static void deliver_ready(struct rlc_context *ctx)
                 }
 
                 deliver_sdu(ctx, sdu);
-                next += 1;
         }
 }
 
