@@ -104,18 +104,27 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
         uint32_t lowest;
+        uint32_t next;
 
         gabs_log_dbgf(ctx->logger, "Reassembly alarm");
 
         lowest = ctx->rx.next_highest;
+        next = rlc_window_base(&ctx->rx.win);
 
         /* Find the SDU with the lowest SN that is >= RX_Next_status_trigger,
          * and set the highest status to that SN */
         for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->sn >= ctx->rx.next_status_trigger &&
-                    sdu->sn < lowest) {
-                        lowest = sdu->sn;
+                if (sdu->dir != RLC_RX) {
+                        continue;
                 }
+
+                if (next >= ctx->rx.next_status_trigger &&
+                    sdu->state != RLC_DONE) {
+                        lowest = next;
+                        break;
+                }
+
+                next += 1;
         }
 
         ctx->rx.highest_ack = lowest;
@@ -141,37 +150,48 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 
 static uint32_t lowest_sn_not_recv(struct rlc_context *ctx)
 {
-        uint32_t lowest;
+        uint32_t next;
         struct rlc_sdu *cur;
 
-        lowest = UINT32_MAX;
+        next = rlc_window_base(&ctx->rx.win);
 
         for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->dir == RLC_RX && cur->sn < lowest &&
-                    !rlc_sdu_is_rx_done(cur)) {
-                        lowest = cur->sn;
+                if (cur->dir != RLC_RX) {
+                        continue;
                 }
+
+                if (cur->sn != next || cur->state != RLC_DONE) {
+                        return next;
+                }
+
+                next += 1;
         }
 
-        return lowest;
+        return UINT32_MAX;
 }
 
-static void highest_ack_update(struct rlc_context *ctx, uint32_t next)
+static void deliver_ready(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
+        uint32_t next;
 
-        ctx->rx.highest_ack = next;
+        next = rlc_window_base(&ctx->rx.win);
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir != RLC_RX) {
                         continue;
                 }
 
-                if (sdu->sn < next) {
-                        rlc_assert(sdu->state == RLC_DONE);
-
-                        deliver_sdu(ctx, sdu);
+                if (sdu->sn != next) {
+                        break;
                 }
+
+                if (sdu->state != RLC_DONE) {
+                        break;
+                }
+
+                deliver_sdu(ctx, sdu);
+                next += 1;
         }
 }
 
@@ -369,9 +389,10 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                         sdu->state = RLC_DONE;
 
                         if (sdu->sn == ctx->rx.highest_ack) {
-                                /* After this call, SDU can not be used */
-                                highest_ack_update(ctx, lowest);
+                                ctx->rx.highest_ack = lowest;
                         }
+
+                        deliver_ready(ctx);
                 } else {
                         rlc_sdu_remove(ctx, sdu);
                         rlc_sdu_decref(ctx, sdu);
