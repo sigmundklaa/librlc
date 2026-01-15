@@ -104,10 +104,12 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
         uint32_t lowest;
+        uint32_t next;
 
         gabs_log_dbgf(ctx->logger, "Reassembly alarm");
 
         lowest = ctx->rx.next_highest;
+        next = rlc_window_base(&ctx->rx.win);
 
         /* Find the SDU with the lowest SN that is >= RX_Next_status_trigger,
          * and set the highest status to that SN */
@@ -116,10 +118,13 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
                         continue;
                 }
 
-                if (sdu->sn >= ctx->rx.next_status_trigger &&
-                    sdu->sn < lowest && sdu->state != RLC_DONE) {
-                        lowest = sdu->sn;
+                if (next >= ctx->rx.next_status_trigger &&
+                    sdu->state != RLC_DONE) {
+                        lowest = next;
+                        break;
                 }
+
+                next += 1;
         }
 
         ctx->rx.highest_ack = lowest;
