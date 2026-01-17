@@ -87,11 +87,14 @@ static void log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
                       fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
 }
 
-static void log_window(struct rlc_context *ctx, enum rlc_sdu_dir dir)
+static void log_window(struct rlc_context *ctx, enum rlc_sdu_dir dir,
+                       struct rlc_window *win)
 {
         struct rlc_sdu *cur;
 
-        gabs_log_dbgf(ctx->logger, "%s window: {", dir == RLC_TX ? "TX" : "RX");
+        gabs_log_dbgf(ctx->logger, "%s window(%" PRIu32 "->%" PRIu32 "): {",
+                      dir == RLC_TX ? "TX" : "RX", rlc_window_base(win),
+                      rlc_window_end(win));
 
         for (rlc_each_node(ctx->sdus, cur, next)) {
                 if (cur->dir == dir) {
@@ -104,12 +107,12 @@ static void log_window(struct rlc_context *ctx, enum rlc_sdu_dir dir)
 
 void rlc_log_tx_window(struct rlc_context *ctx)
 {
-        log_window(ctx, RLC_TX);
+        log_window(ctx, RLC_TX, &ctx->tx.win);
 }
 
 void rlc_log_rx_window(struct rlc_context *ctx)
 {
-        log_window(ctx, RLC_RX);
+        log_window(ctx, RLC_RX, &ctx->rx.win);
 }
 
 void rlc_log_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
