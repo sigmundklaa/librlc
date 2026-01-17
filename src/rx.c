@@ -150,28 +150,40 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 
 static uint32_t lowest_sn_not_recv(struct rlc_context *ctx)
 {
-        uint32_t lowest;
+        uint32_t next;
         struct rlc_sdu *cur;
 
-        lowest = UINT32_MAX;
+        next = rlc_window_base(&ctx->rx.win);
 
         for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->dir == RLC_RX && cur->sn < lowest &&
-                    !rlc_sdu_is_rx_done(cur)) {
-                        lowest = cur->sn;
+                if (cur->dir != RLC_RX) {
+                        continue;
                 }
+
+                if (cur->sn != next || cur->state != RLC_DONE) {
+                        return next;
+                }
+
+                next += 1;
         }
 
-        return lowest;
+        return UINT32_MAX;
 }
 
 static void deliver_ready(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
+        uint32_t next;
+
+        next = rlc_window_base(&ctx->rx.win);
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
                 if (sdu->dir != RLC_RX) {
                         continue;
+                }
+
+                if (sdu->sn != next) {
+                        break;
                 }
 
                 if (sdu->state != RLC_DONE) {
@@ -179,6 +191,7 @@ static void deliver_ready(struct rlc_context *ctx)
                 }
 
                 deliver_sdu(ctx, sdu);
+                next += 1;
         }
 }
 
@@ -367,6 +380,8 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 /* In acknowledged mode, we must wait until after receiving
                  * the status before deallocating. */
                 if (ctx->conf->type == RLC_AM) {
+                        sdu->state = RLC_DONE;
+
                         lowest = rlc_min(lowest_sn_not_recv(ctx),
                                          ctx->rx.next_highest);
 
@@ -376,8 +391,6 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                         if (sdu->sn == rlc_window_base(&ctx->rx.win)) {
                                 rlc_window_move_to(&ctx->rx.win, lowest);
                         }
-
-                        sdu->state = RLC_DONE;
 
                         if (sdu->sn == ctx->rx.highest_ack) {
                                 ctx->rx.highest_ack = lowest;
