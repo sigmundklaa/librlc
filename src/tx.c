@@ -255,6 +255,12 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
         rlc_errno status;
 
         if (!rlc_window_has(&ctx->tx.win, ctx->tx.next_sn)) {
+                gabs_log_errf(ctx->logger,
+                              "TX_Next outside TX window: TX_Next=%" PRIu32
+                              ", window: %" PRIu32 "->%" PRIu32,
+                              ctx->tx.next_sn, rlc_window_base(&ctx->tx.win),
+                              rlc_window_end(&ctx->tx.win));
+
                 return -ENOSPC;
         }
 
