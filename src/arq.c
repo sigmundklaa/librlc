@@ -212,8 +212,9 @@ static void tx_win_shift(struct rlc_context *ctx)
         lowest = ctx->tx.next_sn;
 
         for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->dir == RLC_TX && sdu->sn < lowest) {
+                if (sdu->dir == RLC_TX) {
                         lowest = sdu->sn;
+                        break;
                 }
         }
 
@@ -231,11 +232,14 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
         lastp = &ctx->sdus;
 
         for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir != RLC_TX || sdu->sn >= sn ||
-                    sdu->state != RLC_WAIT) {
+                if (sdu->dir != RLC_TX || sdu->state == RLC_READY) {
                         lastp = &sdu->next;
 
                         continue;
+                }
+
+                if (sdu->sn >= sn) {
+                        break;
                 }
 
                 *lastp = sdu->next;
@@ -309,9 +313,13 @@ static void retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         if (sdu->retx_count >= ctx->conf->max_retx_threshhold) {
                 gabs_log_errf(ctx->logger,
                               "Transmit failed; exceeded retry limit");
+                rlc_sdu_remove(ctx, sdu);
+
+                if (sdu->sn == rlc_window_base(&ctx->tx.win)) {
+                        tx_win_shift(ctx);
+                }
 
                 rlc_event_tx_fail(ctx, sdu);
-                rlc_sdu_remove(ctx, sdu);
                 rlc_sdu_decref(ctx, sdu);
         }
 }
