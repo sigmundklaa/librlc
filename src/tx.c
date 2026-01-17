@@ -273,7 +273,7 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
         seg.start = 0;
         seg.end = gabs_pbuf_size(sdu->buffer);
 
-        gabs_log_dbgf(ctx->logger,
+        gabs_log_inff(ctx->logger,
                       "TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32
                       "->%" PRIu32,
                       sdu->sn, seg.start, seg.end);
