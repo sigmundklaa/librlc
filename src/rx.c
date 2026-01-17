@@ -381,6 +381,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                  * the status before deallocating. */
                 if (ctx->conf->type == RLC_AM) {
                         sdu->state = RLC_DONE;
+                        deliver_ready(ctx);
 
                         lowest = rlc_min(lowest_sn_not_recv(ctx),
                                          ctx->rx.next_highest);
@@ -395,8 +396,6 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                         if (sdu->sn == ctx->rx.highest_ack) {
                                 ctx->rx.highest_ack = lowest;
                         }
-
-                        deliver_ready(ctx);
                 } else {
                         rlc_sdu_remove(ctx, sdu);
                         rlc_sdu_decref(ctx, sdu);
