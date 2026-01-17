@@ -138,6 +138,7 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         ctx->tx.byte_without_poll = 0;
         ctx->poll_sn = 0;
         ctx->force_poll = 0;
+        ctx->status_prohibit = false;
         ctx->gen_status = 0;
         ctx->sdus = NULL;
 

@@ -48,12 +48,26 @@ static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
         rlc_backend_tx_request(ctx);
 }
 
-/* Callback is not necessary, we only use the timer for the state */
 static void alarm_status_prohibit(rlc_timer timer, struct rlc_context *ctx)
 {
         gabs_log_dbgf(ctx->logger, "Status prohibit expired");
 
+        ctx->status_prohibit = false;
+
         rlc_backend_tx_request(ctx);
+}
+
+static rlc_errno start_status_prohibit(struct rlc_context *ctx)
+{
+        rlc_errno status;
+
+        status = rlc_timer_start(ctx->t_status_prohibit,
+                                 ctx->conf->time_status_prohibit_us);
+        if (status == 0) {
+                ctx->status_prohibit = true;
+        }
+
+        return status;
 }
 
 static void log_rx_status(const gabs_logger_h *logger,
@@ -449,8 +463,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
 
         ctx->gen_status = false;
 
-        status = rlc_timer_start(ctx->t_status_prohibit,
-                                 ctx->conf->time_status_prohibit_us);
+        status = start_status_prohibit(ctx);
         if (status != 0) {
                 gabs_log_errf(
                         ctx->logger,
@@ -565,7 +578,7 @@ size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
 
         ret = 0;
 
-        if (ctx->gen_status && !rlc_timer_active(ctx->t_status_prohibit)) {
+        if (ctx->gen_status && !ctx->status_prohibit) {
                 ret += tx_status(ctx, max_size);
         }
 

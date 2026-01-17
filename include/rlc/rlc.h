@@ -91,6 +91,7 @@ typedef struct rlc_context {
         rlc_timer t_reassembly;
         rlc_timer t_poll_retransmit;
         rlc_timer t_status_prohibit;
+        bool status_prohibit; /* t-statusProhibit running */
 
         uint32_t poll_sn;
         bool force_poll;
