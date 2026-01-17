@@ -11,17 +11,6 @@
 #include "common.h"
 #include "log.h"
 
-static void print_sdu_buf(const gabs_logger_h *logger, gabs_pbuf buf)
-{
-        gabs_pbuf_ci it;
-
-        gabs_pbuf_ci_foreach(&buf, it)
-        {
-                gabs_log_dbgf(logger, "SDU buf frag: %zu",
-                              gabs_pbuf_ci_size(it));
-        }
-}
-
 static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              struct rlc_sdu *sdu, size_t max_size)
 {
@@ -37,8 +26,6 @@ static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              ctx->alloc_buf);
         gabs_log_dbgf(ctx->logger, "Sending PDU: size %zu, buffer size: %zu",
                       pdu->size, gabs_pbuf_size(buf));
-        print_sdu_buf(ctx->logger, sdu->buffer);
-        print_sdu_buf(ctx->logger, buf);
 
         ret = rlc_backend_tx_submit(ctx, pdu, buf);
 
