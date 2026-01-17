@@ -5,6 +5,7 @@
 
 #include <rlc/sdu.h>
 #include <rlc/utils.h>
+#include <rlc/rlc.h>
 
 #include "log.h"
 
@@ -84,6 +85,31 @@ static void log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
                       sdu->sn, sdu_state_str(sdu->state), sdu->refcount,
                       sdu->flags.rx_last_received,
                       fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
+}
+
+static void log_window(struct rlc_context *ctx, enum rlc_sdu_dir dir)
+{
+        struct rlc_sdu *cur;
+
+        gabs_log_dbgf(ctx->logger, "%s window: {", dir == RLC_TX ? "TX" : "RX");
+
+        for (rlc_each_node(ctx->sdus, cur, next)) {
+                if (cur->dir == dir) {
+                        rlc_log_sdu(ctx->logger, cur);
+                }
+        }
+
+        gabs_log_dbgf(ctx->logger, "}");
+}
+
+void rlc_log_tx_window(struct rlc_context *ctx)
+{
+        log_window(ctx, RLC_TX);
+}
+
+void rlc_log_rx_window(struct rlc_context *ctx)
+{
+        log_window(ctx, RLC_RX);
 }
 
 void rlc_log_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
