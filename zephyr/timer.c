@@ -123,6 +123,10 @@ rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
                 timeout = K_USEC(delay_us);
         }
 
+        if (k_work_delayable_busy_get(&info->dwork) != 0) {
+                return 0;
+        }
+
         status = k_work_reschedule(&info->dwork, timeout);
         __ASSERT_NO_MSG(status >= 0);
 
