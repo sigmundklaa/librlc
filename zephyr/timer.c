@@ -111,9 +111,8 @@ rlc_errno rlc_plat_timer_uninstall(rlc_timer timer)
         return 0;
 }
 
-rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
+static rlc_errno timer_start(struct timer_info *info, uint32_t delay_us)
 {
-        struct timer_info *info = timer;
         int status;
         k_timeout_t timeout;
 
@@ -123,20 +122,26 @@ rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
                 timeout = K_USEC(delay_us);
         }
 
-        if (k_work_delayable_busy_get(&info->dwork) != 0) {
-                return -EBUSY;
-        }
-
         status = k_work_reschedule(&info->dwork, timeout);
         __ASSERT_NO_MSG(status >= 0);
 
         return 0;
 }
 
+rlc_errno rlc_plat_timer_start(rlc_timer timer, uint32_t delay_us)
+{
+        struct timer_info *info = timer;
+
+        if (k_work_delayable_busy_get(&info->dwork) != 0) {
+                return -EBUSY;
+        }
+
+        return timer_start(info, delay_us);
+}
+
 rlc_errno rlc_plat_timer_restart(rlc_timer timer, uint32_t delay_us)
 {
-        (void)rlc_plat_timer_start(timer, delay_us);
-        return 0;
+        return timer_start(timer, delay_us);
 }
 
 rlc_errno rlc_plat_timer_stop(rlc_timer timer)
