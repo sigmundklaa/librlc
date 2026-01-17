@@ -238,6 +238,8 @@ size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
                 size -= rlc_tx_yield(ctx, size);
         }
 
+        rlc_log_tx_window(ctx);
+
         rlc_lock_release(&ctx->lock);
 
         rlc_sched_yield(&ctx->sched);
