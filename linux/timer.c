@@ -373,7 +373,7 @@ rlc_errno rlc_plat_timer_start(struct rlc_linux_timer_info *t,
 
         /* Already scheduled or running */
         if (mask_get(&t->state, BIT_ACTIVE | BIT_SCHED)) {
-                return 0;
+                return -EBUSY;
         }
 
         status = timer_restart(t, delay_us);
