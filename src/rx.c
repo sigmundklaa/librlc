@@ -358,6 +358,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
         }
 
         rlc_log_sdu(ctx->logger, sdu);
+        rlc_log_rx_window(ctx);
 
         if (rlc_sdu_is_rx_done(sdu)) {
                 gabs_log_inff(ctx->logger, "RX; SN: %" PRIu32 " completed",
@@ -368,6 +369,9 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 if (ctx->conf->type == RLC_AM) {
                         lowest = rlc_min(lowest_sn_not_recv(ctx),
                                          ctx->rx.next_highest);
+
+                        gabs_log_dbgf(ctx->logger,
+                                      "Shifting RX window to %" PRIu32, lowest);
 
                         if (sdu->sn == rlc_window_base(&ctx->rx.win)) {
                                 rlc_window_move_to(&ctx->rx.win, lowest);
