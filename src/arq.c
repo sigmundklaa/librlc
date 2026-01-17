@@ -57,12 +57,12 @@ static void alarm_status_prohibit(rlc_timer timer, struct rlc_context *ctx)
         rlc_backend_tx_request(ctx);
 }
 
-static rlc_errno start_status_prohibit(struct rlc_context *ctx)
+static rlc_errno restart_status_prohibit(struct rlc_context *ctx)
 {
         rlc_errno status;
 
-        status = rlc_timer_start(ctx->t_status_prohibit,
-                                 ctx->conf->time_status_prohibit_us);
+        status = rlc_timer_restart(ctx->t_status_prohibit,
+                                   ctx->conf->time_status_prohibit_us);
         if (status == 0) {
                 ctx->status_prohibit = true;
         }
@@ -463,14 +463,16 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
 
         ctx->gen_status = false;
 
-        status = start_status_prohibit(ctx);
+        status = restart_status_prohibit(ctx);
         if (status != 0) {
                 gabs_log_errf(
                         ctx->logger,
-                        "Unable to start t-statusProhibit: %" RLC_PRI_ERRNO,
+                        "Unable to restart t-statusProhibit: %" RLC_PRI_ERRNO,
                         status);
 
                 rlc_assert(0);
+        } else {
+                gabs_log_dbgf(ctx->logger, "Started t-statusProhibit");
         }
 
         gabs_log_dbgf(ctx->logger, "Submitting status PDU: SN=%i", pdu.sn);
