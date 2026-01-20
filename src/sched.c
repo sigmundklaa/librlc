@@ -3,6 +3,11 @@
 
 #include "common.h"
 
+static struct rlc_sched_item *from_it(rlc_list_it it)
+{
+        return rlc_list_it_item(it, struct rlc_sched_item, list_node);
+}
+
 static void item_dealloc(struct rlc_sched_item *item)
 {
         if (item->dealloc != NULL) {
@@ -12,7 +17,7 @@ static void item_dealloc(struct rlc_sched_item *item)
 
 rlc_errno rlc_sched_init(struct rlc_sched *sched)
 {
-        sched->queue = NULL;
+        rlc_list_init(&sched->queue);
         return gabs_mutex_init(&sched->lock);
 }
 
@@ -24,33 +29,29 @@ rlc_errno rlc_sched_deinit(struct rlc_sched *sched)
 void rlc_sched_reset(struct rlc_sched *sched)
 {
         struct rlc_sched_item *item;
+        rlc_list_it it;
 
         rlc_lock_acquire(&sched->lock);
 
-        for (rlc_each_node_safe(struct rlc_sched_item, sched->queue, item,
-                                next)) {
+        rlc_list_foreach_safe(&sched->queue, it)
+        {
+                item = from_it(it);
                 item_dealloc(item);
         }
 
-        sched->queue = NULL;
-
+        rlc_list_init(&sched->queue);
         rlc_lock_release(&sched->lock);
 }
 
 void rlc_sched_put(struct rlc_sched *sched, struct rlc_sched_item *item)
 {
-        struct rlc_sched_item *cur;
-        struct rlc_sched_item **slot;
+        rlc_list_it it;
 
         rlc_lock_acquire(&sched->lock);
 
-        slot = &sched->queue;
+        rlc_list_foreach(&sched->queue, it){}
 
-        for (rlc_each_node(*slot, cur, next)) {
-                slot = &cur->next;
-        }
-
-        *slot = item;
+        (void)rlc_list_it_put_back(it, &item->list_node);
 
         rlc_lock_release(&sched->lock);
 }
@@ -58,16 +59,14 @@ void rlc_sched_put(struct rlc_sched *sched, struct rlc_sched_item *item)
 void rlc_sched_yield(struct rlc_sched *sched)
 {
         struct rlc_sched_item *item;
+        rlc_list_it it;
 
         rlc_lock_acquire(&sched->lock);
 
-        for (;;) {
-                item = sched->queue;
-                if (item == NULL) {
-                        break;
-                }
-
-                sched->queue = item->next;
+        rlc_list_foreach(&sched->queue, it)
+        {
+                item = from_it(it);
+                (void)rlc_list_it_pop(it, NULL);
 
                 rlc_lock_release(&sched->lock);
 

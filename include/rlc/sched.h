@@ -6,6 +6,7 @@
 
 #include <rlc/decl.h>
 #include <rlc/errno.h>
+#include <rlc/list.h>
 
 RLC_BEGIN_DECL
 
@@ -18,12 +19,11 @@ struct rlc_sched_item {
         rlc_sched_item_fn fn;
         rlc_sched_item_dealloc dealloc;
 
-        struct rlc_sched_item *next;
+        rlc_list_node list_node;
 };
 
 struct rlc_sched {
-        struct rlc_sched_item *queue;
-
+        rlc_list queue;
         gabs_mutex lock;
 };
 
@@ -33,7 +33,8 @@ static inline void rlc_sched_item_init(struct rlc_sched_item *item,
 {
         item->fn = fn;
         item->dealloc = dealloc;
-        item->next = NULL;
+
+        rlc_list_node_init(&item->list_node);
 }
 
 rlc_errno rlc_sched_init(struct rlc_sched *sched);

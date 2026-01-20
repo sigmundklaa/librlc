@@ -25,6 +25,16 @@ typedef struct rlc_list_it {
         bool skip_iter;
 } rlc_list_it;
 
+static inline void rlc_list_init(rlc_list *list)
+{
+        list->head = NULL;
+}
+
+static inline void rlc_list_node_init(rlc_list_node *node)
+{
+        node->next = NULL;
+}
+
 /**
  * @brief Iterate over @p list_, keeping the iterator in @p it_
  *
