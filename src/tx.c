@@ -182,7 +182,7 @@ static struct rlc_sdu *first_sdu_ready(struct rlc_context *ctx)
                 }
         }
 
-        return sdu;
+        return NULL;
 }
 
 size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
