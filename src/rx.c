@@ -87,7 +87,6 @@ static void deliver_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
         gabs_log_inff(ctx->logger, "Delivering SDU %i", sdu->sn);
 
         rlc_event_rx_done(ctx, sdu);
-        rlc_sdu_remove(&ctx->rx.sdus, sdu);
         rlc_sdu_decref(sdu);
 }
 
@@ -96,7 +95,6 @@ static void drop_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
         gabs_log_wrnf(ctx->logger, "Dropping SDU %i", sdu->sn);
 
         rlc_event_rx_drop(ctx, sdu);
-        rlc_sdu_remove(&ctx->rx.sdus, sdu);
         rlc_sdu_decref(sdu);
 }
 
@@ -137,6 +135,8 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
                 if (sdu->sn >= lowest) {
                         break;
                 }
+
+                it = rlc_list_it_pop(it, NULL);
 
                 if (sdu->state == RLC_DONE) {
                         deliver_sdu(ctx, sdu);
