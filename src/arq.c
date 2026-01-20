@@ -209,14 +209,8 @@ static void tx_win_shift(struct rlc_context *ctx)
         struct rlc_sdu *sdu;
         uint32_t lowest;
 
-        lowest = ctx->tx.next_sn;
-
-        for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->dir == RLC_TX) {
-                        lowest = sdu->sn;
-                        break;
-                }
-        }
+        sdu = rlc_sdu_head(&ctx->tx.sdus);
+        lowest = sdu == NULL ? ctx->tx.next_sn : sdu->sn;
 
         rlc_window_move_to(&ctx->tx.win, lowest);
         gabs_log_dbgf(ctx->logger, "TX AM: TX_NEXT_ACK=%" PRIu32, lowest);
@@ -225,16 +219,15 @@ static void tx_win_shift(struct rlc_context *ctx)
 static void tx_ack(struct rlc_context *ctx, uint16_t sn)
 {
         struct rlc_sdu *sdu;
-        struct rlc_sdu **lastp;
+        rlc_list_it it;
 
         gabs_log_dbgf(ctx->logger, "TX AM STATUS ACK; ACK_SN: %" PRIu32, sn);
 
-        lastp = &ctx->sdus;
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir != RLC_TX || sdu->state == RLC_READY) {
-                        lastp = &sdu->next;
-
+                if (sdu->state == RLC_READY) {
                         continue;
                 }
 
@@ -242,14 +235,14 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
                         break;
                 }
 
-                *lastp = sdu->next;
+                it = rlc_list_it_pop(it, NULL);
 
                 if (sdu->sn == rlc_window_base(&ctx->tx.win)) {
                         tx_win_shift(ctx);
                 }
 
                 rlc_event_tx_done(ctx, sdu);
-                rlc_sdu_decref(ctx, sdu);
+                rlc_sdu_decref(sdu);
         }
 }
 
@@ -257,10 +250,14 @@ static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
 {
         struct rlc_sdu *sdu;
         struct rlc_sdu_segment *seg;
+        rlc_list_it it;
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir != RLC_TX || sdu->sn >= sn) {
-                        continue;
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
+
+                if (sdu->sn >= sn) {
+                        break;
                 }
 
                 for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments,
@@ -313,14 +310,14 @@ static void retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         if (sdu->retx_count >= ctx->conf->max_retx_threshhold) {
                 gabs_log_errf(ctx->logger,
                               "Transmit failed; exceeded retry limit");
-                rlc_sdu_remove(ctx, sdu);
+                rlc_sdu_remove(&ctx->tx.sdus, sdu);
 
                 if (sdu->sn == rlc_window_base(&ctx->tx.win)) {
                         tx_win_shift(ctx);
                 }
 
                 rlc_event_tx_fail(ctx, sdu);
-                rlc_sdu_decref(ctx, sdu);
+                rlc_sdu_decref(sdu);
         }
 }
 
@@ -329,7 +326,7 @@ static void process_nack_offset(struct rlc_context *ctx,
 {
         struct rlc_sdu *sdu;
 
-        sdu = rlc_sdu_get(ctx, cur->nack_sn, RLC_TX);
+        sdu = rlc_sdu_get(&ctx->tx.sdus, cur->nack_sn);
         if (sdu == NULL) {
                 gabs_log_errf(ctx->logger, "Unrecognized SN: %u", cur->nack_sn);
 
@@ -354,7 +351,7 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
         struct rlc_sdu *sdu;
         struct rlc_segment seg;
 
-        sdu = rlc_sdu_get(ctx, cur->nack_sn, RLC_TX);
+        sdu = rlc_sdu_get(&ctx->tx.sdus, cur->nack_sn);
         if (sdu == NULL) {
                 gabs_log_errf(ctx->logger, "Unknown SDU: %" PRIu32,
                               cur->nack_sn);
@@ -374,11 +371,15 @@ static void process_nack_range(struct rlc_context *ctx,
         struct rlc_sdu *sdu;
         struct rlc_window nack_win;
         struct rlc_segment seg;
+        rlc_list_it it;
 
         rlc_window_init(&nack_win, cur->nack_sn, cur->range);
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir != RLC_TX || sdu->state == RLC_READY) {
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
+
+                if (sdu->state == RLC_READY) {
                         continue;
                 }
 
@@ -407,6 +408,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         struct rlc_pdu pdu;
         struct rlc_sdu *sdu;
         struct status_pool pool;
+        rlc_list_it it;
         gabs_pbuf buf;
         ptrdiff_t bytes;
         uint32_t next_sn;
@@ -421,10 +423,9 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
                 return -ENOMEM;
         }
 
-        for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->dir != RLC_RX) {
-                        continue;
-                }
+        rlc_list_foreach(&ctx->rx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
 
                 if (sdu->sn != next_sn) {
                         bytes = create_nack_range(ctx, &pool, &buf, sdu,
@@ -501,13 +502,13 @@ static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
 {
         struct rlc_sdu *cur;
         struct rlc_sdu *highest;
+        rlc_list_it it;
 
         highest = NULL;
 
-        for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->dir != RLC_TX) {
-                        continue;
-                }
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                cur = rlc_sdu_from_it(it);
 
                 if (rlc_sdu_submitted(cur) &&
                     (highest == NULL || cur->sn > highest->sn)) {
@@ -602,8 +603,6 @@ size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
 bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
                          const struct rlc_sdu *sdu)
 {
-        const struct rlc_sdu *cur;
-
         if (ctx->conf->type != RLC_AM) {
                 return false;
         }
@@ -617,15 +616,13 @@ bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
                 return true;
         }
 
-        /* Check if tranmission buffer is empty */
-        for (rlc_each_node(sdu, cur, next)) {
-                if (cur->dir != RLC_TX || sdu->segments->next != NULL) {
-                        continue;
-                }
+        /* TODO: What?? */
+        if (sdu->segments->next != NULL) {
+                return false;
+        }
 
-                if (sdu->segments->seg.start < sdu->segments->seg.end) {
-                        return false;
-                }
+        if (sdu->segments->seg.start < sdu->segments->seg.end) {
+                return false;
         }
 
         /* No more buffers to transmit - include poll */

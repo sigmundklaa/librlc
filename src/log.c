@@ -47,7 +47,7 @@ static const char *fmt_segments(const struct rlc_sdu *sdu, char *buf,
         return buf;
 }
 
-static void log_tx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
+void rlc_log_tx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
 {
         char buf[128];
 
@@ -67,7 +67,7 @@ static void log_tx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
                       fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
 }
 
-static void log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
+void rlc_log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
 {
         char buf[128];
 
@@ -87,18 +87,24 @@ static void log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
                       fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
 }
 
-static void log_window(struct rlc_context *ctx, enum rlc_sdu_dir dir,
-                       struct rlc_window *win)
+static void log_window(struct rlc_context *ctx, rlc_sdu_queue *q,
+                       struct rlc_window *win, bool rx)
 {
         struct rlc_sdu *cur;
+        rlc_list_it it;
 
         gabs_log_dbgf(ctx->logger, "%s window(%" PRIu32 "->%" PRIu32 "): {",
-                      dir == RLC_TX ? "TX" : "RX", rlc_window_base(win),
+                      rx ? "RX" : "TX", rlc_window_base(win),
                       rlc_window_end(win));
 
-        for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->dir == dir) {
-                        rlc_log_sdu(ctx->logger, cur);
+        rlc_list_foreach(q, it)
+        {
+                cur = rlc_sdu_from_it(it);
+
+                if (rx) {
+                        rlc_log_rx_sdu(ctx->logger, cur);
+                } else {
+                        rlc_log_tx_sdu(ctx->logger, cur);
                 }
         }
 
@@ -107,19 +113,10 @@ static void log_window(struct rlc_context *ctx, enum rlc_sdu_dir dir,
 
 void rlc_log_tx_window(struct rlc_context *ctx)
 {
-        log_window(ctx, RLC_TX, &ctx->tx.win);
+        log_window(ctx, &ctx->tx.sdus, &ctx->tx.win, false);
 }
 
 void rlc_log_rx_window(struct rlc_context *ctx)
 {
-        log_window(ctx, RLC_RX, &ctx->rx.win);
-}
-
-void rlc_log_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
-{
-        if (sdu->dir == RLC_TX) {
-                log_tx_sdu(logger, sdu);
-        } else {
-                log_rx_sdu(logger, sdu);
-        }
+        log_window(ctx, &ctx->rx.sdus, &ctx->rx.win, true);
 }

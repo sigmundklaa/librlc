@@ -80,11 +80,9 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
 rlc_errno rlc_deinit(struct rlc_context *ctx)
 {
         rlc_errno status;
-        struct rlc_sdu *sdu;
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                rlc_sdu_decref(ctx, sdu);
-        }
+        rlc_sdu_queue_clear(&ctx->tx.sdus);
+        rlc_sdu_queue_clear(&ctx->rx.sdus);
 
         status = rlc_rx_deinit(ctx);
         if (status != 0) {
@@ -114,7 +112,6 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
 rlc_errno rlc_reset(struct rlc_context *ctx)
 {
         rlc_errno status;
-        struct rlc_sdu *sdu;
 
         rlc_lock_acquire(&ctx->lock);
 
@@ -125,9 +122,8 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
 
         rlc_sched_reset(&ctx->sched);
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                rlc_sdu_decref(ctx, sdu);
-        }
+        rlc_sdu_queue_clear(&ctx->tx.sdus);
+        rlc_sdu_queue_clear(&ctx->rx.sdus);
 
         ctx->rx.next_highest = 0;
         ctx->rx.highest_ack = 0;
@@ -140,7 +136,6 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         ctx->force_poll = 0;
         ctx->status_prohibit = false;
         ctx->gen_status = 0;
-        ctx->sdus = NULL;
 
         rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
         rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);

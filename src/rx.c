@@ -21,7 +21,7 @@ static bool should_restart_reassembly(struct rlc_context *ctx)
         }
 
         if (ctx->rx.next_highest == ctx->rx.highest_ack + 1) {
-                sdu = rlc_sdu_get(ctx, ctx->rx.highest_ack, RLC_RX);
+                sdu = rlc_sdu_get(&ctx->rx.sdus, ctx->rx.highest_ack);
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -44,7 +44,7 @@ static bool should_start_reassembly(struct rlc_context *ctx)
         }
 
         if (remaining == 1) {
-                sdu = rlc_sdu_get(ctx, rlc_window_base(&ctx->rx.win), RLC_RX);
+                sdu = rlc_sdu_get(&ctx->rx.sdus, rlc_window_base(&ctx->rx.win));
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -67,7 +67,7 @@ static bool should_stop_reassembly(struct rlc_context *ctx)
         }
 
         if (remaining == 1) {
-                sdu = rlc_sdu_get(ctx, rlc_window_base(&ctx->rx.win), RLC_RX);
+                sdu = rlc_sdu_get(&ctx->rx.sdus, rlc_window_base(&ctx->rx.win));
 
                 if (sdu != NULL && !rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -87,8 +87,8 @@ static void deliver_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
         gabs_log_inff(ctx->logger, "Delivering SDU %i", sdu->sn);
 
         rlc_event_rx_done(ctx, sdu);
-        rlc_sdu_remove(ctx, sdu);
-        rlc_sdu_decref(ctx, sdu);
+        rlc_sdu_remove(&ctx->rx.sdus, sdu);
+        rlc_sdu_decref(sdu);
 }
 
 static void drop_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
@@ -96,8 +96,8 @@ static void drop_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
         gabs_log_wrnf(ctx->logger, "Dropping SDU %i", sdu->sn);
 
         rlc_event_rx_drop(ctx, sdu);
-        rlc_sdu_remove(ctx, sdu);
-        rlc_sdu_decref(ctx, sdu);
+        rlc_sdu_remove(&ctx->rx.sdus, sdu);
+        rlc_sdu_decref(sdu);
 }
 
 static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
@@ -105,6 +105,7 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
         struct rlc_sdu *sdu;
         uint32_t lowest;
         uint32_t next;
+        rlc_list_it it;
 
         gabs_log_dbgf(ctx->logger, "Reassembly alarm");
 
@@ -113,10 +114,9 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
 
         /* Find the SDU with the lowest SN that is >= RX_Next_status_trigger,
          * and set the highest status to that SN */
-        for (rlc_each_node(ctx->sdus, sdu, next)) {
-                if (sdu->dir != RLC_RX) {
-                        continue;
-                }
+        rlc_list_foreach(&ctx->rx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
 
                 if (next >= ctx->rx.next_status_trigger &&
                     sdu->state != RLC_DONE) {
@@ -130,13 +130,18 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
         ctx->rx.highest_ack = lowest;
         rlc_window_move_to(&ctx->rx.win, lowest);
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir == RLC_RX && sdu->sn < lowest) {
-                        if (sdu->state == RLC_DONE) {
-                                deliver_sdu(ctx, sdu);
-                        } else {
-                                drop_sdu(ctx, sdu);
-                        }
+        rlc_list_foreach_safe(&ctx->rx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
+
+                if (sdu->sn >= lowest) {
+                        break;
+                }
+
+                if (sdu->state == RLC_DONE) {
+                        deliver_sdu(ctx, sdu);
+                } else {
+                        drop_sdu(ctx, sdu);
                 }
         }
 
@@ -152,13 +157,13 @@ static uint32_t lowest_sn_not_recv(struct rlc_context *ctx)
 {
         uint32_t next;
         struct rlc_sdu *cur;
+        rlc_list_it it;
 
         next = rlc_window_base(&ctx->rx.win);
 
-        for (rlc_each_node(ctx->sdus, cur, next)) {
-                if (cur->dir != RLC_RX) {
-                        continue;
-                }
+        rlc_list_foreach(&ctx->rx.sdus, it)
+        {
+                cur = rlc_sdu_from_it(it);
 
                 if (cur->sn != next || cur->state != RLC_DONE) {
                         return next;
@@ -174,13 +179,13 @@ static void deliver_ready(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
         uint32_t next;
+        rlc_list_it it;
 
         next = rlc_window_base(&ctx->rx.win);
 
-        for (rlc_each_node_safe(struct rlc_sdu, ctx->sdus, sdu, next)) {
-                if (sdu->dir != RLC_RX) {
-                        continue;
-                }
+        rlc_list_foreach(&ctx->rx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
 
                 if (sdu->sn != next) {
                         break;
@@ -189,6 +194,8 @@ static void deliver_ready(struct rlc_context *ctx)
                 if (sdu->state != RLC_DONE) {
                         break;
                 }
+
+                it = rlc_list_it_pop(it, NULL);
 
                 deliver_sdu(ctx, sdu);
                 next += 1;
@@ -307,7 +314,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 rlc_arq_rx_register(ctx, &pdu);
         }
 
-        sdu = rlc_sdu_get(ctx, pdu.sn, RLC_RX);
+        sdu = rlc_sdu_get(&ctx->rx.sdus, pdu.sn);
 
         if (sdu == NULL) {
                 if (!rlc_window_has(&ctx->rx.win, pdu.sn)) {
@@ -322,7 +329,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                         goto exit;
                 }
 
-                sdu = rlc_sdu_alloc(ctx, RLC_RX);
+                sdu = rlc_sdu_alloc(ctx);
                 if (sdu == NULL) {
                         gabs_log_errf(ctx->logger,
                                       "RX; SDU alloc failed (%" RLC_PRI_ERRNO
@@ -334,7 +341,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 sdu->state = RLC_READY;
                 sdu->sn = pdu.sn;
 
-                rlc_sdu_insert(ctx, sdu);
+                rlc_sdu_insert(&ctx->rx.sdus, sdu);
         }
 
         if (sdu->state != RLC_READY) {
@@ -370,7 +377,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 ctx->rx.next_highest = sdu->sn + 1;
         }
 
-        rlc_log_sdu(ctx->logger, sdu);
+        rlc_log_rx_sdu(ctx->logger, sdu);
         rlc_log_rx_window(ctx);
 
         if (rlc_sdu_is_rx_done(sdu)) {
@@ -397,8 +404,8 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                                 ctx->rx.highest_ack = lowest;
                         }
                 } else {
-                        rlc_sdu_remove(ctx, sdu);
-                        rlc_sdu_decref(ctx, sdu);
+                        rlc_sdu_remove(&ctx->rx.sdus, sdu);
+                        rlc_sdu_decref(sdu);
                 }
         }
 

@@ -10,6 +10,7 @@
 #include <rlc/errno.h>
 #include <rlc/decl.h>
 #include <rlc/segment.h>
+#include <rlc/list.h>
 
 struct rlc_context;
 
@@ -19,11 +20,6 @@ enum rlc_sn_width {
         RLC_SN_6BIT,
         RLC_SN_12BIT,
         RLC_SN_18BIT,
-};
-
-enum rlc_sdu_dir {
-        RLC_TX,
-        RLC_RX,
 };
 
 enum rlc_sdu_state {
@@ -38,7 +34,6 @@ struct rlc_sdu_segment {
 };
 
 typedef struct rlc_sdu {
-        enum rlc_sdu_dir dir;
         enum rlc_sdu_state state;
 
         struct {
@@ -59,30 +54,38 @@ typedef struct rlc_sdu {
         /* RX mode: received segments */
         struct rlc_sdu_segment *segments;
 
-        struct rlc_sdu *next;
+        struct rlc_context *ctx;
+        rlc_list_node list_node;
 } rlc_sdu;
 
+typedef rlc_list rlc_sdu_queue;
+
+#define rlc_sdu_from_it(it_) rlc_list_it_item(it_, struct rlc_sdu, list_node)
+
 /** @brief Allocate SDU with direction @p dir */
-struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, enum rlc_sdu_dir dir);
+struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx);
 
 /** @brief Increase reference count of @p sdu */
 void rlc_sdu_incref(struct rlc_sdu *sdu);
 
 /** @brief Decrease reference count of @p sdu, deallocting if reaching 0 */
-void rlc_sdu_decref(struct rlc_context *ctx, struct rlc_sdu *sdu);
+void rlc_sdu_decref(struct rlc_sdu *sdu);
 
-/** @brief Get SDU with SN=@p sn and direction=@p dir */
-struct rlc_sdu *rlc_sdu_get(struct rlc_context *ctx, uint32_t sn,
-                            enum rlc_sdu_dir dir);
+void rlc_sdu_queue_clear(rlc_sdu_queue *q);
 
-/** @brief Count number of SDUs in SDU list with direction @p dir. */
-size_t rlc_sdu_count(struct rlc_context *ctx, enum rlc_sdu_dir dir);
+static inline struct rlc_sdu *rlc_sdu_head(rlc_sdu_queue *q)
+{
+        return rlc_sdu_from_it(rlc_list_it_init(q));
+}
+
+/** @brief Get SDU with SN=@p sn */
+struct rlc_sdu *rlc_sdu_get(rlc_sdu_queue *queue, uint32_t sn);
 
 /** @brief Insert SDU into SDU list */
-void rlc_sdu_insert(struct rlc_context *ctx, struct rlc_sdu *sdu);
+void rlc_sdu_insert(rlc_sdu_queue *queue, struct rlc_sdu *sdu);
 
 /** @brief Remove SDU from SDU list */
-void rlc_sdu_remove(struct rlc_context *ctx, struct rlc_sdu *sdu);
+void rlc_sdu_remove(rlc_sdu_queue *queue, struct rlc_sdu *sdu);
 
 /**
  * @brief Check if parts of @p sdu has been submitted to the lower layer

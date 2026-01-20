@@ -77,6 +77,7 @@ typedef struct rlc_context {
                 uint32_t next_status_trigger;
 
                 struct rlc_window win;
+                rlc_sdu_queue sdus;
         } rx;
         struct {
                 uint32_t next_sn; /* TX_Next in the spec */
@@ -86,6 +87,7 @@ typedef struct rlc_context {
                 size_t byte_without_poll;
 
                 struct rlc_window win;
+                rlc_sdu_queue sdus;
         } tx;
 
         rlc_timer t_reassembly;
@@ -101,7 +103,6 @@ typedef struct rlc_context {
 
         gabs_mutex lock;
 
-        struct rlc_sdu *sdus;
         struct rlc_sched sched;
 
         const struct rlc_methods *methods;

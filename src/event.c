@@ -30,7 +30,7 @@ static void event_dealloc(struct rlc_sched_item *item)
         case RLC_EVENT_RX_DONE_DIRECT:
                 gabs_pbuf_decref(*event->buf);
         default:
-                rlc_sdu_decref(event->ctx, event->sdu);
+                rlc_sdu_decref(event->sdu);
         }
 
         status = gabs_dealloc(event->ctx->alloc_misc, event);

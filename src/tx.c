@@ -71,12 +71,30 @@ static bool pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         return true;
 }
 
+static void adjust_poll_sn(struct rlc_context *ctx)
+{
+        rlc_list_it it;
+        struct rlc_sdu *sdu;
+
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
+
+                /* Set POLL_SN to the highest SN of the PDUs submitted
+                 * to the lower layer */
+                if ((sdu->segments->seg.start != 0 ||
+                     sdu->segments->next != NULL) &&
+                    sdu->sn > ctx->poll_sn) {
+                        ctx->poll_sn = sdu->sn;
+                }
+        }
+}
+
 static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                       struct rlc_pdu *pdu, size_t size_avail)
 {
         rlc_errno status;
         struct rlc_sdu_segment *segment;
-        struct rlc_sdu *cur;
 
         segment = sdu->segments;
         rlc_assert(segment != NULL);
@@ -122,16 +140,7 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 ctx->tx.pdu_without_poll = 0;
                 ctx->tx.byte_without_poll = 0;
 
-                /* Set POLL_SN to the highest SN of the PDUs submitted
-                 * to the lower layer */
-                for (rlc_each_node(ctx->sdus, cur, next)) {
-                        if (cur->dir == RLC_TX &&
-                            (cur->segments->seg.start != 0 ||
-                             cur->segments->next != NULL) &&
-                            cur->sn > ctx->poll_sn) {
-                                ctx->poll_sn = cur->sn;
-                        }
-                }
+                adjust_poll_sn(ctx);
 
                 sdu->state = RLC_WAIT;
 
@@ -150,9 +159,30 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                               pdu->sn);
         }
 
-        rlc_log_sdu(ctx->logger, sdu);
+        rlc_log_tx_sdu(ctx->logger, sdu);
 
         return true;
+}
+
+/* This is a bit inefficient, but allows for modification of the list if
+ * tx_pdu_view re-enters from the user backend. In that case, the current SDU
+ * could potentially be removed, meaning we need to restart iteration to
+ * ensure the correct elements are used. */
+static struct rlc_sdu *first_sdu_ready(struct rlc_context *ctx)
+{
+        rlc_list_it it;
+        struct rlc_sdu *sdu;
+
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
+
+                if (sdu->state == RLC_READY) {
+                        return sdu;
+                }
+        }
+
+        return sdu;
 }
 
 size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
@@ -173,17 +203,7 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
          *    the lock.
          */
         for (;;) {
-                /* This is a bit inefficient, but allows for modification of
-                 * the list if tx_pdu_view re-enters from the user backend.
-                 * In that case, the current SDU could potentially be
-                 * removed, meaning we need to restart iteration to ensure
-                 * the correct elements are used.
-                 */
-                for (rlc_each_node(ctx->sdus, sdu, next)) {
-                        if (sdu->dir == RLC_TX && sdu->state == RLC_READY) {
-                                break;
-                        }
-                }
+                sdu = first_sdu_ready(ctx);
 
                 if (sdu == NULL) {
                         break;
@@ -212,7 +232,7 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
 
                 if (ctx->conf->type != RLC_AM && pdu.flags.is_last) {
                         rlc_event_tx_done(ctx, sdu);
-                        rlc_sdu_remove(ctx, sdu);
+                        rlc_sdu_remove(&ctx->tx.sdus, sdu);
                         rlc_dealloc(ctx, sdu);
                 }
 
@@ -229,18 +249,20 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
 
 size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
 {
-        rlc_lock_acquire(&ctx->lock);
+        {
+                rlc_lock_acquire(&ctx->lock);
 
-        gabs_log_dbgf(ctx->logger, "TX availability for context %p", ctx);
+                gabs_log_dbgf(ctx->logger, "TX availability for context %p",
+                              ctx);
 
-        size -= rlc_arq_tx_yield(ctx, size);
-        if (size > 0) {
-                size -= rlc_tx_yield(ctx, size);
+                size -= rlc_arq_tx_yield(ctx, size);
+                if (size > 0) {
+                        size -= rlc_tx_yield(ctx, size);
+                }
+
+                rlc_log_tx_window(ctx);
+                rlc_lock_release(&ctx->lock);
         }
-
-        rlc_log_tx_window(ctx);
-
-        rlc_lock_release(&ctx->lock);
 
         rlc_sched_yield(&ctx->sched);
 
@@ -264,7 +286,7 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
                 return -ENOSPC;
         }
 
-        sdu = rlc_sdu_alloc(ctx, RLC_TX);
+        sdu = rlc_sdu_alloc(ctx);
         if (sdu == NULL) {
                 return -ENOMEM;
         }
@@ -287,13 +309,13 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
         status = rlc_sdu_seg_insert_all(ctx, sdu, seg);
         if (status != 0) {
                 rlc_lock_release(&ctx->lock);
-                rlc_sdu_decref(ctx, sdu);
+                rlc_sdu_decref(sdu);
                 gabs_pbuf_decref(buf);
 
                 return status;
         }
 
-        rlc_sdu_insert(ctx, sdu);
+        rlc_sdu_insert(&ctx->tx.sdus, sdu);
 
         if (sdu_out != NULL) {
                 *sdu_out = sdu;
