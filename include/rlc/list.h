@@ -108,7 +108,9 @@ static inline rlc_list_node *rlc_list_it_node(rlc_list_it it)
 }
 
 #define rlc_list_it_item(it_, struct_, member_)                                \
-        gabs_container_of(rlc_list_it_node(it_), struct_, member_)
+        (rlc_list_it_node(it_) == NULL)                                        \
+                ? NULL                                                         \
+                : gabs_container_of(rlc_list_it_node(it_), struct_, member_)
 
 static inline bool rlc_list_it_eoi(rlc_list_it it)
 {
