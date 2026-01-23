@@ -63,8 +63,14 @@ void rlc_sched_yield(struct rlc_sched *sched)
 
         rlc_lock_acquire(&sched->lock);
 
-        rlc_list_foreach(&sched->queue, it)
-        {
+        for (;;) {
+                /* Always get head, as we don't want to depend on iteration
+                 * when multiple threads may remove from the queue. */
+                it = rlc_list_it_init(&sched->queue);
+                if (rlc_list_it_node(it) == NULL) {
+                        break;
+                }
+
                 item = from_it(it);
                 (void)rlc_list_it_pop(it, NULL);
 
