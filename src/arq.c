@@ -375,7 +375,7 @@ static void process_nack_range(struct rlc_context *ctx,
 
         rlc_window_init(&nack_win, cur->nack_sn, cur->range);
 
-        rlc_list_foreach(&ctx->tx.sdus, it)
+        rlc_list_foreach_safe(&ctx->tx.sdus, it)
         {
                 sdu = rlc_sdu_from_it(it);
 
