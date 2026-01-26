@@ -277,8 +277,14 @@ static void stop_poll_retransmit(struct rlc_context *ctx)
         (void)rlc_timer_stop(ctx->t_poll_retransmit);
 }
 
-/* Mark for retransmission */
-static void retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
+/**
+ * @brief Mark for retransmission
+ *
+ * @return bool
+ * @retval false SDU is removed and possibly invalid after this call
+ * @retval true SDU is still in the queue and valid
+ */
+static bool retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                            struct rlc_segment *seg)
 {
         struct rlc_segment uniq;
@@ -290,14 +296,14 @@ static void retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                  * be treated as retransmission */
                 sdu->state = RLC_READY;
 
-                return;
+                return true;
         } else if (status != 0) {
                 gabs_log_errf(ctx->logger,
                               "Unable to insert segment: %" RLC_PRI_ERRNO,
                               status);
                 rlc_assert(0);
 
-                return;
+                return true;
         }
 
         gabs_log_dbgf(ctx->logger,
@@ -318,7 +324,11 @@ static void retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
                 rlc_event_tx_fail(ctx, sdu);
                 rlc_sdu_decref(sdu);
+
+                return false;
         }
+
+        return true;
 }
 
 static void process_nack_offset(struct rlc_context *ctx,
@@ -342,7 +352,7 @@ static void process_nack_offset(struct rlc_context *ctx,
                         cur->offset.end = gabs_pbuf_size(sdu->buffer);
                 }
 
-                retransmit_sdu(ctx, sdu, &cur->offset);
+                (void)retransmit_sdu(ctx, sdu, &cur->offset);
         }
 }
 
@@ -362,7 +372,7 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
         seg.start = 0;
         seg.end = gabs_pbuf_size(sdu->buffer);
 
-        retransmit_sdu(ctx, sdu, &cur->offset);
+        (void)retransmit_sdu(ctx, sdu, &cur->offset);
 }
 
 static void process_nack_range(struct rlc_context *ctx,
@@ -372,10 +382,11 @@ static void process_nack_range(struct rlc_context *ctx,
         struct rlc_window nack_win;
         struct rlc_segment seg;
         rlc_list_it it;
+        rlc_list_it skipped_to;
 
         rlc_window_init(&nack_win, cur->nack_sn, cur->range);
 
-        rlc_list_foreach_safe(&ctx->tx.sdus, it)
+        rlc_list_foreach(&ctx->tx.sdus, it)
         {
                 sdu = rlc_sdu_from_it(it);
 
@@ -386,9 +397,14 @@ static void process_nack_range(struct rlc_context *ctx,
                 if (rlc_window_has(&nack_win, sdu->sn)) {
                         seg.start = 0;
                         seg.end = gabs_pbuf_size(sdu->buffer);
+                        skipped_to = rlc_list_it_skip(it);
 
-                        /* NOTE: May remove SDU */
-                        retransmit_sdu(ctx, sdu, &seg);
+                        /* Adjust iterator if the SDU is removed/deallocated so
+                         * that we don't need to read from invalid memory when
+                         * we get the next item in the iterator. */
+                        if (!retransmit_sdu(ctx, sdu, &seg)) {
+                                it = rlc_list_it_repeat(skipped_to);
+                        }
                 }
         }
 }
@@ -577,7 +593,7 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
                 seg.end = last_seg->seg.end;
                 seg.start = seg.end - rlc_min(seg.end, max_size - header_size);
 
-                retransmit_sdu(ctx, sdu, &seg);
+                (void)retransmit_sdu(ctx, sdu, &seg);
         }
 
         return ret;
