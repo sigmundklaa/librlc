@@ -128,7 +128,7 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
         ctx->rx.highest_ack = lowest;
         rlc_window_move_to(&ctx->rx.win, lowest);
 
-        rlc_list_foreach_safe(&ctx->rx.sdus, it)
+        rlc_list_foreach(&ctx->rx.sdus, it)
         {
                 sdu = rlc_sdu_from_it(it);
 

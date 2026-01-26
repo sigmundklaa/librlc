@@ -33,9 +33,11 @@ void rlc_sched_reset(struct rlc_sched *sched)
 
         rlc_lock_acquire(&sched->lock);
 
-        rlc_list_foreach_safe(&sched->queue, it)
+        rlc_list_foreach(&sched->queue, it)
         {
                 item = from_it(it);
+                it = rlc_list_it_pop(it, NULL);
+
                 item_dealloc(item);
         }
 
