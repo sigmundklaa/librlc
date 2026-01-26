@@ -102,6 +102,22 @@ static inline rlc_list_it rlc_list_it_next(rlc_list_it it)
         };
 }
 
+static inline rlc_list_it rlc_list_it_skip(rlc_list_it it)
+{
+        rlc_list_it next;
+
+        next = rlc_list_it_next(it);
+        next.slotptr = it.slotptr;
+
+        return next;
+}
+
+static inline rlc_list_it rlc_list_it_repeat(rlc_list_it it)
+{
+        it.skip_iter = true;
+        return it;
+}
+
 static inline rlc_list_node *rlc_list_it_node(rlc_list_it it)
 {
         return it.node;
@@ -157,9 +173,7 @@ static inline rlc_list_it rlc_list_it_pop(rlc_list_it it, rlc_list_node **out)
 
         /* Returns next iterator, so next call to it_next() should return the
          * same iterator to prevent skipping the next item. */
-        it.skip_iter = true;
-
-        return it;
+        return rlc_list_it_repeat(it);
 }
 
 RLC_END_DECL
