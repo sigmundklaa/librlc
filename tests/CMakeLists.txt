@@ -1,72 +1,45 @@
+cmake_minimum_required(VERSION 3.20)
+project(rlc-test)
 
-add_custom_target(tests)
+include(FetchContent)
 
-find_package(unity REQUIRED)
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG        v3.8.1 # or a later release
+)
+FetchContent_MakeAvailable(Catch2)
 
-function(remove_sources target)
+FetchContent_Declare(
+    gabs
+    GIT_REPOSITORY https://github.com/sigmundklaa/gabs.git
+    GIT_TAG main
+)
+FetchContent_MakeAvailable(gabs)
+
+add_executable(tests)
+target_sources(
+    tests
+    PRIVATE
+        test_list.cc
+        test_rx.cc
+)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+add_subdirectory(../ rlc)
+
+# Remove source file
+macro(remove_sources)
     set_source_files_properties(
         ${ARGN}
         TARGET_DIRECTORY
-            ${target}
+            rlc
         PROPERTIES
             HEADER_FILE_ONLY ON
     )
-endfunction()
+endmacro()
 
+# Included in test_rx.cc
+remove_sources(rx.c)
 
-function(add_test src_file)
-    string(REPLACE . _ test_name_suffix ${src_file})
-    set(test_name test-${test_name_suffix})
-
-    cmake_parse_arguments(ADD_TEST "" "" "REPLACE" ${ARGN})
-
-    add_executable(${test_name} ${src_file})
-    target_link_libraries(
-        ${test_name}
-        PUBLIC
-            rlc
-            unity::framework
-    )
-    target_include_directories(
-        ${test_name}
-        PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/../src
-    )
-
-    if(ADD_TEST_REPLACE)
-        list(
-            TRANSFORM
-                ADD_TEST_REPLACE
-            PREPEND
-                ${CMAKE_CURRENT_SOURCE_DIR}/../src/
-        )
-        remove_sources(${test_name} ${ADD_TEST_REPLACE})
-    endif()
-
-    set_property(
-        TARGET
-            tests
-        APPEND
-        PROPERTY
-            _exes
-        ${test_name}
-    )
-endfunction()
-
-add_custom_target(
-    run-test
-    COMMAND
-        /usr/bin/env bash -c
-        "$<LIST:JOIN,$<LIST:TRANSFORM,$<TARGET_PROPERTY:tests,_exes>,PREPEND,./>,; >"
-        || exit 0
-    DEPENDS
-        "$<TARGET_PROPERTY:tests,_exes>"
-    WORKING_DIRECTORY
-        ${CMAKE_CURRENT_BINARY_DIR}
-    VERBATIM
-)
-
-add_test(test_encode.c)
-add_test(test_sdu.c)
-add_test(test_rx.c REPLACE rx.c)
-add_test(test_arq.c)
+target_link_libraries(tests PRIVATE Catch2::Catch2WithMain rlc gabs)
