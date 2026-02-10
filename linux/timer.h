@@ -7,8 +7,6 @@
 #include <rlc/decl.h>
 #include <gabs/log.h>
 
-RLC_BEGIN_DECL
-
 #ifdef __cplusplus
 #include <atomic>
 
@@ -16,6 +14,8 @@ using atomic_uint = std::atomic<unsigned int>;
 #else
 #include <stdatomic.h>
 #endif
+
+RLC_BEGIN_DECL
 
 #define RLC_LINUX_TIMER_COUNT_MAX (20)
 
