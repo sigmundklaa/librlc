@@ -290,7 +290,7 @@ static bool retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         struct rlc_segment uniq;
         rlc_errno status;
 
-        status = rlc_sdu_seg_insert(ctx, sdu, seg, &uniq);
+        status = rlc_sdu_seg_insert(sdu, seg, &uniq, ctx->alloc_misc);
         if (status == -ENODATA) {
                 /* -ENODATA means there was nothing unique in `seg`, so it won't
                  * be treated as retransmission */
@@ -591,7 +591,8 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
                 }
 
                 seg.end = last_seg->seg.end;
-                seg.start = seg.end - rlc_min(seg.end, max_size - header_size);
+                seg.start = seg.end - rlc_min(seg.end - seg.start,
+                                              max_size - header_size);
 
                 (void)retransmit_sdu(ctx, sdu, &seg);
         }

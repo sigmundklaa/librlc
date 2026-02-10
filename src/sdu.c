@@ -15,9 +15,9 @@ static bool seg_overlap(const struct rlc_segment *left,
         return right->start >= left->start && right->start <= left->end;
 }
 
-rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                             struct rlc_segment *segptr,
-                             struct rlc_segment *unique)
+rlc_errno rlc_sdu_seg_insert(struct rlc_sdu *sdu, struct rlc_segment *segptr,
+                             struct rlc_segment *unique,
+                             const gabs_allocator_h *allocator)
 {
         struct rlc_sdu_segment *slot;
         struct rlc_sdu_segment *left;
@@ -105,15 +105,14 @@ rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
                  * one */
                 if (slot != NULL) {
                         left->next = slot->next;
-                        rlc_dealloc(ctx, slot);
+                        (void)gabs_dealloc(allocator, slot);
                 }
 
                 slot = left;
         }
 
         if (slot == NULL) {
-                slot = rlc_alloc(ctx, sizeof(*slot));
-                if (slot == NULL) {
+                if (gabs_alloc(allocator, sizeof(*slot), (void **)&slot) != 0) {
                         rlc_assert(0);
                         return -ENOMEM;
                 }

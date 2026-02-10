@@ -306,7 +306,7 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
                       "->%" PRIu32,
                       sdu->sn, seg.start, seg.end);
 
-        status = rlc_sdu_seg_insert_all(ctx, sdu, seg);
+        status = rlc_sdu_seg_insert_all(sdu, seg, ctx->alloc_misc);
         if (status != 0) {
                 rlc_lock_release(&ctx->lock);
                 rlc_sdu_decref(sdu);

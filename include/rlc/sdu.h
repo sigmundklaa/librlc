@@ -156,19 +156,19 @@ static inline bool rlc_sdu_loss_detected(struct rlc_sdu *sdu)
  * remaining parts of the segment. When `seg->start == 0` and `seg->end == 0` it
  * should not be called again.
  *
- * @param ctx
  * @param sdu
  * @param seg Pointer to segment to insert. If the segment must be split into
  * seperate areas, this is updated with the remaining parts of the segment that
  * is not represented in the returned segment.
  * @param unique Pointer where adjusted segment will be stored.
+ * @param allocator
  * @return rlc_errno
  * @retval -ENODATA No unique data in @p seg
  * @retval -ENOMEM Unable to allocate memory for segment
  */
-rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                             struct rlc_segment *seg,
-                             struct rlc_segment *unique);
+rlc_errno rlc_sdu_seg_insert(struct rlc_sdu *sdu, struct rlc_segment *seg,
+                             struct rlc_segment *unique,
+                             const gabs_allocator_h *allocator);
 
 /**
  * @brief Insert segment into segment list, repeating however many times is
@@ -176,15 +176,15 @@ rlc_errno rlc_sdu_seg_insert(struct rlc_context *ctx, struct rlc_sdu *sdu,
  *
  * See @ref rlc_sdu_seg_insert for further explanation.
  */
-static inline rlc_errno rlc_sdu_seg_insert_all(struct rlc_context *ctx,
-                                               struct rlc_sdu *sdu,
-                                               struct rlc_segment seg)
+static inline rlc_errno
+rlc_sdu_seg_insert_all(struct rlc_sdu *sdu, struct rlc_segment seg,
+                       const gabs_allocator_h *allocator)
 {
         rlc_errno status;
         struct rlc_segment unique;
 
         do {
-                status = rlc_sdu_seg_insert(ctx, sdu, &seg, &unique);
+                status = rlc_sdu_seg_insert(sdu, &seg, &unique, allocator);
         } while (rlc_segment_okay(&unique) && rlc_segment_okay(&seg));
 
         return status;

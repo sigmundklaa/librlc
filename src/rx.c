@@ -233,7 +233,8 @@ static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
         do {
                 cur = seg;
 
-                status = rlc_sdu_seg_insert(ctx, sdu, &seg, &unique);
+                status =
+                        rlc_sdu_seg_insert(sdu, &seg, &unique, ctx->alloc_misc);
                 if (status != 0) {
                         if (status == -ENODATA) {
                                 status = 0;
