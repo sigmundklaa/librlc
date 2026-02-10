@@ -359,7 +359,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 
         segment = (struct rlc_segment){
                 .start = pdu.seg_offset,
-                .end = pdu.seg_offset + gabs_pbuf_size(buf),
+                .end = pdu.seg_offset + (uint32_t)gabs_pbuf_size(buf),
         };
 
         status = insert_buffer(ctx, sdu, &buf, segment);
