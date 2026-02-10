@@ -115,13 +115,9 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 return false;
         }
 
-        /* Only the last segment should be updated. Any previous segment
-         * is added for retransmission, and should only be updated when
-         * receiving ACK for it. */
-        if (segment->next == NULL) {
-                segment->seg.start += pdu->size;
-
-                if (segment->seg.start >= segment->seg.end) {
+        segment->seg.start += pdu->size;
+        if (segment->seg.start >= segment->seg.end) {
+                if (segment->next == NULL) {
                         /* If last segment, set last flag and go into waiting
                          * state. The last segment is kept alive until the
                          * SDU is deallocated, so that it can be used to
@@ -129,6 +125,9 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                          * first-time-transmitted PDUs. */
                         sdu->state = RLC_WAIT;
                         pdu->flags.is_last = 1;
+                } else {
+                        sdu->segments = segment->next;
+                        rlc_dealloc(ctx, segment);
                 }
         }
 
