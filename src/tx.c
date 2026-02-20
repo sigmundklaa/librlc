@@ -74,7 +74,6 @@ static bool pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                       struct rlc_pdu *pdu, size_t size_avail)
 {
-        rlc_errno status;
         struct rlc_seg_item *seg_item;
         rlc_list_it it;
 
