@@ -4,7 +4,7 @@
 
 #include <pthread.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <gabs/log.h>
 
 #ifdef __cplusplus

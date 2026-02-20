@@ -8,7 +8,7 @@
 #include <gabs/pbuf.h>
 
 #include <rlc/errno.h>
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <rlc/list.h>
 #include <rlc/seg_buf.h>
 #include <rlc/utils.h>

@@ -4,7 +4,7 @@
 
 #include <stdbool.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <rlc/plat.h>
 
 RLC_BEGIN_DECL

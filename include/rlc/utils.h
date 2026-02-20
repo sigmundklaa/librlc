@@ -4,7 +4,14 @@
 
 #include <assert.h>
 
-#include <rlc/decl.h>
+#ifdef __cplusplus
+#define RLC_BEGIN_DECL extern "C" {
+#define RLC_END_DECL   }
+#else
+#define RLC_BEGIN_DECL
+#define RLC_END_DECL
+#endif
+
 
 RLC_BEGIN_DECL
 

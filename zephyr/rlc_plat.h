@@ -7,7 +7,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/net_buf.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 
 RLC_BEGIN_DECL
 

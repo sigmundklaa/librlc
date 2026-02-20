@@ -12,7 +12,6 @@
 #include <gabs/log.h>
 
 #include <rlc/plat.h>
-#include <rlc/decl.h>
 #include <rlc/window.h>
 #include <rlc/timer.h>
 #include <rlc/sdu.h>

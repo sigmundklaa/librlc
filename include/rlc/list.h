@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <gabs/core/util.h>
 
 RLC_BEGIN_DECL

@@ -2,7 +2,7 @@
 #ifndef RLC_LINUX_ATOMIC_MASK_H__
 #define RLC_LINUX_ATOMIC_MASK_H__
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <rlc_plat.h>
 
 RLC_BEGIN_DECL

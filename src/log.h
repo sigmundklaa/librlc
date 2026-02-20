@@ -2,7 +2,7 @@
 #ifndef RLC_LOG_H__
 #define RLC_LOG_H__
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <gabs/log.h>
 
 RLC_BEGIN_DECL

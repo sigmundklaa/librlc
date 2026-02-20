@@ -4,7 +4,7 @@
 
 #include <gabs/pbuf.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <rlc/sched.h>
 
 RLC_BEGIN_DECL

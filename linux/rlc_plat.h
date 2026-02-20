@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 
 #include "timer.h"
 

@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 
 RLC_BEGIN_DECL
 

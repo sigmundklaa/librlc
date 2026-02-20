@@ -4,7 +4,7 @@
 
 #include <gabs/mutex.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <rlc/errno.h>
 #include <rlc/list.h>
 

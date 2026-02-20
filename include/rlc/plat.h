@@ -4,7 +4,7 @@
 
 #include <stdbool.h>
 
-#include <rlc/decl.h>
+#include <rlc/utils.h>
 #include <rlc/errno.h>
 
 /* This header should be defined by the platform target */
