@@ -115,7 +115,7 @@ rlc_errno rlc_seg_list_insert(rlc_seg_list *list, struct rlc_seg *segptr,
                 }
 
                 slot->seg = seg;
-                it = rlc_list_it_put_back(it, &slot->list_node);
+                it = rlc_list_it_put_front(it, &slot->list_node);
         }
 
         segptr->start = slot->seg.end;
