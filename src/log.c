@@ -6,6 +6,7 @@
 #include <rlc/sdu.h>
 #include <rlc/utils.h>
 #include <rlc/rlc.h>
+#include <rlc/seg_list.h>
 
 #include "log.h"
 
@@ -23,19 +24,22 @@ static const char *sdu_state_str(enum rlc_sdu_state state)
         rlc_assert(0);
 }
 
-static const char *fmt_segments(const struct rlc_sdu *sdu, char *buf,
-                                size_t max_size, const char *prefix)
+static const char *fmt_segments(rlc_seg_list *list, char *buf, size_t max_size,
+                                const char *prefix)
 {
         int bytes;
         int ret;
-        struct rlc_sdu_segment *seg;
+        struct rlc_seg_item *seg_item;
+        rlc_list_it it;
 
         bytes = 0;
 
-        for (rlc_each_node(sdu->segments, seg, next)) {
+        rlc_list_foreach(list, it)
+        {
+                seg_item = rlc_seg_item_from_it(it);
                 ret = snprintf(buf + bytes, max_size - bytes,
                                "%s%" PRIu32 "->%" PRIu32 "\n", prefix,
-                               seg->seg.start, seg->seg.end);
+                               seg_item->seg.start, seg_item->seg.end);
                 if (ret < 0) {
                         rlc_assert(0);
                         break;
@@ -47,7 +51,7 @@ static const char *fmt_segments(const struct rlc_sdu *sdu, char *buf,
         return buf;
 }
 
-void rlc_log_tx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
+void rlc_log_tx_sdu(const gabs_logger_h *logger, struct rlc_sdu *sdu)
 {
         char buf[128];
 
@@ -63,11 +67,11 @@ void rlc_log_tx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
                       "\t}\n"
                       "}",
                       sdu->sn, sdu_state_str(sdu->state), sdu->refcount,
-                      sdu->retx_count,
-                      fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
+                      sdu->tx.retx_count,
+                      fmt_segments(&sdu->tx.unsent, buf, sizeof(buf), "\t\t"));
 }
 
-void rlc_log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
+void rlc_log_rx_sdu(const gabs_logger_h *logger, struct rlc_sdu *sdu)
 {
         char buf[128];
 
@@ -83,8 +87,8 @@ void rlc_log_rx_sdu(const gabs_logger_h *logger, const struct rlc_sdu *sdu)
                       "\t}\n"
                       "}",
                       sdu->sn, sdu_state_str(sdu->state), sdu->refcount,
-                      sdu->flags.rx_last_received,
-                      fmt_segments(sdu, buf, sizeof(buf), "\t\t"));
+                      sdu->rx.last_received,
+                      fmt_segments(&sdu->rx.buffer.segments, buf, sizeof(buf), "\t\t"));
 }
 
 static void log_window(struct rlc_context *ctx, rlc_sdu_queue *q,

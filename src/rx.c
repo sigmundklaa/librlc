@@ -222,75 +222,12 @@ rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
         return rlc_timer_uninstall(ctx->rx.t_reassembly);
 }
 
-static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                               gabs_pbuf *buf, struct rlc_segment seg)
-{
-        struct rlc_segment unique;
-        struct rlc_segment cur;
-        gabs_pbuf insertbuf;
-        size_t offset;
-        rlc_errno status;
-
-        status = 0;
-
-        do {
-                cur = seg;
-
-                status =
-                        rlc_sdu_seg_insert(sdu, &seg, &unique, ctx->alloc_misc);
-                if (status != 0) {
-                        if (status == -ENODATA) {
-                                status = 0;
-                        }
-
-                        break;
-                }
-
-                /* No remaining parts of the buffer that need to be inserted, so
-                 * we don't need to create a new buffer. This is the most likely
-                 * case. */
-                if (!rlc_segment_okay(&seg)) {
-                        gabs_pbuf_incref(*buf);
-
-                        if (unique.start != cur.start) {
-                                gabs_pbuf_strip_head(buf,
-                                                     unique.start - cur.start);
-                        }
-
-                        if (unique.end != cur.end) {
-                                gabs_pbuf_strip_tail(buf, cur.end - unique.end);
-                        }
-
-                        insertbuf = *buf;
-                } else {
-                        offset = unique.start - cur.start;
-                        insertbuf = gabs_pbuf_clone(
-                                *buf, offset,
-                                offset + (unique.end - unique.start),
-                                ctx->alloc_buf);
-
-                        /* Strip off the bytes that are now handled by the new
-                         * buffer, in addition to the bytes that are already
-                         * inserted (which is the difference between the start
-                         * of the remaining and the end of the unique). */
-                        gabs_pbuf_strip_head(
-                                buf, offset + gabs_pbuf_size(insertbuf) +
-                                             (seg.start - unique.end));
-                }
-
-                gabs_pbuf_chain_at(&sdu->buffer, insertbuf,
-                                   rlc_sdu_seg_byte_offset(sdu, unique.start));
-        } while (rlc_segment_okay(&seg));
-
-        return status;
-}
-
 void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 {
         ptrdiff_t status;
         uint32_t lowest;
         struct rlc_pdu pdu;
-        struct rlc_segment segment;
+        struct rlc_seg segment;
         struct rlc_sdu *sdu;
 
         rlc_lock_acquire(&ctx->lock);
@@ -333,7 +270,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                         goto exit;
                 }
 
-                sdu = rlc_sdu_alloc(ctx);
+                sdu = rlc_sdu_alloc(ctx, false);
                 if (sdu == NULL) {
                         gabs_log_errf(ctx->logger,
                                       "RX; SDU alloc failed (%" RLC_PRI_ERRNO
@@ -360,12 +297,13 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                       "RX; SN: %" PRIu32 ", RANGE: %" PRIu32 "->%zu", pdu.sn,
                       pdu.seg_offset, pdu.seg_offset + gabs_pbuf_size(buf));
 
-        segment = (struct rlc_segment){
+        segment = (struct rlc_seg){
                 .start = pdu.seg_offset,
                 .end = pdu.seg_offset + (uint32_t)gabs_pbuf_size(buf),
         };
 
-        status = insert_buffer(ctx, sdu, &buf, segment);
+        status = rlc_seg_buf_insert(&sdu->rx.buffer, &buf, segment,
+                                    ctx->alloc_misc, ctx->alloc_buf);
         if (status != 0) {
                 gabs_log_errf(ctx->logger,
                               "Buffer insertion failed: %" RLC_PRI_ERRNO,
@@ -374,7 +312,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
         }
 
         if (pdu.flags.is_last) {
-                sdu->flags.rx_last_received = 1;
+                sdu->rx.last_received = 1;
         }
 
         if (sdu->sn >= ctx->rx.next_highest) {

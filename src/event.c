@@ -91,7 +91,7 @@ void rlc_event_rx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         gabs_log_inff(ctx->logger,
                       "RX; SDU %" PRIu32 " received (%" PRIu32 "B)", sdu->sn,
-                      sdu->segments->seg.end);
+                      gabs_pbuf_size(sdu->rx.buffer.buf));
 
         sdu_event(ctx, sdu, RLC_EVENT_RX_DONE);
 }
@@ -118,7 +118,7 @@ void rlc_event_rx_done_direct(struct rlc_context *ctx, gabs_pbuf *buf)
 void rlc_event_tx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         gabs_log_inff(ctx->logger, "TX; SDU %" PRIu32 " transmitted (%zuB)",
-                      sdu->sn, gabs_pbuf_size(sdu->buffer));
+                      sdu->sn, gabs_pbuf_size(sdu->tx.buffer));
 
         sdu_event(ctx, sdu, RLC_EVENT_TX_DONE);
 }

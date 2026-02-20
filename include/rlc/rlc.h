@@ -15,7 +15,6 @@
 #include <rlc/decl.h>
 #include <rlc/window.h>
 #include <rlc/timer.h>
-#include <rlc/segment.h>
 #include <rlc/sdu.h>
 #include <rlc/pdu.h>
 #include <rlc/utils.h>

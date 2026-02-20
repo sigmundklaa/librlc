@@ -138,20 +138,30 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                                     struct rlc_sdu *sdu)
 {
         struct rlc_pdu_status *cur_status;
-        struct rlc_sdu_segment *seg;
-        struct rlc_sdu_segment *last;
+        struct rlc_seg_item *seg;
+        struct rlc_seg_item *last;
+        struct rlc_seg_item *next;
+        bool has_more;
         ptrdiff_t bytes;
         size_t max_size;
         size_t remaining;
+        rlc_list_it it;
 
         max_size = gabs_pbuf_tailroom(*buf);
         remaining = max_size;
         last = NULL;
 
-        for (rlc_each_node(sdu->segments, seg, next)) {
+        rlc_list_foreach(&sdu->rx.buffer.segments, it)
+        {
+                seg = rlc_seg_item_from_it(it);
+                next = rlc_seg_item_from_it(rlc_list_it_next(it));
+                has_more = !rlc_list_it_eoi(rlc_list_it_next(it));
+
                 /* No more missing segments */
-                if (seg->next == NULL && seg->seg.start == 0 &&
-                    sdu->flags.rx_last_received) {
+                if (!has_more && seg->seg.start == 0 && sdu->rx.last_received) {
+                        /* TODO: This should be safe to remove, assuming this
+                         * function is not called for done SDUs? */
+                        rlc_assert(0);
                         break;
                 }
 
@@ -168,10 +178,10 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                 if (last == NULL && seg->seg.start != 0) {
                         cur_status->offset.start = 0;
                         cur_status->offset.end = seg->seg.start;
-                } else if (seg->next != NULL) {
+                } else if (has_more) {
                         /* Between two segments */
                         cur_status->offset.start = seg->seg.end;
-                        cur_status->offset.end = seg->next->seg.start;
+                        cur_status->offset.end = next->seg.start;
                 } else {
                         /* Last segment registered, but last
                          * segment of the transmission has not
@@ -249,7 +259,6 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
 static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
 {
         struct rlc_sdu *sdu;
-        struct rlc_sdu_segment *seg;
         rlc_list_it it;
 
         rlc_list_foreach(&ctx->tx.sdus, it)
@@ -260,15 +269,7 @@ static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
                         break;
                 }
 
-                for (rlc_each_node_safe(struct rlc_sdu_segment, sdu->segments,
-                                        seg, next)) {
-                        if (seg->next == NULL) {
-                                sdu->segments = seg;
-                                break;
-                        }
-
-                        rlc_dealloc(ctx, seg);
-                }
+                rlc_seg_list_clear_until_last(&sdu->tx.unsent, ctx->alloc_misc);
         }
 }
 
@@ -285,12 +286,13 @@ static void stop_poll_retransmit(struct rlc_context *ctx)
  * @retval true SDU is still in the queue and valid
  */
 static bool retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
-                           struct rlc_segment *seg)
+                           struct rlc_seg *seg)
 {
-        struct rlc_segment uniq;
+        struct rlc_seg uniq;
         rlc_errno status;
 
-        status = rlc_sdu_seg_insert(sdu, seg, &uniq, ctx->alloc_misc);
+        status = rlc_seg_list_insert(&sdu->tx.unsent, seg, &uniq,
+                                     ctx->alloc_misc);
         if (status == -ENODATA) {
                 /* -ENODATA means there was nothing unique in `seg`, so it won't
                  * be treated as retransmission */
@@ -311,9 +313,9 @@ static bool retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                       sdu->sn);
 
         sdu->state = RLC_READY;
-        sdu->retx_count++;
+        sdu->tx.retx_count++;
 
-        if (sdu->retx_count >= ctx->conf->max_retx_threshhold) {
+        if (sdu->tx.retx_count >= ctx->conf->max_retx_threshhold) {
                 gabs_log_errf(ctx->logger,
                               "Transmit failed; exceeded retry limit");
                 rlc_sdu_queue_remove(&ctx->tx.sdus, sdu);
@@ -349,7 +351,7 @@ static void process_nack_offset(struct rlc_context *ctx,
 
         if (cur->ext.has_offset) {
                 if (cur->offset.end == RLC_STATUS_SO_MAX) {
-                        cur->offset.end = gabs_pbuf_size(sdu->buffer);
+                        cur->offset.end = gabs_pbuf_size(sdu->tx.buffer);
                 }
 
                 (void)retransmit_sdu(ctx, sdu, &cur->offset);
@@ -359,7 +361,7 @@ static void process_nack_offset(struct rlc_context *ctx,
 static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
 {
         struct rlc_sdu *sdu;
-        struct rlc_segment seg;
+        struct rlc_seg seg;
 
         sdu = rlc_sdu_queue_get(&ctx->tx.sdus, cur->nack_sn);
         if (sdu == NULL) {
@@ -370,7 +372,7 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
         }
 
         seg.start = 0;
-        seg.end = gabs_pbuf_size(sdu->buffer);
+        seg.end = gabs_pbuf_size(sdu->tx.buffer);
 
         (void)retransmit_sdu(ctx, sdu, &cur->offset);
 }
@@ -380,7 +382,7 @@ static void process_nack_range(struct rlc_context *ctx,
 {
         struct rlc_sdu *sdu;
         struct rlc_window nack_win;
-        struct rlc_segment seg;
+        struct rlc_seg seg;
         rlc_list_it it;
         rlc_list_it skipped_to;
 
@@ -396,7 +398,7 @@ static void process_nack_range(struct rlc_context *ctx,
 
                 if (rlc_window_has(&nack_win, sdu->sn)) {
                         seg.start = 0;
-                        seg.end = gabs_pbuf_size(sdu->buffer);
+                        seg.end = gabs_pbuf_size(sdu->tx.buffer);
                         skipped_to = rlc_list_it_skip(it);
 
                         /* Adjust iterator if the SDU is removed/deallocated so
@@ -535,18 +537,14 @@ static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
         return highest;
 }
 
-static struct rlc_sdu_segment *last_segment(struct rlc_sdu *sdu)
+static struct rlc_seg_item *last_segment(rlc_seg_list *list)
 {
-        struct rlc_sdu_segment *last;
-        struct rlc_sdu_segment *cur;
-
-        last = NULL;
-
-        for (rlc_each_node(sdu->segments, cur, next)) {
-                last = cur;
+        rlc_list_it it;
+        rlc_list_foreach(list, it)
+        {
         }
 
-        return last;
+        return rlc_seg_item_from_it(it);
 }
 
 static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
@@ -554,8 +552,8 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
         size_t ret;
         size_t header_size;
         struct rlc_sdu *sdu;
-        struct rlc_sdu_segment *last_seg;
-        struct rlc_segment seg;
+        struct rlc_seg_item *last_seg;
+        struct rlc_seg seg;
         struct rlc_pdu pdu;
 
         /* First try and transmit the poll with an unsubmitted segment */
@@ -584,7 +582,7 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
                         return ret;
                 }
 
-                last_seg = last_segment(sdu);
+                last_seg = last_segment(&sdu->tx.unsent);
                 if (last_seg == NULL) {
                         rlc_assert(0);
                         return ret;
@@ -617,9 +615,11 @@ size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
         return ret;
 }
 
-static bool tx_pollable(const struct rlc_context *ctx,
-                        const struct rlc_sdu *sdu)
+static bool tx_pollable(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
+        rlc_list_it it;
+        struct rlc_seg_item *seg_item;
+
         if (ctx->conf->type != RLC_AM) {
                 return false;
         }
@@ -633,12 +633,14 @@ static bool tx_pollable(const struct rlc_context *ctx,
                 return true;
         }
 
-        /* TODO: What?? */
-        if (sdu->segments->next != NULL) {
+        it = rlc_list_it_init(&sdu->tx.unsent);
+        seg_item = rlc_seg_item_from_it(it);
+
+        if (!rlc_list_it_eoi(rlc_list_it_next(it))) {
                 return false;
         }
 
-        if (sdu->segments->seg.start < sdu->segments->seg.end) {
+        if (seg_item->seg.start < seg_item->seg.end) {
                 return false;
         }
 
@@ -710,7 +712,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         gabs_log_dbgf(ctx->logger,
                       "Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32
                       ", %zu",
-                      pdu->sn, ctx->poll_sn, gabs_pbuf_size(*buf));
+                      pdu->sn, ctx->arq.poll_sn, gabs_pbuf_size(*buf));
 
         if (pdu->sn > ctx->arq.poll_sn) {
                 stop_poll_retransmit(ctx);

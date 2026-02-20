@@ -3,6 +3,7 @@
 
 #include <rlc/sdu.h>
 #include <rlc/rlc.h>
+#include <rlc/seg_list.h>
 
 #include "encode.h"
 #include "methods.h"
@@ -17,11 +18,11 @@ static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
         gabs_pbuf buf;
         ptrdiff_t ret;
 
-        if (pdu->seg_offset + pdu->size > gabs_pbuf_size(sdu->buffer)) {
+        if (pdu->seg_offset + pdu->size > gabs_pbuf_size(sdu->tx.buffer)) {
                 return -ENODATA;
         }
 
-        buf = gabs_pbuf_view(sdu->buffer, pdu->seg_offset, pdu->size,
+        buf = gabs_pbuf_view(sdu->tx.buffer, pdu->seg_offset, pdu->size,
                              ctx->alloc_buf);
         gabs_log_dbgf(ctx->logger, "Sending PDU: size %zu, buffer size: %zu",
                       pdu->size, gabs_pbuf_size(buf));
@@ -74,13 +75,16 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                       struct rlc_pdu *pdu, size_t size_avail)
 {
         rlc_errno status;
-        struct rlc_sdu_segment *segment;
+        struct rlc_seg_item *seg_item;
+        rlc_list_it it;
 
-        segment = sdu->segments;
-        rlc_assert(segment != NULL);
+        it = rlc_list_it_init(&sdu->tx.unsent);
+        seg_item = rlc_seg_item_from_it(it);
+
+        rlc_assert(!rlc_list_it_eoi(it));
 
         pdu->sn = sdu->sn;
-        pdu->size = segment->seg.end - segment->seg.start;
+        pdu->size = seg_item->seg.end - seg_item->seg.start;
         if (pdu->size == 0) {
                 rlc_assert(ctx->conf->type == RLC_AM);
 
@@ -88,16 +92,16 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 return false;
         }
 
-        pdu->seg_offset = segment->seg.start;
+        pdu->seg_offset = seg_item->seg.start;
         pdu->flags.is_first = pdu->seg_offset == 0;
 
         if (!pdu_size_adjust(ctx, pdu, size_avail)) {
                 return false;
         }
 
-        segment->seg.start += pdu->size;
-        if (segment->seg.start >= segment->seg.end) {
-                if (segment->next == NULL) {
+        seg_item->seg.start += pdu->size;
+        if (seg_item->seg.start >= seg_item->seg.end) {
+                if (rlc_list_it_eoi(rlc_list_it_next(it))) {
                         /* If last segment, set last flag and go into waiting
                          * state. The last segment is kept alive until the
                          * SDU is deallocated, so that it can be used to
@@ -106,8 +110,8 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                         sdu->state = RLC_WAIT;
                         pdu->flags.is_last = 1;
                 } else {
-                        sdu->segments = segment->next;
-                        rlc_dealloc(ctx, segment);
+                        it = rlc_list_it_pop(it, NULL);
+                        rlc_dealloc(ctx, seg_item);
                 }
         }
 
@@ -198,7 +202,7 @@ size_t rlc_tx_avail(struct rlc_context *ctx, size_t size)
 rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
                  struct rlc_sdu **sdu_out)
 {
-        struct rlc_segment seg;
+        struct rlc_seg seg;
         struct rlc_sdu *sdu;
         rlc_errno status;
 
@@ -212,7 +216,7 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
                 return -ENOSPC;
         }
 
-        sdu = rlc_sdu_alloc(ctx);
+        sdu = rlc_sdu_alloc(ctx, true);
         if (sdu == NULL) {
                 return -ENOMEM;
         }
@@ -220,19 +224,19 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
         gabs_pbuf_incref(buf);
 
         sdu->sn = ctx->tx.next_sn++;
-        sdu->buffer = buf;
+        sdu->tx.buffer = buf;
 
         rlc_lock_acquire(&ctx->lock);
 
         seg.start = 0;
-        seg.end = gabs_pbuf_size(sdu->buffer);
+        seg.end = gabs_pbuf_size(sdu->tx.buffer);
 
         gabs_log_inff(ctx->logger,
                       "TX; Queueing SDU %" PRIu32 ", RANGE: %" PRIu32
                       "->%" PRIu32,
                       sdu->sn, seg.start, seg.end);
 
-        status = rlc_sdu_seg_insert_all(sdu, seg, ctx->alloc_misc);
+        status = rlc_seg_list_insert_all(&sdu->tx.unsent, seg, ctx->alloc_misc);
         if (status != 0) {
                 rlc_lock_release(&ctx->lock);
                 rlc_sdu_decref(sdu);

@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include <rlc/decl.h>
-#include <rlc/segment.h>
+#include <rlc/seg_list.h>
 
 RLC_BEGIN_DECL
 
@@ -33,7 +33,7 @@ struct rlc_pdu {
 
 /** @brief Optional status payload following a PDU Status header */
 struct rlc_pdu_status {
-        struct rlc_segment offset;
+        struct rlc_seg offset;
 
         uint32_t range;
         uint32_t nack_sn;
