@@ -539,11 +539,14 @@ static struct rlc_sdu *highest_sn_submitted(struct rlc_context *ctx)
 static struct rlc_seg_item *last_segment(rlc_seg_list *list)
 {
         rlc_list_it it;
+        rlc_list_it last;
+
         rlc_list_foreach(list, it)
         {
+                last = it;
         }
 
-        return rlc_seg_item_from_it(it);
+        return rlc_seg_item_from_it(last);
 }
 
 static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
