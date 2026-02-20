@@ -1,11 +1,12 @@
 
+#include <errno.h>
+
 #include <rlc/sdu.h>
 #include <rlc/utils.h>
 #include <rlc/sched.h>
+#include <rlc/backend.h>
 
-#include "backend.h"
 #include "encode.h"
-#include "methods.h"
 
 typedef void (*offload_fn)(struct rlc_sched_item *);
 
@@ -45,13 +46,18 @@ static void offload_tx_submit(struct rlc_sched_item *item)
 {
         rlc_errno status;
         struct offload_item *offload;
+        const struct rlc_backend *backend;
 
         offload = offload_get(item);
         gabs_log_dbgf(offload->ctx->logger, "Executing TX submit");
 
-        status = rlc_tx_submit(offload->ctx, offload->arg.buf);
-        if (status != 0) {
-                gabs_log_errf(offload->ctx->logger, "Unable to TX: %i", status);
+        backend = offload->ctx->backend;
+        if (backend->tx_submit != NULL) {
+                status = backend->tx_submit(offload->ctx, offload->arg.buf);
+                if (status != 0) {
+                        gabs_log_errf(offload->ctx->logger, "Unable to TX: %i",
+                                      status);
+                }
         }
 
         offload_dealloc(item);
@@ -61,14 +67,19 @@ static void offload_tx_request(struct rlc_sched_item *item)
 {
         rlc_errno status;
         struct offload_item *offload;
+        const struct rlc_backend *backend;
 
         offload = offload_get(item);
         gabs_log_dbgf(offload->ctx->logger, "Executing TX request");
 
-        status = rlc_tx_request(offload->ctx);
-        if (status != 0) {
-                gabs_log_errf(offload->ctx->logger, "Unable to request TX: %i",
-                              status);
+        backend = offload->ctx->backend;
+
+        if (backend->tx_request != NULL) {
+                status = backend->tx_request(offload->ctx);
+                if (status != 0) {
+                        gabs_log_errf(offload->ctx->logger,
+                                      "Unable to request TX: %i", status);
+                }
         }
 
         offload_dealloc(item);

@@ -6,10 +6,9 @@
 
 #include <rlc/rlc.h>
 #include <rlc/sdu.h>
+#include <rlc/backend.h>
 
-#include "backend.h"
 #include "encode.h"
-#include "methods.h"
 #include "log.h"
 
 struct status_pool {

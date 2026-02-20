@@ -4,7 +4,6 @@
 #include <rlc/seg_buf.h>
 #include <rlc/utils.h>
 #include <rlc/errno.h>
-
 #include <rlc/seg_list.h>
 #include <rlc/seg_buf.h>
 

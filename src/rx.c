@@ -4,9 +4,9 @@
 
 #include <rlc/rlc.h>
 #include <rlc/sdu.h>
+#include <rlc/backend.h>
 
 #include "arq.h"
-#include "backend.h"
 #include "encode.h"
 #include "log.h"
 #include "common.h"

@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-#include "methods.h"
+#include "common.h"
 #include "log.h"
 
 struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx, bool is_tx)

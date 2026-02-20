@@ -26,7 +26,7 @@ static const struct rlc_config default_config = {
         .sn_width = RLC_SN_18BIT,
 };
 
-rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
+rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_backend *backend,
                    const gabs_allocator_h *misc_allocator,
                    const gabs_allocator_h *buf_allocator)
 {
@@ -39,7 +39,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
         }
 
         ctx->conf = &default_config;
-        ctx->methods = methods;
+        ctx->backend = backend;
 
         ctx->alloc_misc = misc_allocator;
         ctx->alloc_buf = buf_allocator;
@@ -75,6 +75,33 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
         }
 
         return 0;
+}
+
+rlc_errno rlc_attach_listener(struct rlc_context *ctx,
+                              rlc_event_listener listener)
+{
+        rlc_errno status;
+
+        rlc_lock_acquire(&ctx->lock);
+
+        status = 0;
+
+        if (ctx->listener != NULL) {
+                status = -EBUSY;
+        } else {
+                ctx->listener = listener;
+        }
+
+        rlc_lock_release(&ctx->lock);
+
+        return status;
+}
+
+void rlc_detach_listener(struct rlc_context *ctx)
+{
+        rlc_lock_acquire(&ctx->lock);
+        ctx->listener = NULL;
+        rlc_lock_release(&ctx->lock);
 }
 
 rlc_errno rlc_deinit(struct rlc_context *ctx)

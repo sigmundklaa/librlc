@@ -2,9 +2,19 @@
 #ifndef RLC_BACKEND_H__
 #define RLC_BACKEND_H__
 
-#include <rlc/rlc.h>
+#include <gabs/pbuf.h>
+
+#include <rlc/utils.h>
+#include <rlc/pdu.h>
 
 RLC_BEGIN_DECL
+
+struct rlc_context;
+
+struct rlc_backend {
+        rlc_errno (*tx_submit)(struct rlc_context *, gabs_pbuf);
+        rlc_errno (*tx_request)(struct rlc_context *);
+};
 
 /**
  * @brief Submit @p buf, with a header for @p pdu, to the lower layer (backend).

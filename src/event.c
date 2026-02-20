@@ -10,13 +10,11 @@ static struct rlc_event *event_get(struct rlc_sched_item *item)
 
 static void event_fire(struct rlc_context *ctx, struct rlc_event *event)
 {
-        const struct rlc_methods *methods = ctx->methods;
-        if (methods->event == NULL) {
-                rlc_assert(0);
+        if (ctx->listener == NULL) {
                 return;
         }
 
-        methods->event(ctx, event);
+        ctx->listener(ctx, event);
 }
 
 static void event_dealloc(struct rlc_sched_item *item)
@@ -28,7 +26,7 @@ static void event_dealloc(struct rlc_sched_item *item)
 
         switch (event->type) {
         case RLC_EVENT_RX_DONE_DIRECT:
-                gabs_pbuf_decref(*event->buf);
+                gabs_pbuf_decref(*event->rx_done_direct.buf);
         default:
                 rlc_sdu_decref(event->sdu);
         }
@@ -120,7 +118,7 @@ void rlc_event_tx_done(struct rlc_context *ctx, struct rlc_sdu *sdu)
         gabs_log_inff(ctx->logger, "TX; SDU %" PRIu32 " transmitted (%zuB)",
                       sdu->sn, gabs_pbuf_size(sdu->tx.buffer));
 
-        sdu_event(ctx, sdu, RLC_EVENT_TX_DONE);
+        sdu_event(ctx, sdu, RLC_EVENT_TX_RELEASE);
 }
 
 void rlc_event_rx_drop(struct rlc_context *ctx, struct rlc_sdu *sdu)
@@ -134,5 +132,5 @@ void rlc_event_tx_fail(struct rlc_context *ctx, struct rlc_sdu *sdu)
 {
         gabs_log_errf(ctx->logger, "Failed transmit of SN=%" PRIu32, sdu->sn);
 
-        sdu_event(ctx, sdu, RLC_EVENT_TX_FAIL);
+        sdu_event(ctx, sdu, RLC_EVENT_TX_RELEASE);
 }

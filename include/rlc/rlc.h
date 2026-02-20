@@ -21,15 +21,9 @@
 #include <rlc/tx.h>
 #include <rlc/event.h>
 #include <rlc/sched.h>
+#include <rlc/backend.h>
 
 RLC_BEGIN_DECL
-
-struct rlc_methods {
-        rlc_errno (*tx_submit)(struct rlc_context *, gabs_pbuf);
-        rlc_errno (*tx_request)(struct rlc_context *);
-
-        void (*event)(struct rlc_context *, const struct rlc_event *);
-};
 
 enum rlc_service_type {
         RLC_AM,
@@ -103,7 +97,8 @@ typedef struct rlc_context {
 
         struct rlc_sched sched;
 
-        const struct rlc_methods *methods;
+        const struct rlc_backend *backend;
+        rlc_event_listener listener;
 
         const gabs_logger_h *logger;
         const gabs_allocator_h *alloc_buf;
@@ -112,7 +107,7 @@ typedef struct rlc_context {
         rlc_platform platform;
 } rlc_context;
 
-rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_methods *methods,
+rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_backend *backend,
                    const gabs_allocator_h *misc_allocator,
                    const gabs_allocator_h *buf_allocator);
 
@@ -137,6 +132,11 @@ static inline const struct rlc_config *rlc_get_config(struct rlc_context *ctx)
 {
         return ctx->conf;
 }
+
+rlc_errno rlc_attach_listener(struct rlc_context *ctx,
+                              rlc_event_listener listener);
+
+void rlc_detach_listener(struct rlc_context *ctx);
 
 rlc_errno rlc_deinit(struct rlc_context *ctx);
 

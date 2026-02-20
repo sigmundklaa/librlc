@@ -24,4 +24,19 @@ static inline void rlc_lock_release(gabs_mutex *lock)
         }
 }
 
+static inline void *rlc_alloc(struct rlc_context *ctx, size_t size)
+{
+        void *mem;
+        if (gabs_alloc(ctx->alloc_misc, size, &mem) != 0) {
+                return NULL;
+        }
+
+        return mem;
+}
+
+static inline void rlc_dealloc(struct rlc_context *ctx, void *mem)
+{
+        (void)gabs_dealloc(ctx->alloc_misc, mem);
+}
+
 #endif /* RLC_COMMON_H__ */
