@@ -21,7 +21,6 @@ static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                 return -ENODATA;
         }
 
-        rlc_arq_tx_register(ctx, pdu);
         buf = gabs_pbuf_view(sdu->buffer, pdu->seg_offset, pdu->size,
                              ctx->alloc_buf);
         gabs_log_dbgf(ctx->logger, "Sending PDU: size %zu, buffer size: %zu",
@@ -71,25 +70,6 @@ static bool pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         return true;
 }
 
-static void adjust_poll_sn(struct rlc_context *ctx)
-{
-        rlc_list_it it;
-        struct rlc_sdu *sdu;
-
-        rlc_list_foreach(&ctx->tx.sdus, it)
-        {
-                sdu = rlc_sdu_from_it(it);
-
-                /* Set POLL_SN to the highest SN of the PDUs submitted
-                 * to the lower layer */
-                if ((sdu->segments->seg.start != 0 ||
-                     sdu->segments->next != NULL) &&
-                    sdu->sn > ctx->poll_sn) {
-                        ctx->poll_sn = sdu->sn;
-                }
-        }
-}
-
 static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                       struct rlc_pdu *pdu, size_t size_avail)
 {
@@ -131,32 +111,7 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 }
         }
 
-        ctx->tx.pdu_without_poll += 1;
-        ctx->tx.byte_without_poll += pdu->size;
-
-        pdu->flags.polled = rlc_arq_tx_pollable(ctx, sdu);
-        if (pdu->flags.polled) {
-                ctx->tx.pdu_without_poll = 0;
-                ctx->tx.byte_without_poll = 0;
-
-                adjust_poll_sn(ctx);
-
-                sdu->state = RLC_WAIT;
-
-                status = rlc_timer_restart(ctx->t_poll_retransmit,
-                                           ctx->conf->time_poll_retransmit_us);
-                if (status == 0) {
-                        gabs_log_dbgf(ctx->logger, "Started t-PollRetransmit");
-                } else {
-                        gabs_log_errf(ctx->logger,
-                                      "Unable to start t-PollRetransmit: "
-                                      "%" RLC_PRI_ERRNO,
-                                      status);
-                }
-
-                gabs_log_dbgf(ctx->logger, "TX; Polling %" PRIu32 " for status",
-                              pdu->sn);
-        }
+        rlc_arq_tx_pdu_fill(ctx, sdu, pdu);
 
         rlc_log_tx_sdu(ctx->logger, sdu);
 

@@ -43,7 +43,7 @@ static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
 {
         gabs_log_dbgf(ctx->logger, "Retransmitting poll");
 
-        ctx->force_poll = true;
+        ctx->arq.force_poll = true;
 
         rlc_backend_tx_request(ctx);
 }
@@ -52,7 +52,7 @@ static void alarm_status_prohibit(rlc_timer timer, struct rlc_context *ctx)
 {
         gabs_log_dbgf(ctx->logger, "Status prohibit expired");
 
-        ctx->status_prohibit = false;
+        ctx->arq.status_prohibit = false;
 
         rlc_backend_tx_request(ctx);
 }
@@ -61,10 +61,10 @@ static rlc_errno restart_status_prohibit(struct rlc_context *ctx)
 {
         rlc_errno status;
 
-        status = rlc_timer_restart(ctx->t_status_prohibit,
+        status = rlc_timer_restart(ctx->arq.t_status_prohibit,
                                    ctx->conf->time_status_prohibit_us);
         if (status == 0) {
-                ctx->status_prohibit = true;
+                ctx->arq.status_prohibit = true;
         }
 
         return status;
@@ -274,7 +274,7 @@ static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
 
 static void stop_poll_retransmit(struct rlc_context *ctx)
 {
-        (void)rlc_timer_stop(ctx->t_poll_retransmit);
+        (void)rlc_timer_stop(ctx->arq.t_poll_retransmit);
 }
 
 /**
@@ -343,7 +343,7 @@ static void process_nack_offset(struct rlc_context *ctx,
                 return;
         }
 
-        if (sdu->sn == ctx->poll_sn) {
+        if (sdu->sn == ctx->arq.poll_sn) {
                 stop_poll_retransmit(ctx);
         }
 
@@ -486,7 +486,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         pdu.sn = next_sn;
         pdu.flags.is_status = 1;
 
-        ctx->gen_status = false;
+        ctx->arq.gen_status = false;
 
         status = restart_status_prohibit(ctx);
         if (status != 0) {
@@ -563,7 +563,7 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
 
         /* This should have been cleared if anything has been transmitted. If
          * not, we need to retransmit something to include the poll */
-        if (ctx->force_poll) {
+        if (ctx->arq.force_poll) {
                 (void)memset(&pdu, 0, sizeof(pdu));
                 header_size = rlc_pdu_header_size(ctx, &pdu);
                 if (header_size > max_size) {
@@ -606,30 +606,30 @@ size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size)
 
         ret = 0;
 
-        if (ctx->gen_status && !ctx->status_prohibit) {
+        if (ctx->arq.gen_status && !ctx->arq.status_prohibit) {
                 ret += tx_status(ctx, max_size);
         }
 
-        if (ctx->force_poll) {
+        if (ctx->arq.force_poll) {
                 ret += tx_poll(ctx, max_size);
         }
 
         return ret;
 }
 
-bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
-                         const struct rlc_sdu *sdu)
+static bool tx_pollable(const struct rlc_context *ctx,
+                        const struct rlc_sdu *sdu)
 {
         if (ctx->conf->type != RLC_AM) {
                 return false;
         }
 
-        if (ctx->force_poll) {
+        if (ctx->arq.force_poll) {
                 return true;
         }
 
-        if (ctx->tx.pdu_without_poll >= ctx->conf->pdu_without_poll_max ||
-            ctx->tx.byte_without_poll >= ctx->conf->byte_without_poll_max) {
+        if (ctx->arq.pdu_without_poll >= ctx->conf->pdu_without_poll_max ||
+            ctx->arq.byte_without_poll >= ctx->conf->byte_without_poll_max) {
                 return true;
         }
 
@@ -646,10 +646,55 @@ bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
         return true;
 }
 
-void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
+static void adjust_poll_sn(struct rlc_context *ctx)
 {
+        rlc_list_it it;
+        struct rlc_sdu *sdu;
+
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
+
+                /* Set POLL_SN to the highest SN of the PDUs submitted
+                 * to the lower layer */
+                if (rlc_sdu_submitted(sdu) && sdu->sn > ctx->arq.poll_sn) {
+                        ctx->arq.poll_sn = sdu->sn;
+                }
+        }
+}
+
+void rlc_arq_tx_pdu_fill(struct rlc_context *ctx, struct rlc_sdu *sdu,
+                         struct rlc_pdu *pdu)
+{
+        rlc_errno status;
+
+        ctx->arq.pdu_without_poll += 1;
+        ctx->arq.byte_without_poll += pdu->size;
+
+        pdu->flags.polled = tx_pollable(ctx, sdu);
         if (pdu->flags.polled) {
-                ctx->force_poll = false;
+                ctx->arq.pdu_without_poll = 0;
+                ctx->arq.byte_without_poll = 0;
+
+                adjust_poll_sn(ctx);
+
+                sdu->state = RLC_WAIT;
+
+                status = rlc_timer_restart(ctx->arq.t_poll_retransmit,
+                                           ctx->conf->time_poll_retransmit_us);
+                if (status == 0) {
+                        gabs_log_dbgf(ctx->logger, "Started t-PollRetransmit");
+                } else {
+                        gabs_log_errf(ctx->logger,
+                                      "Unable to start t-PollRetransmit: "
+                                      "%" RLC_PRI_ERRNO,
+                                      status);
+                }
+
+                gabs_log_dbgf(ctx->logger, "TX; Polling %" PRIu32 " for status",
+                              pdu->sn);
+
+                ctx->arq.force_poll = false;
         }
 }
 
@@ -667,7 +712,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
                       ", %zu",
                       pdu->sn, ctx->poll_sn, gabs_pbuf_size(*buf));
 
-        if (pdu->sn > ctx->poll_sn) {
+        if (pdu->sn > ctx->arq.poll_sn) {
                 stop_poll_retransmit(ctx);
         }
 
@@ -697,22 +742,22 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 void rlc_arq_rx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
 {
         if (pdu->flags.polled) {
-                ctx->gen_status = true;
+                ctx->arq.gen_status = true;
         }
 }
 
 rlc_errno rlc_arq_init(struct rlc_context *ctx)
 {
         if (ctx->conf->type == RLC_AM) {
-                ctx->t_poll_retransmit =
+                ctx->arq.t_poll_retransmit =
                         rlc_timer_install(alarm_poll_retransmit, ctx, 0);
-                if (!rlc_timer_okay(ctx->t_poll_retransmit)) {
+                if (!rlc_timer_okay(ctx->arq.t_poll_retransmit)) {
                         return -ENOTSUP;
                 }
 
-                ctx->t_status_prohibit =
+                ctx->arq.t_status_prohibit =
                         rlc_timer_install(alarm_status_prohibit, ctx, 0);
-                if (!rlc_timer_okay(ctx->t_status_prohibit)) {
+                if (!rlc_timer_okay(ctx->arq.t_status_prohibit)) {
                         return -ENOTSUP;
                 }
         }
@@ -724,11 +769,11 @@ rlc_errno rlc_arq_deinit(struct rlc_context *ctx)
 {
         rlc_errno status;
 
-        status = rlc_timer_uninstall(ctx->t_status_prohibit);
+        status = rlc_timer_uninstall(ctx->arq.t_status_prohibit);
         if (status != 0) {
                 return status;
         }
 
-        status = rlc_timer_uninstall(ctx->t_poll_retransmit);
+        status = rlc_timer_uninstall(ctx->arq.t_poll_retransmit);
         return status;
 }

@@ -20,30 +20,11 @@ rlc_errno rlc_arq_deinit(struct rlc_context *ctx);
 size_t rlc_arq_tx_yield(struct rlc_context *ctx, size_t max_size);
 
 /**
- * @brief Determine if the next PDU for @p sdu should poll
- *
- * Returns `true` if:
- * - `type` == `RLC_AM` and
- *   - Retransmitted (not the last segment in the list) or
- *   - Bytes without poll exceeded threshhold or
- *   - PDU without poll exceeded threshhold or
- *   - Last segment
- *
- * @param ctx Context
- * @param sdu
- * @return bool
- * @retval true Should Poll
- * @retval false Shouldn't poll
+ * @brief "Fill" PDU with ARQ contents. This essentially just modifies the
+ * poll bit, and handles state variables.
  */
-bool rlc_arq_tx_pollable(const struct rlc_context *ctx,
-                         const struct rlc_sdu *sdu);
-
-/**
- * @brief Register @p pdu as being transmitted.
- *
- * This updates the internal ARQ state depending on @p pdu.
- */
-void rlc_arq_tx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu);
+void rlc_arq_tx_pdu_fill(struct rlc_context *ctx, struct rlc_sdu *sdu,
+                         struct rlc_pdu *pdu);
 
 /**
  * @brief Receive status PDU

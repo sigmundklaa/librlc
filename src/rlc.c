@@ -129,13 +129,12 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         ctx->rx.highest_ack = 0;
         ctx->rx.next_status_trigger = 0;
         ctx->tx.next_sn = 0;
-        ctx->tx.retx_count = 0;
-        ctx->tx.pdu_without_poll = 0;
-        ctx->tx.byte_without_poll = 0;
-        ctx->poll_sn = 0;
-        ctx->force_poll = 0;
-        ctx->status_prohibit = false;
-        ctx->gen_status = 0;
+        ctx->arq.pdu_without_poll = 0;
+        ctx->arq.byte_without_poll = 0;
+        ctx->arq.poll_sn = 0;
+        ctx->arq.force_poll = 0;
+        ctx->arq.status_prohibit = false;
+        ctx->arq.gen_status = 0;
 
         rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
         rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);

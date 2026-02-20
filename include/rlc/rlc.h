@@ -59,8 +59,9 @@ struct rlc_config {
 typedef struct rlc_context {
         const struct rlc_config *conf;
 
-        /* RLC specification state variables */
         struct {
+                rlc_timer t_reassembly;
+
                 /* RX_NEXT_HIGHEST holds the value of the SN following
                  * the SN of the SDU with the highest SN among received
                  * SDUs. */
@@ -81,25 +82,24 @@ typedef struct rlc_context {
         } rx;
         struct {
                 uint32_t next_sn; /* TX_Next in the spec */
-                uint32_t retx_count;
-
-                size_t pdu_without_poll;
-                size_t byte_without_poll;
 
                 struct rlc_window win;
                 rlc_sdu_queue sdus;
         } tx;
+        struct {
+                size_t pdu_without_poll;
+                size_t byte_without_poll;
 
-        rlc_timer t_reassembly;
-        rlc_timer t_poll_retransmit;
-        rlc_timer t_status_prohibit;
-        bool status_prohibit; /* t-statusProhibit running */
+                rlc_timer t_poll_retransmit;
+                rlc_timer t_status_prohibit;
+                bool status_prohibit; /* t-statusProhibit running */
 
-        uint32_t poll_sn;
-        bool force_poll;
+                uint32_t poll_sn;
+                bool force_poll;
 
-        /* Generate status PDU on next available opportunity. AM only*/
-        bool gen_status;
+                /* Generate status PDU on next available opportunity. AM only*/
+                bool gen_status;
+        } arq;
 
         gabs_mutex lock;
 

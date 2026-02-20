@@ -205,8 +205,9 @@ static void deliver_ready(struct rlc_context *ctx)
 rlc_errno rlc_rx_init(struct rlc_context *ctx)
 {
         if (ctx->conf->type != RLC_TM) {
-                ctx->t_reassembly = rlc_timer_install(alarm_reassembly, ctx, 0);
-                if (!rlc_timer_okay(ctx->t_reassembly)) {
+                ctx->rx.t_reassembly =
+                        rlc_timer_install(alarm_reassembly, ctx, 0);
+                if (!rlc_timer_okay(ctx->rx.t_reassembly)) {
                         return -ENOTSUP;
                 }
         }
@@ -216,7 +217,7 @@ rlc_errno rlc_rx_init(struct rlc_context *ctx)
 
 rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
 {
-        return rlc_timer_uninstall(ctx->t_reassembly);
+        return rlc_timer_uninstall(ctx->rx.t_reassembly);
 }
 
 static rlc_errno insert_buffer(struct rlc_context *ctx, struct rlc_sdu *sdu,
@@ -411,20 +412,20 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
         }
 
         if (ctx->conf->type == RLC_AM || ctx->conf->type == RLC_UM) {
-                if (rlc_timer_active(ctx->t_reassembly) &&
+                if (rlc_timer_active(ctx->rx.t_reassembly) &&
                     should_stop_reassembly(ctx)) {
                         gabs_log_dbgf(ctx->logger, "Stopping t-Reassembly");
-                        (void)rlc_timer_stop(ctx->t_reassembly);
+                        (void)rlc_timer_stop(ctx->rx.t_reassembly);
                 }
 
                 /* This case includes the case of being stopped in the above
                  * case. */
-                if (!rlc_timer_active(ctx->t_reassembly) &&
+                if (!rlc_timer_active(ctx->rx.t_reassembly) &&
                     should_start_reassembly(ctx)) {
                         gabs_log_dbgf(ctx->logger, "Starting t-Reassembly");
 
                         ctx->rx.next_status_trigger = ctx->rx.next_highest;
-                        (void)rlc_timer_start(ctx->t_reassembly,
+                        (void)rlc_timer_start(ctx->rx.t_reassembly,
                                               ctx->conf->time_reassembly_us);
                 }
         }
