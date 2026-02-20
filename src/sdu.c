@@ -153,41 +153,6 @@ size_t rlc_sdu_seg_byte_offset(const struct rlc_sdu *sdu, size_t start)
         return ret;
 }
 
-void rlc_sdu_insert(rlc_sdu_queue *q, struct rlc_sdu *sdu)
-{
-        struct rlc_sdu *cur;
-        rlc_list_it it;
-
-        rlc_list_foreach(q, it)
-        {
-                cur = rlc_sdu_from_it(it);
-
-                if (sdu->sn <= cur->sn) {
-                        break;
-                }
-        }
-
-        (void)rlc_list_it_put_front(it, &sdu->list_node);
-}
-
-void rlc_sdu_remove(rlc_sdu_queue *q, struct rlc_sdu *sdu)
-{
-        struct rlc_sdu *cur;
-        rlc_list_it it;
-
-        rlc_list_foreach(q, it)
-        {
-                cur = rlc_sdu_from_it(it);
-
-                if (cur == sdu) {
-                        (void)rlc_list_it_pop(it, NULL);
-                        return;
-                }
-        }
-
-        rlc_assert(0);
-}
-
 struct rlc_sdu *rlc_sdu_alloc(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
@@ -226,6 +191,41 @@ void rlc_sdu_decref(struct rlc_sdu *sdu)
         }
 }
 
+void rlc_sdu_queue_insert(rlc_sdu_queue *q, struct rlc_sdu *sdu)
+{
+        struct rlc_sdu *cur;
+        rlc_list_it it;
+
+        rlc_list_foreach(q, it)
+        {
+                cur = rlc_sdu_from_it(it);
+
+                if (sdu->sn <= cur->sn) {
+                        break;
+                }
+        }
+
+        (void)rlc_list_it_put_front(it, &sdu->list_node);
+}
+
+void rlc_sdu_queue_remove(rlc_sdu_queue *q, struct rlc_sdu *sdu)
+{
+        struct rlc_sdu *cur;
+        rlc_list_it it;
+
+        rlc_list_foreach(q, it)
+        {
+                cur = rlc_sdu_from_it(it);
+
+                if (cur == sdu) {
+                        (void)rlc_list_it_pop(it, NULL);
+                        return;
+                }
+        }
+
+        rlc_assert(0);
+}
+
 void rlc_sdu_queue_clear(rlc_sdu_queue *q)
 {
         rlc_list_it it;
@@ -240,7 +240,7 @@ void rlc_sdu_queue_clear(rlc_sdu_queue *q)
         }
 }
 
-struct rlc_sdu *rlc_sdu_get(rlc_sdu_queue *q, uint32_t sn)
+struct rlc_sdu *rlc_sdu_queue_get(rlc_sdu_queue *q, uint32_t sn)
 {
         struct rlc_sdu *sdu;
         rlc_list_it it;

@@ -158,7 +158,7 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
 
                 if (ctx->conf->type != RLC_AM && pdu.flags.is_last) {
                         rlc_event_tx_done(ctx, sdu);
-                        rlc_sdu_remove(&ctx->tx.sdus, sdu);
+                        rlc_sdu_queue_remove(&ctx->tx.sdus, sdu);
                         rlc_dealloc(ctx, sdu);
                 }
 
@@ -241,7 +241,7 @@ rlc_errno rlc_tx(struct rlc_context *ctx, gabs_pbuf buf,
                 return status;
         }
 
-        rlc_sdu_insert(&ctx->tx.sdus, sdu);
+        rlc_sdu_queue_insert(&ctx->tx.sdus, sdu);
 
         if (sdu_out != NULL) {
                 *sdu_out = sdu;

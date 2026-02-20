@@ -73,19 +73,19 @@ void rlc_sdu_decref(struct rlc_sdu *sdu);
 
 void rlc_sdu_queue_clear(rlc_sdu_queue *q);
 
-static inline struct rlc_sdu *rlc_sdu_head(rlc_sdu_queue *q)
+static inline struct rlc_sdu *rlc_sdu_queue_head(rlc_sdu_queue *q)
 {
         return rlc_sdu_from_it(rlc_list_it_init(q));
 }
 
 /** @brief Get SDU with SN=@p sn */
-struct rlc_sdu *rlc_sdu_get(rlc_sdu_queue *queue, uint32_t sn);
+struct rlc_sdu *rlc_sdu_queue_get(rlc_sdu_queue *queue, uint32_t sn);
 
 /** @brief Insert SDU into SDU list */
-void rlc_sdu_insert(rlc_sdu_queue *queue, struct rlc_sdu *sdu);
+void rlc_sdu_queue_insert(rlc_sdu_queue *queue, struct rlc_sdu *sdu);
 
 /** @brief Remove SDU from SDU list */
-void rlc_sdu_remove(rlc_sdu_queue *queue, struct rlc_sdu *sdu);
+void rlc_sdu_queue_remove(rlc_sdu_queue *queue, struct rlc_sdu *sdu);
 
 /**
  * @brief Check if parts of @p sdu has been submitted to the lower layer

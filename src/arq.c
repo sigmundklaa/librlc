@@ -209,7 +209,7 @@ static void tx_win_shift(struct rlc_context *ctx)
         struct rlc_sdu *sdu;
         uint32_t lowest;
 
-        sdu = rlc_sdu_head(&ctx->tx.sdus);
+        sdu = rlc_sdu_queue_head(&ctx->tx.sdus);
         lowest = sdu == NULL ? ctx->tx.next_sn : sdu->sn;
 
         rlc_window_move_to(&ctx->tx.win, lowest);
@@ -316,7 +316,7 @@ static bool retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         if (sdu->retx_count >= ctx->conf->max_retx_threshhold) {
                 gabs_log_errf(ctx->logger,
                               "Transmit failed; exceeded retry limit");
-                rlc_sdu_remove(&ctx->tx.sdus, sdu);
+                rlc_sdu_queue_remove(&ctx->tx.sdus, sdu);
 
                 if (sdu->sn == rlc_window_base(&ctx->tx.win)) {
                         tx_win_shift(ctx);
@@ -336,7 +336,7 @@ static void process_nack_offset(struct rlc_context *ctx,
 {
         struct rlc_sdu *sdu;
 
-        sdu = rlc_sdu_get(&ctx->tx.sdus, cur->nack_sn);
+        sdu = rlc_sdu_queue_get(&ctx->tx.sdus, cur->nack_sn);
         if (sdu == NULL) {
                 gabs_log_errf(ctx->logger, "Unrecognized SN: %u", cur->nack_sn);
 
@@ -361,7 +361,7 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
         struct rlc_sdu *sdu;
         struct rlc_segment seg;
 
-        sdu = rlc_sdu_get(&ctx->tx.sdus, cur->nack_sn);
+        sdu = rlc_sdu_queue_get(&ctx->tx.sdus, cur->nack_sn);
         if (sdu == NULL) {
                 gabs_log_errf(ctx->logger, "Unknown SDU: %" PRIu32,
                               cur->nack_sn);

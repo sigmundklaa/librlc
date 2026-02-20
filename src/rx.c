@@ -21,7 +21,7 @@ static bool should_restart_reassembly(struct rlc_context *ctx)
         }
 
         if (ctx->rx.next_highest == ctx->rx.highest_ack + 1) {
-                sdu = rlc_sdu_get(&ctx->rx.sdus, ctx->rx.highest_ack);
+                sdu = rlc_sdu_queue_get(&ctx->rx.sdus, ctx->rx.highest_ack);
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -44,7 +44,8 @@ static bool should_start_reassembly(struct rlc_context *ctx)
         }
 
         if (remaining == 1) {
-                sdu = rlc_sdu_get(&ctx->rx.sdus, rlc_window_base(&ctx->rx.win));
+                sdu = rlc_sdu_queue_get(&ctx->rx.sdus,
+                                        rlc_window_base(&ctx->rx.win));
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -67,7 +68,8 @@ static bool should_stop_reassembly(struct rlc_context *ctx)
         }
 
         if (remaining == 1) {
-                sdu = rlc_sdu_get(&ctx->rx.sdus, rlc_window_base(&ctx->rx.win));
+                sdu = rlc_sdu_queue_get(&ctx->rx.sdus,
+                                        rlc_window_base(&ctx->rx.win));
 
                 if (sdu != NULL && !rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -316,7 +318,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 rlc_arq_rx_register(ctx, &pdu);
         }
 
-        sdu = rlc_sdu_get(&ctx->rx.sdus, pdu.sn);
+        sdu = rlc_sdu_queue_get(&ctx->rx.sdus, pdu.sn);
 
         if (sdu == NULL) {
                 if (!rlc_window_has(&ctx->rx.win, pdu.sn)) {
@@ -343,7 +345,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 sdu->state = RLC_READY;
                 sdu->sn = pdu.sn;
 
-                rlc_sdu_insert(&ctx->rx.sdus, sdu);
+                rlc_sdu_queue_insert(&ctx->rx.sdus, sdu);
         }
 
         if (sdu->state != RLC_READY) {
@@ -406,7 +408,7 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                                 ctx->rx.highest_ack = lowest;
                         }
                 } else {
-                        rlc_sdu_remove(&ctx->rx.sdus, sdu);
+                        rlc_sdu_queue_remove(&ctx->rx.sdus, sdu);
                         rlc_sdu_decref(sdu);
                 }
         }
