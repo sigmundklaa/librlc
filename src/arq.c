@@ -373,7 +373,7 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
         seg.start = 0;
         seg.end = gabs_pbuf_size(sdu->tx.buffer);
 
-        (void)retransmit_sdu(ctx, sdu, &cur->offset);
+        (void)retransmit_sdu(ctx, sdu, &seg);
 }
 
 static void process_nack_range(struct rlc_context *ctx,
