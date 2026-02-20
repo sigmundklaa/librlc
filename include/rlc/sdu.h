@@ -12,16 +12,11 @@
 #include <rlc/list.h>
 #include <rlc/seg_buf.h>
 #include <rlc/utils.h>
+#include <rlc/config.h>
 
 struct rlc_context;
 
 RLC_BEGIN_DECL
-
-enum rlc_sn_width {
-        RLC_SN_6BIT,
-        RLC_SN_12BIT,
-        RLC_SN_18BIT,
-};
 
 enum rlc_sdu_state {
         RLC_READY,
