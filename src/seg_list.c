@@ -20,7 +20,6 @@ rlc_errno rlc_seg_list_insert(rlc_seg_list *list, struct rlc_seg *segptr,
         struct rlc_seg_item *slot;
         struct rlc_seg_item *left;
         struct rlc_seg_item *right;
-        struct rlc_seg_item **lastp;
         struct rlc_seg seg;
         rlc_list_it it;
         bool overlap_left;
