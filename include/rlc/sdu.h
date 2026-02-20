@@ -160,6 +160,15 @@ static inline bool rlc_sdu_loss_detected(struct rlc_sdu *sdu)
         return !rlc_list_it_eoi(rlc_list_it_next(it)) || item->seg.start != 0;
 }
 
+static inline gabs_pbuf rlc_sdu_buffer(struct rlc_sdu *sdu)
+{
+        if (sdu->is_tx) {
+                return sdu->tx.buffer;
+        }
+
+        return sdu->rx.buffer.buf;
+}
+
 RLC_END_DECL
 
 #endif /* RLC_SDU_H__ */
