@@ -22,7 +22,7 @@ target_sources(
     tests
     PRIVATE
         test_list.cc
-        test_rx.cc
+        test_seg_buf.cc
 )
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
@@ -38,8 +38,5 @@ macro(remove_sources)
             HEADER_FILE_ONLY ON
     )
 endmacro()
-
-# Included in test_rx.cc
-remove_sources(rx.c)
 
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain rlc gabs)

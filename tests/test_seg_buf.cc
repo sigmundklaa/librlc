@@ -5,9 +5,7 @@
 #include <gabs/alloc/std.hh>
 
 #include <rlc/rlc.h>
-#include <rlc/sdu.h>
-
-#include "rx.c"
+#include <rlc/seg_buf.h>
 
 inline gabs::memory::allocator alloc;
 
@@ -108,45 +106,41 @@ template <class Container> auto matches_contents(const Container &container)
 
 }; // namespace
 
-TEST_CASE("rx buffer insertion", "[rx]")
+TEST_CASE("segment buffer", "[seg_buf]")
 {
         ::rlc_errno status;
-        ::rlc_sdu sdu;
-        ::rlc_context ctx;
-        std::memset(&sdu, 0, sizeof(sdu));
-
-        ctx.alloc_misc = alloc;
-        ctx.alloc_buf = alloc;
+        ::rlc_seg_buf buf = {0};
 
         std::string test_str = "hello world";
 
-        ::rlc_segment seg = {8, 12};
-        ::rlc_segment uniq;
-        status = ::insert_buffer(&ctx, &sdu,
-                                 buf_create(std::string("89ab")).get(), seg);
+        ::rlc_seg seg = {8, 12};
+        ::rlc_seg uniq;
+        status = ::rlc_seg_buf_insert(
+                &buf, buf_create(std::string("89ab")).get(), seg, alloc, alloc);
         REQUIRE(status == 0);
-        REQUIRE_THAT(sdu.buffer, matches_contents(std::string("89ab")));
+        REQUIRE_THAT(buf.buf, matches_contents(std::string("89ab")));
 
         seg.start = 13;
         seg.end = 16;
-        status = ::insert_buffer(&ctx, &sdu,
-                                 buf_create(std::string("def")).get(), seg);
+        status = ::rlc_seg_buf_insert(
+                &buf, buf_create(std::string("def")).get(), seg, alloc, alloc);
         REQUIRE(status == 0);
-        REQUIRE_THAT(sdu.buffer, matches_contents(std::string("89abdef")));
+        REQUIRE_THAT(buf.buf, matches_contents(std::string("89abdef")));
 
         seg.start = 0;
         seg.end = 8;
-        status = ::insert_buffer(
-                &ctx, &sdu, buf_create(std::string("01234567")).get(), seg);
+        status = ::rlc_seg_buf_insert(&buf,
+                                      buf_create(std::string("01234567")).get(),
+                                      seg, alloc, alloc);
         REQUIRE(status == 0);
-        REQUIRE_THAT(sdu.buffer,
-                     matches_contents(std::string("0123456789abdef")));
+        REQUIRE_THAT(buf.buf, matches_contents(std::string("0123456789abdef")));
 
         seg.start = 8;
         seg.end = 16;
-        status = ::insert_buffer(
-                &ctx, &sdu, buf_create(std::string("89abcdef")).get(), seg);
+        status = ::rlc_seg_buf_insert(&buf,
+                                      buf_create(std::string("89abcdef")).get(),
+                                      seg, alloc, alloc);
         REQUIRE(status == 0);
-        REQUIRE_THAT(sdu.buffer,
+        REQUIRE_THAT(buf.buf,
                      matches_contents(std::string("0123456789abcdef")));
 }
