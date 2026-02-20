@@ -163,56 +163,28 @@ static bool serve_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
         return true;
 }
 
-/* This is a bit inefficient, but allows for modification of the list if
- * tx_pdu_view re-enters from the user backend. In that case, the current SDU
- * could potentially be removed, meaning we need to restart iteration to
- * ensure the correct elements are used. */
-static struct rlc_sdu *first_sdu_ready(struct rlc_context *ctx)
-{
-        rlc_list_it it;
-        struct rlc_sdu *sdu;
-
-        rlc_list_foreach(&ctx->tx.sdus, it)
-        {
-                sdu = rlc_sdu_from_it(it);
-
-                if (sdu->state == RLC_READY) {
-                        return sdu;
-                }
-        }
-
-        return NULL;
-}
-
 size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
 {
         struct rlc_sdu *sdu;
         struct rlc_pdu pdu;
         ptrdiff_t ret;
         size_t size;
+        rlc_list_it it;
 
         size = 0;
 
-        /* Iterate, without using the `rlc_each_node` macros, for two reasons:
-         * 1) We may need to remove the element during iteration, which would
-         *    require `rlc_each_node_safe`. However:
-         * 2) We release the lock during iteration, meaning that getting the
-         *    next element at the start (what is done is `rlc_each_node_safe`)
-         *    could cause the next element to be invalid after re-acquiring
-         *    the lock.
-         */
-        for (;;) {
-                sdu = first_sdu_ready(ctx);
+        rlc_list_foreach(&ctx->tx.sdus, it)
+        {
+                sdu = rlc_sdu_from_it(it);
 
-                if (sdu == NULL) {
-                        break;
+                if (sdu->state != RLC_READY) {
+                        continue;
                 }
 
                 (void)memset(&pdu, 0, sizeof(pdu));
 
-                /* TODO: Could continue, but needs to prevent forever loop */
                 if (!serve_sdu(ctx, sdu, &pdu, max_size)) {
-                        break;
+                        continue;
                 }
 
                 gabs_log_dbgf(ctx->logger,
