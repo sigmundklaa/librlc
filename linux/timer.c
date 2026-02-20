@@ -98,8 +98,11 @@ static struct rlc_linux_timer_info *
 timer_from_fd(struct rlc_linux_timer_manager *man, int fd)
 {
         struct rlc_linux_timer_info *t;
+        size_t i;
 
-        for (rlc_each_item(man->timers, t)) {
+        for (i = 0; i < rlc_array_size(man->timers); i++) {
+                t = &man->timers[i];
+
                 if (!timer_valid(t)) {
                         continue;
                 }
@@ -116,8 +119,11 @@ static struct rlc_linux_timer_info *
 timer_alloc(struct rlc_linux_timer_manager *man)
 {
         struct rlc_linux_timer_info *cur;
+        size_t i;
 
-        for (rlc_each_item(man->timers, cur)) {
+        for (i = 0; i < rlc_array_size(man->timers); i++) {
+                cur = &man->timers[i];
+
                 if (mask_set_strict(&cur->state, BIT_USED)) {
                         return cur;
                 }
@@ -176,8 +182,11 @@ static void pfd_push(struct pollfd **arrptr, int fd)
 static void reset_timers(struct rlc_linux_timer_manager *man)
 {
         struct rlc_linux_timer_info *cur;
+        size_t i;
 
-        for (rlc_each_item(man->timers, cur)) {
+        for (i = 0; i < rlc_array_size(man->timers); i++) {
+                cur = &man->timers[i];
+
                 if (!mask_test(&cur->state, BIT_USED)) {
                         continue;
                 }
@@ -197,6 +206,7 @@ static void *worker_(void *man_arg)
         size_t count;
         uint64_t dummy;
         unsigned int state;
+        size_t i;
         struct rlc_linux_timer_info *cur;
         struct pollfd *pfd;
         struct pollfd pfds[RLC_LINUX_TIMER_COUNT_MAX];
@@ -219,7 +229,8 @@ static void *worker_(void *man_arg)
                         atomic_store(&man->work_state, WORK_STATE_NORMAL);
                         continue;
                 } else {
-                        for (rlc_each_item(man->timers, cur)) {
+                        for (i = 0; i < rlc_array_size(man->timers); i++) {
+                                cur = &man->timers[i];
                                 if (!mask_test(&cur->state, BIT_USED)) {
                                         continue;
                                 }
