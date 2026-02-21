@@ -132,11 +132,44 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
         return ret;
 }
 
+static size_t create_nack_segment(struct rlc_context *ctx,
+                                  struct status_pool *pool, gabs_pbuf *buf,
+                                  uint32_t sn, struct rlc_seg segment)
+{
+        struct rlc_pdu_status *cur_status;
+        ptrdiff_t bytes;
+
+        cur_status = status_get(pool);
+        bytes = 0;
+
+        *cur_status = (struct rlc_pdu_status){
+                .ext.has_offset = 1,
+                .nack_sn = sn,
+                .offset = segment,
+        };
+
+        gabs_log_dbgf(ctx->logger, "%" PRIu32 "->%" PRIu32,
+                      cur_status->offset.start, cur_status->offset.end);
+
+        /* Encode the last status instead of the current
+         * one, so that the E1 bit can be set
+         * appropriately. On the first iteration, skip
+         * encoding as there is no last */
+        if (status_count(pool) > 0) {
+                bytes = encode_last(ctx, pool, buf);
+                if (bytes == -ENOSPC) {
+                        return 0;
+                }
+        }
+
+        status_advance(pool);
+        return (size_t)bytes;
+}
+
 static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                                     struct status_pool *pool, gabs_pbuf *buf,
                                     struct rlc_sdu *sdu)
 {
-        struct rlc_pdu_status *cur_status;
         struct rlc_seg_item *seg;
         struct rlc_seg_item *last;
         struct rlc_seg_item *next;
@@ -164,48 +197,52 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
                         break;
                 }
 
-                /* Alternate between two allocated status
-                 * structs, so that we can fill the current one
-                 * and encode the last one */
-                cur_status = status_get(pool);
-
-                *cur_status = (struct rlc_pdu_status){
-                        .ext.has_offset = 1,
-                        .nack_sn = sdu->sn,
-                };
-
+                /* Check if first segment(s) are missing */
                 if (last == NULL && seg->seg.start != 0) {
-                        cur_status->offset.start = 0;
-                        cur_status->offset.end = seg->seg.start;
-                } else if (has_more) {
-                        /* Between two segments */
-                        cur_status->offset.start = seg->seg.end;
-                        cur_status->offset.end = next->seg.start;
-                } else {
-                        /* Last segment registered, but last
-                         * segment of the transmission has not
-                         * been received */
-                        cur_status->offset.start = seg->seg.end;
-                        cur_status->offset.end = RLC_STATUS_SO_MAX;
-                }
-
-                gabs_log_dbgf(ctx->logger, "%" PRIu32 "->%" PRIu32,
-                              cur_status->offset.start, cur_status->offset.end);
-
-                /* Encode the last status instead of the current
-                 * one, so that the E1 bit can be set
-                 * appropriately. On the first iteration, skip
-                 * encoding as there is no last */
-                if (status_count(pool) > 0) {
-                        bytes = encode_last(ctx, pool, buf);
-                        if (bytes == -ENOSPC) {
+                        bytes = create_nack_segment(
+                                ctx, pool, buf, sdu->sn,
+                                (struct rlc_seg){
+                                        .start = 0,
+                                        .end = seg->seg.start,
+                                });
+                        if (bytes == 0) {
                                 break;
                         }
 
-                        remaining -= (size_t)bytes;
+                        remaining -= bytes;
                 }
 
-                status_advance(pool);
+                /* Check if last segment(s) are missing */
+                if (has_more) {
+                        /* Between two segments */
+                        bytes = create_nack_segment(
+                                ctx, pool, buf, sdu->sn,
+                                (struct rlc_seg){
+                                        .start = seg->seg.end,
+                                        .end = next->seg.start,
+                                });
+                        if (bytes == 0) {
+                                break;
+                        }
+
+                        remaining -= bytes;
+                } else if (!sdu->rx.last_received) {
+                        /* Last segment registered, but last
+                         * segment of the transmission has not
+                         * been received */
+                        /* Between two segments */
+                        bytes = create_nack_segment(
+                                ctx, pool, buf, sdu->sn,
+                                (struct rlc_seg){
+                                        .start = seg->seg.end,
+                                        .end = RLC_STATUS_SO_MAX,
+                                });
+                        if (bytes == 0) {
+                                break;
+                        }
+
+                        remaining -= bytes;
+                }
 
                 last = seg;
         }
