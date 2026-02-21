@@ -629,8 +629,7 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
                 }
 
                 seg.end = last_seg->seg.end;
-                seg.start = seg.end - rlc_min(seg.end - last_seg->seg.start,
-                                              max_size - header_size);
+                seg.start = seg.end - rlc_min(seg.end, max_size - header_size);
 
                 gabs_log_dbgf(ctx->logger,
                               "Rescheduling TX of %" PRIu32
