@@ -37,11 +37,6 @@ typedef struct rlc_context {
                  * SDUs. */
                 uint32_t next_highest;
 
-                /* Specification: RX_HIGHEST_STATUS holds the highest possible
-                 * value of the SN which can be indicated by ACK_SN when
-                 * constructing status PDU. */
-                uint32_t highest_ack;
-
                 /* RX_NEXT_STATUS_TRIGGER holds the value of the SN
                  * following the SN of the SDU which triggered
                  * reassembly. */

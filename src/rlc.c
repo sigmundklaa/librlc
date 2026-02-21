@@ -153,7 +153,6 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         rlc_sdu_queue_clear(&ctx->rx.sdus);
 
         ctx->rx.next_highest = 0;
-        ctx->rx.highest_ack = 0;
         ctx->rx.next_status_trigger = 0;
         ctx->tx.next_sn = 0;
         ctx->arq.pdu_without_poll = 0;

@@ -15,13 +15,16 @@
 static bool should_restart_reassembly(struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
+        uint32_t rx_highest_ack;
 
-        if (ctx->rx.next_highest > ctx->rx.highest_ack + 1) {
+        rx_highest_ack = rlc_window_base(&ctx->rx.win);
+
+        if (ctx->rx.next_highest > rx_highest_ack + 1) {
                 return true;
         }
 
-        if (ctx->rx.next_highest == ctx->rx.highest_ack + 1) {
-                sdu = rlc_sdu_queue_get(&ctx->rx.sdus, ctx->rx.highest_ack);
+        if (ctx->rx.next_highest == rx_highest_ack + 1) {
+                sdu = rlc_sdu_queue_get(&ctx->rx.sdus, rx_highest_ack);
 
                 if (sdu != NULL && rlc_sdu_loss_detected(sdu)) {
                         return true;
@@ -127,7 +130,6 @@ static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
                 next += 1;
         }
 
-        ctx->rx.highest_ack = lowest;
         rlc_window_move_to(&ctx->rx.win, lowest);
 
         rlc_list_foreach(&ctx->rx.sdus, it)
@@ -174,7 +176,7 @@ static uint32_t lowest_sn_not_recv(struct rlc_context *ctx)
                 next += 1;
         }
 
-        return UINT32_MAX;
+        return ctx->rx.next_highest;
 }
 
 static void deliver_ready(struct rlc_context *ctx)
@@ -259,14 +261,12 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 
         if (sdu == NULL) {
                 if (!rlc_window_has(&ctx->rx.win, pdu.sn)) {
-                        gabs_log_wrnf(
-                                ctx->logger,
-                                "RX; SN %" PRIu32 " outside RX window (%" PRIu32
-                                "->%" PRIu32
-                                "), dropping (highest_status=%" PRIu32 ")",
-                                pdu.sn, rlc_window_base(&ctx->rx.win),
-                                rlc_window_end(&ctx->rx.win),
-                                ctx->rx.highest_ack);
+                        gabs_log_wrnf(ctx->logger,
+                                      "RX; SN %" PRIu32
+                                      " outside RX window (%" PRIu32
+                                      "->%" PRIu32 "), dropping",
+                                      pdu.sn, rlc_window_base(&ctx->rx.win),
+                                      rlc_window_end(&ctx->rx.win));
                         goto exit;
                 }
 
@@ -330,20 +330,16 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                  * the status before deallocating. */
                 if (ctx->conf->type == RLC_AM) {
                         sdu->state = RLC_DONE;
+                        lowest = lowest_sn_not_recv(ctx);
+
                         deliver_ready(ctx);
 
-                        lowest = rlc_min(lowest_sn_not_recv(ctx),
-                                         ctx->rx.next_highest);
-
-                        gabs_log_dbgf(ctx->logger,
-                                      "Shifting RX window to %" PRIu32, lowest);
-
                         if (sdu->sn == rlc_window_base(&ctx->rx.win)) {
-                                rlc_window_move_to(&ctx->rx.win, lowest);
-                        }
+                                gabs_log_dbgf(ctx->logger,
+                                              "Shifting RX window to %" PRIu32,
+                                              lowest);
 
-                        if (sdu->sn == ctx->rx.highest_ack) {
-                                ctx->rx.highest_ack = lowest;
+                                rlc_window_move_to(&ctx->rx.win, lowest);
                         }
                 } else {
                         rlc_sdu_queue_remove(&ctx->rx.sdus, sdu);
