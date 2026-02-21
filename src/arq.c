@@ -560,6 +560,7 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
 
         /* First try and transmit the poll with an unsubmitted segment */
         ret = rlc_tx_yield(ctx, max_size);
+        max_size -= ret;
 
         /* This should have been cleared if anything has been transmitted. If
          * not, we need to retransmit something to include the poll */
@@ -594,7 +595,13 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
                 seg.start = seg.end - rlc_min(seg.end - seg.start,
                                               max_size - header_size);
 
+                gabs_log_dbgf(ctx->logger,
+                              "Rescheduling TX of %" PRIu32
+                              " to generate poll (%" PRIu32 "->%" PRIu32 ")",
+                              sdu->sn, seg.start, seg.end);
+
                 (void)retransmit_sdu(ctx, sdu, &seg);
+                ret += rlc_tx_yield(ctx, max_size);
         }
 
         return ret;
