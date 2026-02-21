@@ -344,12 +344,16 @@ static bool retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 return true;
         }
 
-        gabs_log_dbgf(ctx->logger,
-                      "Marking SDU SN=%" PRIu32 " for (re)transmission",
-                      sdu->sn);
+        /* Not already pending for retransmission: increase retx_count,
+         * mark for retransmission. */
+        if (sdu->state != RLC_READY) {
+                gabs_log_dbgf(ctx->logger,
+                              "Marking SDU SN=%" PRIu32 " for (re)transmission",
+                              sdu->sn);
 
-        sdu->state = RLC_READY;
-        sdu->tx.retx_count++;
+                sdu->state = RLC_READY;
+                sdu->tx.retx_count++;
+        }
 
         if (sdu->tx.retx_count >= ctx->conf->max_retx_threshhold) {
                 gabs_log_errf(ctx->logger,
