@@ -12,6 +12,23 @@
 #include "common.h"
 #include "log.h"
 
+void rlc_tx_init(struct rlc_context *ctx)
+{
+        rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
+}
+
+void rlc_tx_reset(struct rlc_context *ctx)
+{
+        rlc_sdu_queue_clear(&ctx->tx.sdus);
+        rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
+        ctx->tx.next_sn = 0;
+}
+
+void rlc_tx_deinit(struct rlc_context *ctx)
+{
+        rlc_sdu_queue_clear(&ctx->tx.sdus);
+}
+
 static ptrdiff_t tx_pdu_view(struct rlc_context *ctx, struct rlc_pdu *pdu,
                              struct rlc_sdu *sdu, size_t max_size)
 {

@@ -11,6 +11,7 @@ RLC_BEGIN_DECL
 struct rlc_context;
 
 rlc_errno rlc_rx_init(struct rlc_context *ctx);
+void rlc_rx_reset(struct rlc_context* ctx);
 rlc_errno rlc_rx_deinit(struct rlc_context *ctx);
 
 void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf);

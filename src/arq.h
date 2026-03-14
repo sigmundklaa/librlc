@@ -7,6 +7,7 @@
 RLC_BEGIN_DECL
 
 rlc_errno rlc_arq_init(struct rlc_context *ctx);
+void rlc_arq_reset(struct rlc_context *ctx);
 rlc_errno rlc_arq_deinit(struct rlc_context *ctx);
 
 /**

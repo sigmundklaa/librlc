@@ -49,11 +49,11 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_backend *backend,
                 return status;
         }
 
-        rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
-        rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
+        rlc_tx_init(ctx);
 
         status = rlc_arq_init(ctx);
         if (status != 0) {
+                rlc_tx_deinit(ctx);
                 (void)rlc_sched_deinit(&ctx->sched);
                 (void)gabs_mutex_deinit(&ctx->lock);
                 return status;
@@ -62,6 +62,7 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_backend *backend,
         status = rlc_rx_init(ctx);
         if (status != 0) {
                 (void)rlc_arq_deinit(ctx);
+                rlc_tx_deinit(ctx);
                 (void)rlc_sched_deinit(&ctx->sched);
                 (void)gabs_mutex_deinit(&ctx->lock);
 
@@ -102,8 +103,7 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
 {
         rlc_errno status;
 
-        rlc_sdu_queue_clear(&ctx->tx.sdus);
-        rlc_sdu_queue_clear(&ctx->rx.sdus);
+        rlc_tx_deinit(ctx);
 
         status = rlc_rx_deinit(ctx);
         if (status != 0) {
@@ -130,30 +130,14 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
 
 rlc_errno rlc_reset(struct rlc_context *ctx)
 {
-        rlc_errno status;
-
         rlc_lock_acquire(&ctx->lock);
 
         rlc_sched_reset(&ctx->sched);
+        rlc_arq_reset(ctx);
+        rlc_tx_reset(ctx);
+        rlc_rx_reset(ctx);
 
-        rlc_sdu_queue_clear(&ctx->tx.sdus);
-        rlc_sdu_queue_clear(&ctx->rx.sdus);
-
-        ctx->rx.next_highest = 0;
-        ctx->rx.next_status_trigger = 0;
-        ctx->tx.next_sn = 0;
-        ctx->arq.pdu_without_poll = 0;
-        ctx->arq.byte_without_poll = 0;
-        ctx->arq.poll_sn = 0;
-        ctx->arq.force_poll = 0;
-        ctx->arq.status_prohibit = false;
-        ctx->arq.gen_status = 0;
-
-        rlc_window_init(&ctx->tx.win, 0, ctx->conf->window_size);
-        rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
-
-exit:
         rlc_lock_release(&ctx->lock);
 
-        return status;
+        return 0;
 }

@@ -210,6 +210,8 @@ rlc_errno rlc_rx_init(struct rlc_context *ctx)
 {
         rlc_errno status;
 
+        rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
+
         if (ctx->conf->type != RLC_TM) {
                 status = rlc_timer_install(&ctx->rx.t_reassembly,
                                            alarm_reassembly, ctx);
@@ -221,9 +223,22 @@ rlc_errno rlc_rx_init(struct rlc_context *ctx)
         return 0;
 }
 
+void rlc_rx_reset(struct rlc_context *ctx)
+{
+        rlc_sdu_queue_clear(&ctx->rx.sdus);
+        rlc_window_init(&ctx->rx.win, 0, ctx->conf->window_size);
+
+        ctx->rx.next_highest = 0;
+        ctx->rx.next_status_trigger = 0;
+
+        (void)rlc_timer_stop(&ctx->rx.t_reassembly);
+}
+
 rlc_errno rlc_rx_deinit(struct rlc_context *ctx)
 {
-        return rlc_timer_uninstall(ctx->rx.t_reassembly);
+        rlc_sdu_queue_clear(&ctx->rx.sdus);
+
+        return rlc_timer_uninstall(&ctx->rx.t_reassembly);
 }
 
 void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)

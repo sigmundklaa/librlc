@@ -820,6 +820,19 @@ rlc_errno rlc_arq_init(struct rlc_context *ctx)
         return 0;
 }
 
+void rlc_arq_reset(struct rlc_context *ctx)
+{
+        ctx->arq.pdu_without_poll = 0;
+        ctx->arq.byte_without_poll = 0;
+        ctx->arq.poll_sn = 0;
+        ctx->arq.force_poll = 0;
+        ctx->arq.status_prohibit = false;
+        ctx->arq.gen_status = 0;
+
+        (void)rlc_timer_stop(&ctx->arq.t_status_prohibit);
+        (void)rlc_timer_stop(&ctx->arq.t_poll_retransmit);
+}
+
 rlc_errno rlc_arq_deinit(struct rlc_context *ctx)
 {
         rlc_errno status;
