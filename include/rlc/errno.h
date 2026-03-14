@@ -3,6 +3,7 @@
 #define RLC_ERRNO_H__
 
 #include <stdint.h>
+#include <errno.h>
 
 #include <rlc/utils.h>
 
