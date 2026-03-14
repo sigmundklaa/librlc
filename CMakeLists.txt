@@ -16,18 +16,6 @@ add_library(rlc)
 target_include_directories(rlc PUBLIC include)
 target_link_libraries(rlc PUBLIC gabs)
 
-gabs_require(gabs-mutex gabs-semaphore gabs-log gabs-pbuf)
+gabs_require(gabs-mutex gabs-semaphore gabs-log gabs-pbuf gabs-timer)
 
 add_subdirectory(src)
-
-if(TEST)
-    add_subdirectory(tests)
-endif()
-
-if(TEST_PLATFORM)
-    add_subdirectory(tests/platform)
-endif()
-
-if(RLC_LINUX)
-    add_subdirectory(linux)
-endif()

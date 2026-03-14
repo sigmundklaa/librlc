@@ -103,7 +103,7 @@ static void drop_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu)
         rlc_sdu_decref(sdu);
 }
 
-static void alarm_reassembly(rlc_timer timer, struct rlc_context *ctx)
+static void alarm_reassembly(struct rlc_timer *timer, struct rlc_context *ctx)
 {
         struct rlc_sdu *sdu;
         uint32_t lowest;
@@ -208,11 +208,13 @@ static void deliver_ready(struct rlc_context *ctx)
 
 rlc_errno rlc_rx_init(struct rlc_context *ctx)
 {
+        rlc_errno status;
+
         if (ctx->conf->type != RLC_TM) {
-                ctx->rx.t_reassembly =
-                        rlc_timer_install(alarm_reassembly, ctx, 0);
-                if (!rlc_timer_okay(ctx->rx.t_reassembly)) {
-                        return -ENOTSUP;
+                status = rlc_timer_install(&ctx->rx.t_reassembly,
+                                           alarm_reassembly, ctx);
+                if (status != 0) {
+                        return status;
                 }
         }
 
@@ -348,20 +350,20 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
         }
 
         if (ctx->conf->type == RLC_AM || ctx->conf->type == RLC_UM) {
-                if (rlc_timer_active(ctx->rx.t_reassembly) &&
+                if (rlc_timer_active(&ctx->rx.t_reassembly) &&
                     should_stop_reassembly(ctx)) {
                         gabs_log_dbgf(ctx->logger, "Stopping t-Reassembly");
-                        (void)rlc_timer_stop(ctx->rx.t_reassembly);
+                        (void)rlc_timer_stop(&ctx->rx.t_reassembly);
                 }
 
                 /* This case includes the case of being stopped in the above
                  * case. */
-                if (!rlc_timer_active(ctx->rx.t_reassembly) &&
+                if (!rlc_timer_active(&ctx->rx.t_reassembly) &&
                     should_start_reassembly(ctx)) {
                         gabs_log_dbgf(ctx->logger, "Starting t-Reassembly");
 
                         ctx->rx.next_status_trigger = ctx->rx.next_highest;
-                        (void)rlc_timer_start(ctx->rx.t_reassembly,
+                        (void)rlc_timer_start(&ctx->rx.t_reassembly,
                                               ctx->conf->time_reassembly_us);
                 }
         }

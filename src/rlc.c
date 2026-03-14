@@ -7,7 +7,6 @@
 
 #include <rlc/rlc.h>
 #include <rlc/timer.h>
-#include <rlc/plat.h>
 #include <rlc/sdu.h>
 
 #include "arq.h"
@@ -32,11 +31,6 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_backend *backend,
 {
         rlc_errno status;
         (void)memset(ctx, 0, sizeof(*ctx));
-
-        status = rlc_plat_init(&ctx->platform, ctx);
-        if (status != 0) {
-                return status;
-        }
 
         ctx->conf = &default_config;
         ctx->backend = backend;
@@ -131,8 +125,6 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
                 return status;
         }
 
-        status = rlc_plat_deinit(&ctx->platform);
-
         return status;
 }
 
@@ -141,11 +133,6 @@ rlc_errno rlc_reset(struct rlc_context *ctx)
         rlc_errno status;
 
         rlc_lock_acquire(&ctx->lock);
-
-        status = rlc_plat_reset(&ctx->platform);
-        if (status != 0) {
-                goto exit;
-        }
 
         rlc_sched_reset(&ctx->sched);
 

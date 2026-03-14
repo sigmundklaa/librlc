@@ -11,7 +11,6 @@
 #include <gabs/mutex.h>
 #include <gabs/log.h>
 
-#include <rlc/plat.h>
 #include <rlc/window.h>
 #include <rlc/timer.h>
 #include <rlc/sdu.h>
@@ -30,7 +29,7 @@ typedef struct rlc_context {
         const struct rlc_config *conf;
 
         struct {
-                rlc_timer t_reassembly;
+                struct rlc_timer t_reassembly;
 
                 /* RX_NEXT_HIGHEST holds the value of the SN following
                  * the SN of the SDU with the highest SN among received
@@ -55,8 +54,8 @@ typedef struct rlc_context {
                 size_t pdu_without_poll;
                 size_t byte_without_poll;
 
-                rlc_timer t_poll_retransmit;
-                rlc_timer t_status_prohibit;
+                struct rlc_timer t_poll_retransmit;
+                struct rlc_timer t_status_prohibit;
                 bool status_prohibit; /* t-statusProhibit running */
 
                 uint32_t poll_sn;
@@ -76,8 +75,6 @@ typedef struct rlc_context {
         const gabs_logger_h *logger;
         const gabs_allocator_h *alloc_buf;
         const gabs_allocator_h *alloc_misc;
-
-        rlc_platform platform;
 } rlc_context;
 
 rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_backend *backend,

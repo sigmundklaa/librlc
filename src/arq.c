@@ -38,7 +38,8 @@ static size_t status_count(struct status_pool *pool)
         return pool->alloc_count;
 }
 
-static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
+static void alarm_poll_retransmit(struct rlc_timer *timer,
+                                  struct rlc_context *ctx)
 {
         gabs_log_dbgf(ctx->logger, "Retransmitting poll");
 
@@ -47,7 +48,8 @@ static void alarm_poll_retransmit(rlc_timer timer, struct rlc_context *ctx)
         rlc_backend_tx_request(ctx);
 }
 
-static void alarm_status_prohibit(rlc_timer timer, struct rlc_context *ctx)
+static void alarm_status_prohibit(struct rlc_timer *timer,
+                                  struct rlc_context *ctx)
 {
         gabs_log_dbgf(ctx->logger, "Status prohibit expired");
 
@@ -60,7 +62,7 @@ static rlc_errno restart_status_prohibit(struct rlc_context *ctx)
 {
         rlc_errno status;
 
-        status = rlc_timer_restart(ctx->arq.t_status_prohibit,
+        status = rlc_timer_restart(&ctx->arq.t_status_prohibit,
                                    ctx->conf->time_status_prohibit_us);
         if (status == 0) {
                 ctx->arq.status_prohibit = true;
@@ -311,7 +313,7 @@ static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
 
 static void stop_poll_retransmit(struct rlc_context *ctx)
 {
-        (void)rlc_timer_stop(ctx->arq.t_poll_retransmit);
+        (void)rlc_timer_stop(&ctx->arq.t_poll_retransmit);
 }
 
 /**
@@ -731,7 +733,7 @@ void rlc_arq_tx_pdu_fill(struct rlc_context *ctx, struct rlc_sdu *sdu,
 
                 sdu->state = RLC_WAIT;
 
-                status = rlc_timer_restart(ctx->arq.t_poll_retransmit,
+                status = rlc_timer_restart(&ctx->arq.t_poll_retransmit,
                                            ctx->conf->time_poll_retransmit_us);
                 if (status == 0) {
                         gabs_log_dbgf(ctx->logger, "Started t-PollRetransmit");
@@ -799,17 +801,19 @@ void rlc_arq_rx_register(struct rlc_context *ctx, const struct rlc_pdu *pdu)
 
 rlc_errno rlc_arq_init(struct rlc_context *ctx)
 {
+        rlc_errno status;
+
         if (ctx->conf->type == RLC_AM) {
-                ctx->arq.t_poll_retransmit =
-                        rlc_timer_install(alarm_poll_retransmit, ctx, 0);
-                if (!rlc_timer_okay(ctx->arq.t_poll_retransmit)) {
-                        return -ENOTSUP;
+                status = rlc_timer_install(&ctx->arq.t_poll_retransmit,
+                                           alarm_poll_retransmit, ctx);
+                if (status != 0) {
+                        return status;
                 }
 
-                ctx->arq.t_status_prohibit =
-                        rlc_timer_install(alarm_status_prohibit, ctx, 0);
-                if (!rlc_timer_okay(ctx->arq.t_status_prohibit)) {
-                        return -ENOTSUP;
+                status = rlc_timer_install(&ctx->arq.t_status_prohibit,
+                                           alarm_status_prohibit, ctx);
+                if (status != 0) {
+                        return status;
                 }
         }
 
@@ -820,11 +824,11 @@ rlc_errno rlc_arq_deinit(struct rlc_context *ctx)
 {
         rlc_errno status;
 
-        status = rlc_timer_uninstall(ctx->arq.t_status_prohibit);
+        status = rlc_timer_uninstall(&ctx->arq.t_status_prohibit);
         if (status != 0) {
                 return status;
         }
 
-        status = rlc_timer_uninstall(ctx->arq.t_poll_retransmit);
+        status = rlc_timer_uninstall(&ctx->arq.t_poll_retransmit);
         return status;
 }

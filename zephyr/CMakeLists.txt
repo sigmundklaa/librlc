@@ -2,12 +2,11 @@
 zephyr_library()
 zephyr_interface_library_named(rlc_iface)
 
-gabs_require(gabs-mutex gabs-semaphore gabs-log gabs-pbuf)
+gabs_require(gabs-mutex gabs-semaphore gabs-log gabs-pbuf gabs-timer)
 
 target_include_directories(
     rlc_iface
     INTERFACE
-        ${ZEPHYR_CURRENT_CMAKE_DIR}
         ${ZEPHYR_CURRENT_MODULE_DIR}/include
 )
 target_link_libraries(rlc_iface INTERFACE gabs_iface)
@@ -28,6 +27,4 @@ zephyr_library_sources(
     ${ZEPHYR_CURRENT_MODULE_DIR}/src/sched.c
     ${ZEPHYR_CURRENT_MODULE_DIR}/src/seg_buf.c
     ${ZEPHYR_CURRENT_MODULE_DIR}/src/seg_list.c
-    ${ZEPHYR_CURRENT_CMAKE_DIR}/init.c
-    ${ZEPHYR_CURRENT_CMAKE_DIR}/timer.c
 )
