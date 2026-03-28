@@ -43,6 +43,11 @@ rlc_errno rlc_init(struct rlc_context *ctx, const struct rlc_backend *backend,
                 return status;
         }
 
+        status = gabs_timer_ctx_init(&ctx->timer_ctx);
+        if (status != 0) {
+                return status;
+        }
+
         status = rlc_sched_init(&ctx->sched);
         if (status != 0) {
                 (void)gabs_mutex_deinit(&ctx->lock);
@@ -116,6 +121,11 @@ rlc_errno rlc_deinit(struct rlc_context *ctx)
         }
 
         status = rlc_sched_deinit(&ctx->sched);
+        if (status != 0) {
+                return status;
+        }
+
+        status = gabs_timer_ctx_deinit(&ctx->timer_ctx);
         if (status != 0) {
                 return status;
         }

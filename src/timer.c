@@ -31,7 +31,7 @@ rlc_errno rlc_timer_install(struct rlc_timer *timer, rlc_timer_cb cb,
 {
         timer->cb = cb;
         timer->ctx = ctx;
-        timer->gtimer = gabs_timer_install(timer_alarm, timer);
+        timer->gtimer = gabs_timer_install(&ctx->timer_ctx, timer_alarm, timer);
 
         if (!gabs_timer_okay(timer->gtimer)) {
                 return -ENODEV;

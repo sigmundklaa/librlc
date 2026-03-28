@@ -10,6 +10,7 @@
 #include <gabs/alloc.h>
 #include <gabs/mutex.h>
 #include <gabs/log.h>
+#include <gabs/timer.h>
 
 #include <rlc/window.h>
 #include <rlc/timer.h>
@@ -66,6 +67,7 @@ typedef struct rlc_context {
         } arq;
 
         gabs_mutex lock;
+        gabs_timer_ctx timer_ctx;
 
         struct rlc_sched sched;
 
