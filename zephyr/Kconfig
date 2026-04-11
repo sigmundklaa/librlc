@@ -2,6 +2,7 @@
 config RLC
     bool "Enable RLC module"
     default y
+    select NET_BUF
 
 config APP_LINK_WITH_ZRLC
     bool "Link RLC with application"
