@@ -276,7 +276,7 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
                 sdu = rlc_sdu_from_it(it);
 
                 if (sdu->state == RLC_READY) {
-                        continue;
+                        break;
                 }
 
                 if (sdu->sn >= sn) {
@@ -433,10 +433,6 @@ static void process_nack_range(struct rlc_context *ctx,
         rlc_list_foreach(&ctx->tx.sdus, it)
         {
                 sdu = rlc_sdu_from_it(it);
-
-                if (sdu->state == RLC_READY) {
-                        continue;
-                }
 
                 if (rlc_window_has(&nack_win, sdu->sn)) {
                         seg.start = 0;
