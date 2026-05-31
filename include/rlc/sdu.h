@@ -101,6 +101,8 @@ static inline bool rlc_sdu_submitted(struct rlc_sdu *sdu)
         it = rlc_list_it_init(&sdu->tx.unsent);
         item = rlc_seg_item_from_it(it);
 
+        assert(item != NULL);
+
         return !rlc_list_it_eoi(rlc_list_it_next(it)) || item->seg.start != 0;
 }
 
