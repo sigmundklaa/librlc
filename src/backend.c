@@ -120,7 +120,7 @@ ptrdiff_t rlc_backend_tx_submit(struct rlc_context *ctx, struct rlc_pdu *pdu,
                 return -ENOMEM;
         }
 
-        rlc_pdu_encode(ctx, pdu, &header);
+        rlc_pdu_encode(pdu, &header, ctx->conf->type, ctx->conf->sn_width);
 
         gabs_pbuf_chain_front(&buf, header);
         size = gabs_pbuf_size(buf);

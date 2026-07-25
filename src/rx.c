@@ -251,7 +251,8 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
 
         rlc_lock_acquire(&ctx->lock);
 
-        status = rlc_pdu_decode(ctx, &pdu, &buf);
+        status = rlc_pdu_decode(&pdu, &buf, ctx->conf->type,
+                                ctx->conf->sn_width);
         if (status != 0) {
                 gabs_log_errf(ctx->logger, "Decode failed: %" RLC_PRI_ERRNO,
                               (rlc_errno)status);

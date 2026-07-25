@@ -92,12 +92,12 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
 
         log_rx_status(ctx->logger, last);
 
-        size = rlc_status_size(ctx, last);
+        size = rlc_status_size(last, ctx->conf->sn_width);
         if (size > gabs_pbuf_tailroom(*buf)) {
                 return -ENOSPC;
         }
 
-        rlc_status_encode(ctx, last, buf);
+        rlc_status_encode(last, buf, ctx->conf->sn_width);
 
         return size;
 }
@@ -605,7 +605,8 @@ static size_t tx_poll(struct rlc_context *ctx, size_t max_size)
          * not, we need to retransmit something to include the poll */
         if (ctx->arq.force_poll) {
                 (void)memset(&pdu, 0, sizeof(pdu));
-                header_size = rlc_pdu_header_size(ctx, &pdu);
+                header_size =
+                        rlc_pdu_header_size(&pdu, RLC_AM, ctx->conf->sn_width);
                 if (header_size > max_size) {
                         /* TODO: issue tx request? */
                         gabs_log_errf(
@@ -753,8 +754,9 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         size_t offset;
         rlc_errno status;
         struct rlc_pdu_status cur;
+        const struct rlc_config *conf = ctx->conf;
 
-        offset = rlc_pdu_header_size(ctx, pdu);
+        offset = rlc_pdu_header_size(pdu, RLC_AM, ctx->conf->sn_width);
 
         gabs_log_dbgf(ctx->logger,
                       "Status PDU received: SN %" PRIu32 ", POLL_SN %" PRIu32
@@ -768,7 +770,7 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
         tx_nack_clear(ctx, pdu->sn);
 
         /* Iterate over every status */
-        while ((status = rlc_status_decode(ctx, &cur, buf)) == 0) {
+        while ((status = rlc_status_decode(&cur, buf, conf->sn_width)) == 0) {
                 gabs_log_dbgf(ctx->logger,
                               "TX AM STATUS; NACK_SN: %" PRIu32
                               ", OFFSET: %" PRIu32 "->%" PRIu32
