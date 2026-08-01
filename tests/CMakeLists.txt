@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(rlc-test)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 include(FetchContent)
 
 FetchContent_Declare(
@@ -27,6 +30,9 @@ target_sources(
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 add_subdirectory(../ rlc)
+add_subdirectory(gabs-overrides)
+
+gabs_select(gabs-timer-rlc-tests)
 
 # Remove source file
 macro(remove_sources)
