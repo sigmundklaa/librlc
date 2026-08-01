@@ -137,7 +137,8 @@ class matcher : public Catch::Matchers::MatcherGenericBase
 
         bool match(const pbuf_ptr &buf) const
         {
-                return match(buf.weak());
+                auto weak_buf = buf.weak();
+                return match(weak_buf);
         }
 
         std::string describe() const override

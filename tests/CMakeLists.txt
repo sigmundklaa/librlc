@@ -27,6 +27,7 @@ target_sources(
         test_list.cc
         test_seg_buf.cc
         test_am.cc
+        test_encode.cc
 )
 target_include_directories(
     tests
