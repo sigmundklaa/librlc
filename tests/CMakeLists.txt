@@ -27,7 +27,12 @@ target_sources(
         test_list.cc
         test_seg_buf.cc
 )
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+target_include_directories(
+    tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
 add_subdirectory(../ rlc)
 add_subdirectory(gabs-overrides)

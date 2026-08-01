@@ -1,0 +1,169 @@
+
+#ifndef RLC_TEST_UTIL_BUF_HH__
+#define RLC_TEST_UTIL_BUF_HH__
+
+#include <memory>
+
+#include <catch2/catch_all.hpp>
+
+#include <gabs/pbuf.h>
+#include <gabs/alloc/std.hh>
+
+#include "util/mem.hh"
+
+namespace rlc::test::util::buf
+{
+
+struct pbuf_unref {
+        void operator()(::gabs_pbuf *buf)
+        {
+                ::gabs_pbuf_decref(*buf);
+                delete buf;
+        }
+};
+
+class pbuf_ptr
+{
+      public:
+        pbuf_ptr(::gabs_pbuf buf) : ptr(new ::gabs_pbuf)
+        {
+                *ptr = buf;
+        }
+
+        pbuf_ptr(const pbuf_ptr &) = delete;
+        pbuf_ptr(pbuf_ptr &&other)
+        {
+                std::swap(ptr, other.ptr);
+        };
+
+        ::gabs_pbuf weak() const
+        {
+                return *ptr;
+        }
+
+        ::gabs_pbuf strong() const
+        {
+                ::gabs_pbuf_incref(*ptr);
+                return *ptr;
+        }
+
+        operator ::gabs_pbuf() const
+        {
+                return weak();
+        }
+
+        operator ::gabs_pbuf *() const
+        {
+                return ptr.get();
+        }
+
+        std::vector<std::byte> vec() const
+        {
+                std::vector<std::byte> ret;
+                ::gabs_pbuf_ci it;
+
+                gabs_pbuf_ci_foreach(ptr.get(), it)
+                {
+                        auto data = reinterpret_cast<const std::byte *>(
+                                ::gabs_pbuf_ci_data(it));
+                        ret.insert(ret.end(), data,
+                                   data + ::gabs_pbuf_ci_size(it));
+                }
+
+                return ret;
+        }
+
+        operator std::vector<std::byte>() const
+        {
+                return vec();
+        }
+
+      private:
+        mutable std::unique_ptr<::gabs_pbuf, pbuf_unref> ptr;
+};
+
+template <class Iterator> pbuf_ptr create(Iterator begin, Iterator end)
+{
+        /* Automatic reference counting of the buffer. */
+        auto size = (end - begin) * sizeof(typename Iterator::value_type);
+
+        auto buf = ::gabs_pbuf_new(mem::alloc, size);
+        assert(::gabs_pbuf_okay(buf));
+
+        ::gabs_pbuf_put(&buf, (const uint8_t *)&*begin, size);
+
+        return pbuf_ptr(buf);
+}
+
+template <class Container> pbuf_ptr create(const Container &container)
+{
+        return create(container.cbegin(), container.cend());
+}
+
+template <class Iterator>
+class matcher : public Catch::Matchers::MatcherGenericBase
+{
+      public:
+        matcher(Iterator begin, Iterator end) : begin(begin), end(end)
+        {
+        }
+
+        bool match(::gabs_pbuf &buf) const
+        {
+                ::gabs_pbuf_ci it;
+                Iterator cmp_it = begin;
+
+                gabs_pbuf_ci_foreach(&buf, it)
+                {
+                        auto data = ::gabs_pbuf_ci_data(it);
+                        auto size = ::gabs_pbuf_ci_size(it);
+
+                        auto count = size;
+                        count /= sizeof(typename Iterator::value_type);
+
+                        if (cmp_it + count > end) {
+                                return false;
+                        }
+
+                        if (std::memcmp(&*cmp_it, data, size) != 0) {
+                                return false;
+                        }
+
+                        cmp_it += count;
+                }
+
+                return true;
+        }
+
+        bool match(const pbuf_ptr &buf) const
+        {
+                return match(buf.weak());
+        }
+
+        std::string describe() const override
+        {
+                auto size = (end - begin);
+                size *= sizeof(typename Iterator::value_type);
+
+                return "Equal to sequence of size " + std::to_string(size) +
+                       ": " + std::string(begin, end);
+        }
+
+      private:
+        Iterator begin;
+        Iterator end;
+};
+
+template <class Iterator> auto matches_contents(Iterator start, Iterator end)
+{
+        return matcher(start, end);
+}
+
+template <class Container> auto matches_contents(const Container &container)
+{
+        return matcher(container.begin(), container.end());
+}
+
+}; // namespace rlc::test::util::buf
+
+#endif /* RLC_TEST_UTIL_BUF_HH__ * */
