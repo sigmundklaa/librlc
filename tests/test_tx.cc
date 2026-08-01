@@ -103,23 +103,15 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 REQUIRE(pdu.size == 3);
         }
 
-        SECTION("TM: no header overhead, PDU fits exactly")
+        SECTION("TM: zero header overhead, SDU passes through unmodified")
         {
+                /* Spec 4.2.1.1.2: TM must not include any RLC headers and
+                 * must not segment SDUs. pdu_size_adjust must leave a
+                 * fitting TM PDU completely unchanged. */
                 ::rlc_context ctx = {};
                 ctx.conf = &tm_conf;
                 ::rlc_pdu pdu = {};
                 pdu.size = 5;
-
-                REQUIRE(pdu_size_adjust(&ctx, &pdu, 5) == true);
-                REQUIRE(pdu.size == 5);
-        }
-
-        SECTION("TM: PDU trimmed to max_size with no header cost")
-        {
-                ::rlc_context ctx = {};
-                ctx.conf = &tm_conf;
-                ::rlc_pdu pdu = {};
-                pdu.size = 10;
 
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 5) == true);
                 REQUIRE(pdu.size == 5);
@@ -190,8 +182,10 @@ TEST_CASE("serve_sdu", "[tx][static]")
                 ::rlc_seg_list_clear(&sdu.tx.unsent, mem::alloc);
         }
 
-        SECTION("TM: zero header overhead, PDU trimmed to exact max_size")
+        SECTION("TM: SDU served whole with no header overhead")
         {
+                /* Spec 5.2.1.1.1: TM submits SDU to lower layer without any
+                 * modification. No header bytes, no segmentation. */
                 ::rlc_context ctx = {};
                 ctx.conf = &tm_conf;
                 ctx.alloc_misc = mem::alloc;
@@ -201,16 +195,17 @@ TEST_CASE("serve_sdu", "[tx][static]")
                 sdu.state = RLC_READY;
                 ::rlc_list_init(&sdu.tx.unsent);
 
-                ::rlc_seg seg = {.start = 0, .end = 10};
+                ::rlc_seg seg = {.start = 0, .end = 5};
                 REQUIRE(::rlc_seg_list_insert_all(&sdu.tx.unsent, seg,
                                                   mem::alloc) == 0);
 
                 ::rlc_pdu pdu = {};
                 REQUIRE(serve_sdu(&ctx, &sdu, &pdu, 5) == true);
                 REQUIRE(pdu.flags.is_first == 1);
-                REQUIRE(pdu.flags.is_last == 0);
+                REQUIRE(pdu.flags.is_last == 1);
                 REQUIRE(pdu.size == 5);
-                REQUIRE(sdu.state == RLC_READY);
+                REQUIRE(pdu.seg_offset == 0);
+                REQUIRE(sdu.state == RLC_WAIT);
 
                 ::rlc_seg_list_clear(&sdu.tx.unsent, mem::alloc);
         }
