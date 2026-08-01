@@ -1,4 +1,6 @@
 
+#include <cerrno>
+
 #include <catch2/catch_all.hpp>
 
 #include <rlc/rlc.h>
@@ -191,6 +193,28 @@ TEST_CASE("am status pdu ack header encode/decode", "[encode][am][status]")
         REQUIRE(pdu2.flags.is_status == true);
         REQUIRE(pdu2.sn == pdu.sn);
         REQUIRE(pdu2.flags.ext == pdu.flags.ext);
+}
+
+TEST_CASE("am status pdu with reserved CPT is rejected",
+         "[encode][am][status]")
+{
+        auto sn_width = GENERATE(RLC_SN_12BIT, RLC_SN_18BIT);
+        auto cpt = GENERATE(0b001, 0b010, 0b011, 0b100, 0b101, 0b110, 0b111);
+
+        auto w = (sn_width == RLC_SN_12BIT) ? proto::snwidth::W12
+                                            : proto::snwidth::W18;
+
+        proto::am::status expect{0, {}};
+        auto bytes = expect.encode(w);
+        bytes[0] |= static_cast<std::byte>(cpt << 4);
+
+        auto in = buf::create(bytes);
+
+        ::rlc_pdu pdu = {};
+        REQUIRE(::rlc_pdu_decode(&pdu, in, RLC_AM, sn_width) == -ENOTSUP);
+
+        /* Rejected PDU must be left intact for the caller to discard. */
+        REQUIRE_THAT(in, buf::matches_contents(bytes));
 }
 
 TEST_CASE("am status nack part encode/decode", "[encode][am][status]")

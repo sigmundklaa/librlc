@@ -147,7 +147,7 @@ class matcher : public Catch::Matchers::MatcherGenericBase
                         cmp_it += count;
                 }
 
-                return true;
+                return cmp_it == end;
         }
 
         bool match(const pbuf_ptr &buf) const
