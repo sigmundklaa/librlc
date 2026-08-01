@@ -116,9 +116,6 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
 
         SECTION("TM: window too small must return false, not segment")
         {
-                /* Spec 4.2.1.1.2: TM must not segment SDUs. A window
-                 * smaller than the SDU must be refused so the caller skips
-                 * the SDU rather than sending a partial one with no header. */
                 ::rlc_context ctx = {};
                 ctx.conf = &tm_conf;
                 ::rlc_pdu pdu = {};
@@ -130,7 +127,6 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
 
 TEST_CASE("serve_sdu", "[tx][static]")
 {
-        /* UM/TM mode: rlc_arq_tx_pdu_fill does not touch timers for non-AM */
         static const ::rlc_config conf = {
                 .type = RLC_UM,
                 .sn_width = RLC_SN_12BIT,
