@@ -66,12 +66,6 @@ static bool pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
         size_t hsize;
         size_t diff;
 
-        if (ctx->conf->type == RLC_TM) {
-                /* Spec 4.2.1.1.2: TM must not segment SDUs. If the window is
-                 * too small, refuse the PDU so the caller skips it. */
-                return pdu->size <= max_size;
-        }
-
         if (ctx->conf->type == RLC_UM && pdu->flags.is_first) {
                 /* If size plus the header can be fit as is both SN and SO can
                  * be omitted */

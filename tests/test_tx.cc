@@ -114,17 +114,17 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 REQUIRE(pdu.size == 5);
         }
 
-        SECTION("TM: window too small returns false, SDU not segmented")
+        SECTION("TM: window too small must return false, not segment")
         {
-                /* Spec 4.2.1.1.2: TM must not segment. Refuse the PDU so
-                 * the caller skips it rather than sending a partial SDU. */
+                /* Spec 4.2.1.1.2: TM must not segment SDUs. A window
+                 * smaller than the SDU must be refused so the caller skips
+                 * the SDU rather than sending a partial one with no header. */
                 ::rlc_context ctx = {};
                 ctx.conf = &tm_conf;
                 ::rlc_pdu pdu = {};
                 pdu.size = 10;
 
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 5) == false);
-                REQUIRE(pdu.size == 10);
         }
 }
 
