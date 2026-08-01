@@ -99,7 +99,6 @@ TEST_CASE("tx single SDU delivered whole", "[tx]")
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
 
         cnt = 0;
-        /* AM 18-bit header = 3 bytes; payload = 5 bytes */
         auto remain = ::rlc_tx_avail(&ctx, payload.size() + 3);
         REQUIRE(remain == 0);
         REQUIRE(queue.size() == 1);
@@ -121,11 +120,7 @@ TEST_CASE("tx SDU fragmented across yields", "[tx]")
                               backend::request_counter(cnt));
         REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
-        /*
-         * Payload: 6 bytes. Split into two fragments:
-         *   - First yield  (max=6): 3-byte AM header + 3-byte payload (FIRST)
-         *   - Second yield (max=8): 5-byte AM header w/ SO + 3-byte payload (LAST)
-         */
+        /* 6-byte payload split across two yields: FIRST (3 bytes) then LAST (3 bytes) */
         auto sdu_buf = buf::create(std::string("hello!"));
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
 
@@ -173,7 +168,6 @@ TEST_CASE("tx multiple SDUs in single avail", "[tx]")
         REQUIRE(::rlc_tx(&ctx, sdu_b, nullptr) == 0);
 
         cnt = 0;
-        /* Each PDU: 3-byte AM header + 3-byte payload = 6; total = 12 */
         ::rlc_tx_avail(&ctx, 20);
         REQUIRE(queue.size() == 2);
 
@@ -205,7 +199,6 @@ TEST_CASE("tx avail returns size when space is insufficient for header", "[tx]")
         auto sdu_buf = buf::create(std::string("hello"));
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
 
-        /* AM 18-bit header needs 3 bytes; max_size=2 is too small */
         auto remain = ::rlc_tx_avail(&ctx, 2);
         REQUIRE(remain == 2);
         REQUIRE(queue.empty());
@@ -228,10 +221,6 @@ TEST_CASE("tx UM single-packet omits SN", "[tx]")
         auto sdu_buf = buf::create(payload);
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
 
-        /*
-         * pdu_size_adjust optimization: max_size - 1 >= pdu_size
-         * → is_last=1, header encoded as UM ALL (1 byte, SN omitted)
-         */
         auto remain = ::rlc_tx_avail(&ctx, payload.size() + 1);
         REQUIRE(remain == 0);
         REQUIRE(queue.size() == 1);
@@ -265,12 +254,10 @@ TEST_CASE("tx reset clears queue and resets sn", "[tx]")
         REQUIRE(::rlc_reset(&ctx) == 0);
         REQUIRE(ctx.tx.next_sn == 0);
 
-        /* Re-submit after reset: SN starts from 0 again */
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
         REQUIRE(ctx.tx.next_sn == 1);
 
         cnt = 0;
-        /* "hello" = 5 bytes, AM 18-bit header = 3 bytes */
         ::rlc_tx_avail(&ctx, 8);
         REQUIRE(queue.size() == 1);
 
@@ -282,11 +269,6 @@ TEST_CASE("tx reset clears queue and resets sn", "[tx]")
 
 TEST_CASE("pdu_size_adjust", "[tx][static]")
 {
-        /*
-         * AM 18-bit SN: header = 3 bytes (no SO when is_first=1).
-         * AM 18-bit SN: header = 5 bytes (with SO when is_first=0).
-         * UM 12-bit SN: header = 2 bytes (no SO when is_first=1).
-         */
         static const ::rlc_config am_conf = {
                 .type = RLC_AM,
                 .sn_width = RLC_SN_18BIT,
@@ -304,7 +286,6 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 pdu.size = 5;
                 pdu.flags.is_first = 1;
 
-                /* 5 + 3 = 8 == max_size → no trim */
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 8) == true);
                 REQUIRE(pdu.size == 5);
         }
@@ -317,7 +298,6 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 pdu.size = 10;
                 pdu.flags.is_first = 1;
 
-                /* 10 + 3 = 13 > 8 → diff=5, size=5 */
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 8) == true);
                 REQUIRE(pdu.size == 5);
         }
@@ -330,7 +310,6 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 pdu.size = 5;
                 pdu.flags.is_first = 1;
 
-                /* 5 + 3 = 8, diff=8-2=6 > pdu.size=5 → false */
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 2) == false);
         }
 
@@ -342,7 +321,7 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 pdu.size = 5;
                 pdu.flags.is_first = 0;
 
-                /* header = 3 + 2 (SO) = 5; 5+5=10 > 8 → diff=2, size=3 */
+                /* header = 3 (SN) + 2 (SO) = 5; trimmed from 5 to 3 */
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 8) == true);
                 REQUIRE(pdu.size == 3);
         }
@@ -355,7 +334,6 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 pdu.size = 5;
                 pdu.flags.is_first = 1;
 
-                /* max_size - 1 = 5 >= pdu.size = 5 → optimization fires */
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 6) == true);
                 REQUIRE(pdu.flags.is_last == 1);
                 REQUIRE(pdu.size == 5);
@@ -369,7 +347,6 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 pdu.size = 5;
                 pdu.flags.is_first = 1;
 
-                /* max_size - 1 = 4 < 5 → no optimization; hsize=2, diff=2, size=3 */
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 5) == true);
                 REQUIRE(pdu.flags.is_last == 0);
                 REQUIRE(pdu.size == 3);
@@ -378,10 +355,7 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
 
 TEST_CASE("serve_sdu", "[tx][static]")
 {
-        /*
-         * Use UM mode so rlc_arq_tx_pdu_fill never touches timers
-         * (tx_pollable returns false immediately for non-AM).
-         */
+        /* UM mode: rlc_arq_tx_pdu_fill does not touch timers */
         static const ::rlc_config conf = {
                 .type = RLC_UM,
                 .sn_width = RLC_SN_12BIT,
@@ -403,10 +377,6 @@ TEST_CASE("serve_sdu", "[tx][static]")
                                                   mem::alloc) == 0);
 
                 ::rlc_pdu pdu = {};
-                /*
-                 * UM optimization: max_size - 1 = 5 >= pdu_size = 5
-                 * → is_last=1 set inside pdu_size_adjust, header=1 byte
-                 */
                 REQUIRE(serve_sdu(&ctx, &sdu, &pdu, 6) == true);
                 REQUIRE(pdu.sn == 7);
                 REQUIRE(pdu.flags.is_first == 1);
@@ -434,11 +404,6 @@ TEST_CASE("serve_sdu", "[tx][static]")
                                                   mem::alloc) == 0);
 
                 ::rlc_pdu pdu = {};
-                /*
-                 * UM 12-bit, is_first=1 → no SO, hsize=2.
-                 * max_size=5: optimization check 5-1=4 < 6 → skipped.
-                 * 6+2=8 > 5 → diff=3, pdu.size=3. Not last → is_last=0.
-                 */
                 REQUIRE(serve_sdu(&ctx, &sdu, &pdu, 5) == true);
                 REQUIRE(pdu.flags.is_first == 1);
                 REQUIRE(pdu.flags.is_last == 0);
