@@ -17,11 +17,11 @@ using namespace util;
 namespace
 {
 
-using seglist_t = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+using segvec = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
 
-seglist_t collect(::rlc_seg_list &list)
+segvec collect(::rlc_seg_list &list)
 {
-        seglist_t ret;
+        segvec ret;
         ::rlc_list_it it;
 
         rlc_list_foreach(&list, it)
@@ -60,7 +60,7 @@ TEST_CASE("seg list insert - ordering with no overlap", "[seg_list]")
         seg = {8, 12};
         status = ::rlc_seg_list_insert(&list, &seg, &unique, mem::alloc);
         REQUIRE(status == 0);
-        REQUIRE(collect(list) == seglist_t{{8, 12}});
+        REQUIRE(collect(list) == segvec{{8, 12}});
 
         /* Non-overlapping insert after the only element appends at the
          * back, leaving a gap. */
@@ -68,21 +68,21 @@ TEST_CASE("seg list insert - ordering with no overlap", "[seg_list]")
         status = ::rlc_seg_list_insert(&list, &seg, &unique, mem::alloc);
         REQUIRE(status == 0);
         REQUIRE(collect(list) ==
-               seglist_t{{8, 12}, {20, 25}});
+               segvec{{8, 12}, {20, 25}});
 
         /* Non-overlapping insert before the first element prepends. */
         seg = {0, 4};
         status = ::rlc_seg_list_insert(&list, &seg, &unique, mem::alloc);
         REQUIRE(status == 0);
         REQUIRE(collect(list) ==
-               seglist_t{{0, 4}, {8, 12}, {20, 25}});
+               segvec{{0, 4}, {8, 12}, {20, 25}});
 
         /* Non-overlapping insert between two existing, non-adjacent
          * elements. */
         seg = {14, 16};
         status = ::rlc_seg_list_insert(&list, &seg, &unique, mem::alloc);
         REQUIRE(status == 0);
-        REQUIRE(collect(list) == seglist_t{
+        REQUIRE(collect(list) == segvec{
                                          {0, 4}, {8, 12}, {14, 16}, {20, 25}});
 
         ::rlc_seg_list_clear(&list, mem::alloc);
@@ -120,7 +120,7 @@ TEST_CASE("seg list insert - fully contained segment is rejected",
         REQUIRE(unique.end == 0);
 
         /* List must be left completely unchanged. */
-        REQUIRE(collect(list) == seglist_t{{5, 10}});
+        REQUIRE(collect(list) == segvec{{5, 10}});
 
         ::rlc_seg_list_clear(&list, mem::alloc);
 }
@@ -153,7 +153,7 @@ TEST_CASE("seg list insert - partial overlap merges into a single "
                 REQUIRE(unique.start == 5);
                 REQUIRE(unique.end == 15);
                 REQUIRE(collect(list) ==
-                       seglist_t{{0, 15}, {20, 25}});
+                       segvec{{0, 15}, {20, 25}});
         }
 
         SECTION("overlap on the right segment only extends it, no new node")
@@ -165,7 +165,7 @@ TEST_CASE("seg list insert - partial overlap merges into a single "
                 REQUIRE(unique.start == 10);
                 REQUIRE(unique.end == 20);
                 REQUIRE(collect(list) ==
-                       seglist_t{{0, 5}, {10, 25}});
+                       segvec{{0, 5}, {10, 25}});
         }
 
         ::rlc_seg_list_clear(&list, mem::alloc);
@@ -195,7 +195,7 @@ TEST_CASE("seg list insert - overlap on both sides bridges and merges "
         REQUIRE(status == 0);
         REQUIRE(unique.start == 5);
         REQUIRE(unique.end == 10);
-        REQUIRE(collect(list) == seglist_t{{0, 15}});
+        REQUIRE(collect(list) == segvec{{0, 15}});
 
         ::rlc_seg_list_clear(&list, mem::alloc);
 }
@@ -223,7 +223,7 @@ TEST_CASE("seg list insert_all bridges multiple islands and gaps",
         REQUIRE(status == 0);
 
         REQUIRE(collect(list) ==
-               seglist_t{{0, 5}, {10, 15}, {20, 25}});
+               segvec{{0, 5}, {10, 15}, {20, 25}});
 
         SECTION("segment spanning both gaps and all three islands merges "
                "everything into one, across multiple internal passes")
@@ -231,7 +231,7 @@ TEST_CASE("seg list insert_all bridges multiple islands and gaps",
                 seg = {2, 23};
                 status = ::rlc_seg_list_insert_all(&list, seg, mem::alloc);
                 REQUIRE(status == 0);
-                REQUIRE(collect(list) == seglist_t{{0, 25}});
+                REQUIRE(collect(list) == segvec{{0, 25}});
         }
 
         SECTION("segment fully contained in an island is rejected as a "
@@ -241,7 +241,7 @@ TEST_CASE("seg list insert_all bridges multiple islands and gaps",
                 status = ::rlc_seg_list_insert_all(&list, seg, mem::alloc);
                 REQUIRE(status == -ENODATA);
                 REQUIRE(collect(list) ==
-                       seglist_t{{0, 5}, {10, 15}, {20, 25}});
+                       segvec{{0, 5}, {10, 15}, {20, 25}});
         }
 
         SECTION("disjoint segment needs only a single pass")
@@ -249,7 +249,7 @@ TEST_CASE("seg list insert_all bridges multiple islands and gaps",
                 seg = {30, 35};
                 status = ::rlc_seg_list_insert_all(&list, seg, mem::alloc);
                 REQUIRE(status == 0);
-                REQUIRE(collect(list) == seglist_t{
+                REQUIRE(collect(list) == segvec{
                                                  {0, 5},
                                                  {10, 15},
                                                  {20, 25},
@@ -279,7 +279,7 @@ TEST_CASE("seg list clear_until_last", "[seg_list]")
                                               mem::alloc) == 0);
 
                 ::rlc_seg_list_clear_until_last(&list, mem::alloc);
-                REQUIRE(collect(list) == seglist_t{{5, 10}});
+                REQUIRE(collect(list) == segvec{{5, 10}});
         }
 
         SECTION("multi-element list keeps only the last element")
@@ -293,7 +293,7 @@ TEST_CASE("seg list clear_until_last", "[seg_list]")
                 }
 
                 ::rlc_seg_list_clear_until_last(&list, mem::alloc);
-                REQUIRE(collect(list) == seglist_t{{20, 25}});
+                REQUIRE(collect(list) == segvec{{20, 25}});
         }
 
         ::rlc_seg_list_clear(&list, mem::alloc);
