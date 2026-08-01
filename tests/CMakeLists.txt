@@ -26,6 +26,7 @@ target_sources(
     PRIVATE
         test_list.cc
         test_seg_buf.cc
+        test_seg_list.cc
         test_am.cc
         test_encode.cc
 )

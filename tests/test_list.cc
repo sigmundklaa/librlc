@@ -242,3 +242,148 @@ TEST_CASE("list iterator", "[list]")
                 REQUIRE(::rlc_list_it_eoi(it));
         }
 }
+
+TEST_CASE("list iterator - empty list", "[list]")
+{
+        ::rlc_list list;
+
+        ::rlc_list_init(&list);
+        REQUIRE(list.head == NULL);
+
+        ::rlc_list_it it = ::rlc_list_it_init(&list);
+        REQUIRE(::rlc_list_it_eoi(it));
+        REQUIRE(::rlc_list_it_node(it) == NULL);
+
+        /* Advancing an already-at-end iterator is a no-op */
+        it = ::rlc_list_it_next(it);
+        REQUIRE(::rlc_list_it_eoi(it));
+
+        int count = 0;
+        rlc_list_foreach(&list, it)
+        {
+                count++;
+        }
+        REQUIRE(count == 0);
+
+        /* put_back on an empty list's iterator inserts the first element */
+        list_item<std::uint32_t> only(42);
+
+        it = ::rlc_list_it_init(&list);
+        it = ::rlc_list_it_put_back(it, only);
+        REQUIRE_THAT(list, matches_list(std::vector<std::uint32_t>{42}));
+
+        /* Popping the sole remaining element empties the list again */
+        it = ::rlc_list_it_init(&list);
+        it = ::rlc_list_it_pop(it, NULL);
+        REQUIRE(list.head == NULL);
+        REQUIRE(::rlc_list_it_eoi(::rlc_list_it_init(&list)));
+}
+
+TEST_CASE("list iterator - insert in the middle", "[list]")
+{
+        std::vector<std::uint32_t> truth = {0, 1, 2};
+        std::vector<list_item<std::uint32_t>> storage;
+
+        for (auto v : truth) {
+                storage.emplace_back(v);
+        }
+
+        ::rlc_list list;
+        ::rlc_list_init(&list);
+
+        ::rlc_list_it it = ::rlc_list_it_init(&list);
+        for (auto &obj : storage) {
+                it = ::rlc_list_it_put_back(it, obj);
+        }
+
+        REQUIRE_THAT(list, matches_list(truth));
+
+        SECTION("put_back after the head inserts immediately following it")
+        {
+                list_item<std::uint32_t> extra(99);
+
+                ::rlc_list_it head_it = ::rlc_list_it_init(&list);
+                ::rlc_list_it_put_back(head_it, extra);
+
+                std::vector<std::uint32_t> expect = {0, 99, 1, 2};
+                REQUIRE_THAT(list, matches_list(expect));
+        }
+
+        SECTION("put_front before the last element inserts immediately "
+               "preceding it")
+        {
+                list_item<std::uint32_t> extra(99);
+                ::rlc_list_it target;
+
+                rlc_list_foreach(&list, target)
+                {
+                        if (storage[2] == ::rlc_list_it_node(target)) {
+                                break;
+                        }
+                }
+                REQUIRE(!::rlc_list_it_eoi(target));
+
+                ::rlc_list_it_put_front(target, extra);
+
+                std::vector<std::uint32_t> expect = {0, 1, 99, 2};
+                REQUIRE_THAT(list, matches_list(expect));
+        }
+}
+
+TEST_CASE("list iterator - skip and repeat", "[list]")
+{
+        std::vector<std::uint32_t> truth = {0, 1, 2, 3};
+        std::vector<list_item<std::uint32_t>> storage;
+
+        for (auto v : truth) {
+                storage.emplace_back(v);
+        }
+
+        ::rlc_list list;
+        ::rlc_list_init(&list);
+
+        ::rlc_list_it it = ::rlc_list_it_init(&list);
+        for (auto &obj : storage) {
+                it = ::rlc_list_it_put_back(it, obj);
+        }
+
+        /* Position at the second element (index 1). */
+        it = ::rlc_list_it_init(&list);
+        it = ::rlc_list_it_next(it);
+        REQUIRE(storage[1] == ::rlc_list_it_node(it));
+
+        ::rlc_list_it skipped = ::rlc_list_it_skip(it);
+        ::rlc_list_it plain_next = ::rlc_list_it_next(it);
+
+        /* skip() advances .node exactly like next() would, but retains the
+         * *original* iterator's slot pointer instead of the target node's
+         * own `next` field. This is what lets rlc_list_it_repeat() resume
+         * iteration correctly even if the node `it` currently points at is
+         * invalidated (e.g. freed) through some means other than
+         * rlc_list_it_pop() before the next next() call - see
+         * process_nack_range() in arq.c for the real usage pattern. */
+        REQUIRE(::rlc_list_it_node(skipped) == ::rlc_list_it_node(plain_next));
+        REQUIRE(skipped.slotptr == it.slotptr);
+        REQUIRE(plain_next.slotptr != skipped.slotptr);
+
+        /* Simulate node 1 being unlinked through some means other than
+         * rlc_list_it_pop(), using the slot pointer captured by skip(). */
+        *skipped.slotptr = skipped.node;
+
+        std::vector<std::uint32_t> after_removal = {0, 2, 3};
+        REQUIRE_THAT(list, matches_list(after_removal));
+
+        it = ::rlc_list_it_repeat(skipped);
+        REQUIRE(storage[2] == ::rlc_list_it_node(it));
+
+        /* First next() call after repeat() is a no-op */
+        it = ::rlc_list_it_next(it);
+        REQUIRE(storage[2] == ::rlc_list_it_node(it));
+
+        /* Subsequent calls resume normal iteration from there */
+        it = ::rlc_list_it_next(it);
+        REQUIRE(storage[3] == ::rlc_list_it_node(it));
+
+        it = ::rlc_list_it_next(it);
+        REQUIRE(::rlc_list_it_eoi(it));
+}

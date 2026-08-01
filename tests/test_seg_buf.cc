@@ -52,6 +52,19 @@ TEST_CASE("segment buffer", "[seg_buf]")
         REQUIRE(status == 0);
         REQUIRE_THAT(buf.buf,
                      buf::matches_contents(std::string("0123456789abcdef")));
+
+        /* Re-inserting a segment that's already fully covered is a silent
+         * no-op: rlc_seg_list_insert's -ENODATA is swallowed and translated
+         * to success, and the buffer content is left untouched. */
+        seg.start = 8;
+        seg.end = 12;
+        status = ::rlc_seg_buf_insert(&buf, buf::create(std::string("XXXX")),
+                                      seg, mem::alloc, mem::alloc);
+        REQUIRE(status == 0);
+        REQUIRE_THAT(buf.buf,
+                     buf::matches_contents(std::string("0123456789abcdef")));
+
+        ::rlc_seg_buf_destroy(&buf, mem::alloc);
 }
 
 }; // namespace rlc::test
