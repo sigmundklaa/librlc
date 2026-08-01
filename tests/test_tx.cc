@@ -103,11 +103,8 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
                 REQUIRE(pdu.size == 3);
         }
 
-        SECTION("TM: zero header overhead, SDU passes through unmodified")
+        SECTION("TM: SDU fits, passes through unmodified")
         {
-                /* Spec 4.2.1.1.2: TM must not include any RLC headers and
-                 * must not segment SDUs. pdu_size_adjust must leave a
-                 * fitting TM PDU completely unchanged. */
                 ::rlc_context ctx = {};
                 ctx.conf = &tm_conf;
                 ::rlc_pdu pdu = {};
@@ -115,6 +112,19 @@ TEST_CASE("pdu_size_adjust", "[tx][static]")
 
                 REQUIRE(pdu_size_adjust(&ctx, &pdu, 5) == true);
                 REQUIRE(pdu.size == 5);
+        }
+
+        SECTION("TM: window too small returns false, SDU not segmented")
+        {
+                /* Spec 4.2.1.1.2: TM must not segment. Refuse the PDU so
+                 * the caller skips it rather than sending a partial SDU. */
+                ::rlc_context ctx = {};
+                ctx.conf = &tm_conf;
+                ::rlc_pdu pdu = {};
+                pdu.size = 10;
+
+                REQUIRE(pdu_size_adjust(&ctx, &pdu, 5) == false);
+                REQUIRE(pdu.size == 10);
         }
 }
 
