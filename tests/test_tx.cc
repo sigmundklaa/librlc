@@ -21,36 +21,33 @@ static const ::rlc_config um_conf = {
         .sn_width = RLC_SN_12BIT,
 };
 
-/*
- * Shared setup: rlc_init always uses the default AM config internally.
- * Tests that need UM call rlc_set_config after init.
- */
-#define TX_SETUP()                                                            \
-        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver); \
-        ::rlc_context ctx;                                                    \
-        std::queue<buf::pbuf_ptr> queue;                                      \
-        unsigned int cnt = 0;                                                 \
-        backend::backend back(backend::queue_submitter(queue),                \
-                              backend::request_counter(cnt));                 \
-        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0)
-
-#define TX_TEARDOWN() REQUIRE(::rlc_deinit(&ctx) == 0)
-
 TEST_CASE("tx rlc_tx queues SDU and requests backend", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         auto sdu_buf = buf::create(std::string("hello"));
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
         REQUIRE(cnt == 1);
         REQUIRE(ctx.tx.next_sn == 1);
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx rlc_tx window full", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         auto sdu_buf = buf::create(std::string("hi"));
         for (int i = 0; i < 10; i++) {
@@ -58,12 +55,18 @@ TEST_CASE("tx rlc_tx window full", "[tx]")
         }
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == -ENOSPC);
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx next_sn increments per submit", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         auto sdu_buf = buf::create(std::string("hi"));
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
@@ -73,12 +76,18 @@ TEST_CASE("tx next_sn increments per submit", "[tx]")
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
         REQUIRE(ctx.tx.next_sn == 3);
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx single SDU delivered whole", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         std::string payload = "hello";
         auto sdu_buf = buf::create(payload);
@@ -94,20 +103,25 @@ TEST_CASE("tx single SDU delivered whole", "[tx]")
         REQUIRE(hdr == proto::am::header{true, proto::seginfo::ALL, 0});
         REQUIRE(data.size() == payload.size());
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx SDU fragmented across yields", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         /*
          * Payload: 6 bytes. Split into two fragments:
          *   - First yield  (max=6): 3-byte AM header + 3-byte payload (FIRST)
          *   - Second yield (max=8): 5-byte AM header w/ SO + 3-byte payload (LAST)
          */
-        std::string payload = "hello!";
-        auto sdu_buf = buf::create(payload);
+        auto sdu_buf = buf::create(std::string("hello!"));
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
 
         auto remain1 = ::rlc_tx_avail(&ctx, 6);
@@ -135,12 +149,18 @@ TEST_CASE("tx SDU fragmented across yields", "[tx]")
         }
         queue.pop();
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx multiple SDUs in single avail", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         auto sdu_a = buf::create(std::string("abc"));
         auto sdu_b = buf::create(std::string("xyz"));
@@ -164,12 +184,18 @@ TEST_CASE("tx multiple SDUs in single avail", "[tx]")
         REQUIRE(data1.size() == 3);
         queue.pop();
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx avail returns size when space is insufficient for header", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         auto sdu_buf = buf::create(std::string("hello"));
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
@@ -179,12 +205,18 @@ TEST_CASE("tx avail returns size when space is insufficient for header", "[tx]")
         REQUIRE(remain == 2);
         REQUIRE(queue.empty());
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx UM single-packet omits SN", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
         ::rlc_set_config(&ctx, &um_conf);
 
         std::string payload = "hello";
@@ -207,12 +239,18 @@ TEST_CASE("tx UM single-packet omits SN", "[tx]")
         REQUIRE(hdr.si == proto::seginfo::ALL);
         REQUIRE(!hdr.sn.has_value());
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 TEST_CASE("tx reset clears queue and resets sn", "[tx]")
 {
-        TX_SETUP();
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+        ::rlc_context ctx;
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+        REQUIRE(::rlc_init(&ctx, back, mem::alloc, mem::alloc) == 0);
 
         auto sdu_buf = buf::create(std::string("hello"));
         REQUIRE(::rlc_tx(&ctx, sdu_buf, nullptr) == 0);
@@ -234,7 +272,7 @@ TEST_CASE("tx reset clears queue and resets sn", "[tx]")
         auto [hdr, data] = proto::am::split_data(queue.front());
         REQUIRE(hdr.sn == 0);
 
-        TX_TEARDOWN();
+        REQUIRE(::rlc_deinit(&ctx) == 0);
 }
 
 }; // namespace rlc::test
