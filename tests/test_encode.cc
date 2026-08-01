@@ -14,16 +14,6 @@ namespace rlc::test
 
 using namespace util;
 
-namespace
-{
-
-buf::pbuf_ptr make_buf(size_t cap)
-{
-        return buf::pbuf_ptr(::gabs_pbuf_new(mem::alloc, cap));
-}
-
-} // namespace
-
 TEST_CASE("am pdu header encode/decode", "[encode][am]")
 {
         auto sn_width = GENERATE(RLC_SN_12BIT, RLC_SN_18BIT);
@@ -55,7 +45,7 @@ TEST_CASE("am pdu header encode/decode", "[encode][am]")
                 has_so ? std::optional<std::uint16_t>(so) : std::nullopt};
         auto expect_bytes = expect_hdr.encode(w);
 
-        auto out = make_buf(RLC_PDU_HEADER_MAX_SIZE);
+        auto out = buf::create(RLC_PDU_HEADER_MAX_SIZE);
         ::rlc_pdu_encode(&pdu, out, RLC_AM, sn_width);
         REQUIRE_THAT(out, buf::matches_contents(expect_bytes));
 
@@ -114,7 +104,7 @@ TEST_CASE("um pdu header encode/decode", "[encode][um]")
                 has_so ? std::optional<std::uint16_t>(so) : std::nullopt};
         auto expect_bytes = expect_hdr.encode(w);
 
-        auto out = make_buf(RLC_PDU_HEADER_MAX_SIZE);
+        auto out = buf::create(RLC_PDU_HEADER_MAX_SIZE);
         ::rlc_pdu_encode(&pdu, out, RLC_UM, sn_width);
         REQUIRE_THAT(out, buf::matches_contents(expect_bytes));
 
@@ -146,7 +136,7 @@ TEST_CASE("tm pdu header encode/decode is a no-op", "[encode][tm]")
         pdu.flags.is_first = true;
         pdu.flags.is_last = true;
 
-        auto out = make_buf(RLC_PDU_HEADER_MAX_SIZE);
+        auto out = buf::create(RLC_PDU_HEADER_MAX_SIZE);
         ::rlc_pdu_encode(&pdu, out, RLC_TM, RLC_SN_12BIT);
         REQUIRE(::gabs_pbuf_size(out) == 0);
 
@@ -189,7 +179,7 @@ TEST_CASE("am status pdu ack header encode/decode", "[encode][am][status]")
                                            : std::byte{0x02};
         }
 
-        auto out = make_buf(RLC_STATUS_MAX_SIZE);
+        auto out = buf::create(RLC_STATUS_MAX_SIZE);
         ::rlc_pdu_encode(&pdu, out, RLC_AM, sn_width);
         REQUIRE_THAT(out, buf::matches_contents(expect_bytes));
 
@@ -237,7 +227,7 @@ TEST_CASE("am status nack part encode/decode", "[encode][am][status]")
 
         auto expect_bytes = expect.encode(more, w);
 
-        auto out = make_buf(RLC_STATUS_MAX_SIZE);
+        auto out = buf::create(RLC_STATUS_MAX_SIZE);
         ::rlc_status_encode(&status, out, sn_width);
         REQUIRE_THAT(out, buf::matches_contents(expect_bytes));
 

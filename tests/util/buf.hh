@@ -82,6 +82,19 @@ class pbuf_ptr
         mutable std::unique_ptr<::gabs_pbuf, pbuf_unref> ptr;
 };
 
+/**
+ * @brief Create an empty buffer with @p capacity bytes of tailroom, suitable
+ * as an output buffer for functions that append to a pbuf (e.g. via
+ * gabs_pbuf_put).
+ */
+inline pbuf_ptr create(size_t capacity)
+{
+        auto buf = ::gabs_pbuf_new(mem::alloc, capacity);
+        assert(::gabs_pbuf_okay(buf));
+
+        return pbuf_ptr(buf);
+}
+
 template <class Iterator> pbuf_ptr create(Iterator begin, Iterator end)
 {
         /* Automatic reference counting of the buffer. */
@@ -95,7 +108,9 @@ template <class Iterator> pbuf_ptr create(Iterator begin, Iterator end)
         return pbuf_ptr(buf);
 }
 
-template <class Container> pbuf_ptr create(const Container &container)
+template <class Container>
+        requires requires(const Container &c) { c.cbegin(); c.cend(); }
+pbuf_ptr create(const Container &container)
 {
         return create(container.cbegin(), container.cend());
 }
