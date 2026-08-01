@@ -43,7 +43,8 @@ add_subdirectory(gabs-overrides)
 
 gabs_select(gabs-timer-rlc-tests)
 
-# Remove source file
+# Exclude a source file from the rlc library so it can be #included directly
+# in a test file to expose its static functions.
 macro(remove_sources)
     set_source_files_properties(
         ${ARGN}
@@ -53,5 +54,7 @@ macro(remove_sources)
             HEADER_FILE_ONLY ON
     )
 endmacro()
+
+remove_sources(${CMAKE_CURRENT_SOURCE_DIR}/../src/tx.c)
 
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain rlc gabs)
