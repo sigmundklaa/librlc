@@ -12,39 +12,7 @@
 namespace rlc::test::util::fixture
 {
 
-/*
- * Equivalent to gabs::core::simple_handle_trait<::rlc_context>, but with a
- * working from(): as of gabs commit e1d75b9, container_of(const T *,
- * T Container::*)'s body computes the member offset via
- * `&nullcont->*member` - but unary & binds tighter than ->*, so this
- * parses as `(&nullcont)->*member` (LHS type Container**, which ->*
- * then implicitly dereferences once via its own `(*a).*b` semantics,
- * landing on non-class type Container* - not the intended
- * `&(nullcont->*member)`). Confirmed via a minimal repro independent of
- * rlc_context; the parenthesized form compiles and works correctly on
- * its own, so this looks like the last remaining issue once the const
- * placement (see git history of this file) was fixed. Sidesteps it via
- * the same gabs_container_of macro dynamic.hh's dyn_alloc trait already
- * uses.
- */
-class ctx_trait
-{
-      public:
-        using handle_type = ::rlc_context;
-
-        const handle_type *to() const
-        {
-                return &handle_;
-        }
-
-        static ctx_trait *from(const handle_type *h)
-        {
-                return gabs_container_of(h, ctx_trait, handle_);
-        }
-
-      protected:
-        handle_type handle_;
-};
+using ctx_trait = gabs::core::simple_handle_trait<::rlc_context>;
 
 /*
  * Wraps an ::rlc_context using gabs's handle_wrapper, so the owning
