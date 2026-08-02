@@ -206,6 +206,11 @@ TEST_CASE("adjust_poll_sn", "[arq][static]")
 
         SECTION("never decreases an already higher poll_sn")
         {
+                /* Spec 5.3.3.2 says to *set* POLL_SN to the highest
+                 * submitted SN rather than to take a maximum. The two agree
+                 * while SNs advance monotonically, so this covers defensive
+                 * behaviour outside what the spec describes rather than a
+                 * requirement of it. */
                 auto sdu = make_sdu(&ctx, 1, RLC_READY, true);
                 REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
                                                   ::rlc_seg{5, 10},
@@ -599,18 +604,27 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
-        SECTION("marks a not-yet-pending SDU for retransmission")
+        SECTION("a first-time retransmission sets RETX_COUNT to zero")
         {
+                /* Spec 5.3.2: "if the RLC SDU or RLC SDU segment is
+                 * considered for retransmission for the first time: set the
+                 * RETX_COUNT associated with the RLC SDU to zero". Only a
+                 * subsequent consideration increments it. */
                 auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
 
                 ::rlc_seg seg{0, 5};
                 REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == true);
 
-                REQUIRE(sdu->state == RLC_READY);
-                REQUIRE(sdu->tx.retx_count == 1);
-
+                /* Read the observed values out and release the SDU before
+                 * asserting, so that a failing expectation - which unwinds
+                 * out of the SECTION - cannot leak it. */
+                auto state = sdu->state;
+                auto retx_count = sdu->tx.retx_count;
                 ::rlc_sdu_decref(sdu);
+
+                REQUIRE(state == RLC_READY);
+                REQUIRE(retx_count == 0);
         }
 
         SECTION("already pending does not increment RETX_COUNT again")
@@ -710,6 +724,45 @@ TEST_CASE("process_nack", "[arq][static]")
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 99) == nullptr);
         }
+
+        SECTION("a NACK matching POLL_SN stops t-PollRetransmit")
+        {
+                /* Spec 5.3.3.3: the acknowledgement for POLL_SN that stops
+                 * t-PollRetransmit may be negative, and a NACK_SN carrying
+                 * neither an offset nor a range is routed here by
+                 * rlc_arq_rx_status. */
+                gabs_override::timer_ctx timer_ctx(
+                        gabs_override::default_resolver);
+                REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
+                REQUIRE(::rlc_timer_install(&ctx.arq.t_poll_retransmit,
+                                            alarm_poll_retransmit, &ctx) ==
+                       0);
+                REQUIRE(::rlc_timer_start(&ctx.arq.t_poll_retransmit,
+                                          5000000) == 0);
+
+                auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
+                sdu->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ctx.arq.poll_sn = 4;
+
+                ::rlc_pdu_status cur = {};
+                cur.nack_sn = 4;
+
+                process_nack(&ctx, &cur);
+
+                /* Read the timer state out and tear down before asserting,
+                 * so that a failing expectation - which unwinds out of the
+                 * SECTION - cannot leak the SDU or the timer. */
+                auto still_armed =
+                        gabs_override::armed(ctx.arq.t_poll_retransmit.gtimer);
+
+                ::rlc_sdu_decref(sdu);
+                REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
+                       0);
+                REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
+
+                REQUIRE(still_armed == false);
+        }
 }
 
 TEST_CASE("process_nack_offset", "[arq][static]")
@@ -790,6 +843,11 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
         SECTION("a NACK matching POLL_SN stops t-PollRetransmit")
         {
+                /* Spec 5.3.3.3: a STATUS report carrying a positive or
+                 * negative acknowledgement for the SDU with SN equal to
+                 * POLL_SN stops and resets t-PollRetransmit. rlc_arq_rx_status
+                 * only routes a status entry here when it carries an offset,
+                 * so that is the shape used. */
                 gabs_override::timer_ctx timer_ctx(
                         gabs_override::default_resolver);
                 REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
@@ -800,11 +858,14 @@ TEST_CASE("process_nack_offset", "[arq][static]")
                                           5000000) == 0);
 
                 auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
+                sdu->tx.buffer = buf::create(std::string(10, 'x')).strong();
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
                 ctx.arq.poll_sn = 4;
 
                 ::rlc_pdu_status cur = {};
                 cur.nack_sn = 4;
+                cur.ext.has_offset = true;
+                cur.offset = ::rlc_seg{0, 5};
 
                 process_nack_offset(&ctx, &cur);
 
