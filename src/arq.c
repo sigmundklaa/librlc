@@ -360,7 +360,9 @@ static bool retransmit_sdu(struct rlc_context *ctx, struct rlc_sdu *sdu,
                 sdu->tx.retx_count++;
         }
 
-        if (sdu->tx.retx_count >= ctx->conf->max_retx_threshhold) {
+        /* Spec says to set RETX_COUNT to zero on first retransmit, but we
+         * instead just move the threshhold up by one to keep things simple. */
+        if (sdu->tx.retx_count > ctx->conf->max_retx_threshhold) {
                 gabs_log_errf(ctx->logger,
                               "Transmit failed; exceeded retry limit");
                 rlc_sdu_queue_remove(&ctx->tx.sdus, sdu);
