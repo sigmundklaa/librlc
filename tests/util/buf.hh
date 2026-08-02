@@ -161,8 +161,7 @@ class matcher : public Catch::Matchers::MatcherGenericBase
                 auto size = (end - begin);
                 size *= sizeof(typename Iterator::value_type);
 
-                return "Equal to sequence of size " + std::to_string(size) +
-                       ": " + std::string(begin, end);
+                return "Equal to sequence of size " + std::to_string(size);
         }
 
       private:
