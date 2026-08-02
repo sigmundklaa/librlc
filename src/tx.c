@@ -77,6 +77,10 @@ static bool pdu_size_adjust(const struct rlc_context *ctx, struct rlc_pdu *pdu,
 
         hsize = rlc_pdu_header_size(pdu, ctx->conf->type, ctx->conf->sn_width);
         if (pdu->size + hsize > max_size) {
+                if (ctx->conf->type == RLC_TM) {
+                        return false;
+                }
+
                 diff = pdu->size + hsize - max_size;
                 if (diff > pdu->size) {
                         return false;
