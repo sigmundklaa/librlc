@@ -405,11 +405,14 @@ TEST_CASE("deliver_ready", "[rx][static]")
 
 TEST_CASE("alarm_reassembly", "[rx][static]")
 {
-        /* Spec 5.2.2.2.4 / 5.2.3.2.4, "when t-Reassembly expires". */
+        /* Spec 5.2.2.2.4 / 5.2.3.2.4, "when t-Reassembly expires". Shared
+         * between UM and AM, so run every case under both. */
+        auto type = GENERATE(RLC_AM, RLC_UM);
+
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
-        static const ::rlc_config conf = {
-                .type = RLC_UM,
+        const ::rlc_config conf = {
+                .type = type,
                 .window_size = 10,
                 .time_reassembly_us = 5000000,
                 .sn_width = RLC_SN_12BIT,
