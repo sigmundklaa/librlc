@@ -604,27 +604,23 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
-        SECTION("a first-time retransmission sets RETX_COUNT to zero")
+        SECTION("marks a not-yet-pending SDU for retransmission")
         {
-                /* Spec 5.3.2: "if the RLC SDU or RLC SDU segment is
-                 * considered for retransmission for the first time: set the
-                 * RETX_COUNT associated with the RLC SDU to zero". Only a
-                 * subsequent consideration increments it. */
+                /* Spec 5.3.2 counts a first-time retransmission as
+                 * RETX_COUNT zero; arq.c instead counts from one and raises
+                 * the threshold comparison to match, so the count here is
+                 * retransmissions performed rather than the spec's variable.
+                 * The resulting limit is pinned below. */
                 auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
 
                 ::rlc_seg seg{0, 5};
                 REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == true);
 
-                /* Read the observed values out and release the SDU before
-                 * asserting, so that a failing expectation - which unwinds
-                 * out of the SECTION - cannot leak it. */
-                auto state = sdu->state;
-                auto retx_count = sdu->tx.retx_count;
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(sdu->state == RLC_READY);
+                REQUIRE(sdu->tx.retx_count == 1);
 
-                REQUIRE(state == RLC_READY);
-                REQUIRE(retx_count == 0);
+                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("already pending does not increment RETX_COUNT again")
@@ -659,13 +655,27 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("exceeding the retry threshold removes and fails the SDU")
+        SECTION("survives maxRetxThreshold retransmissions, then fails")
         {
+                /* Spec 5.3.2: reaching maxRetxThreshold is what indicates
+                 * the failure to upper layers, so exactly that many
+                 * retransmissions must be served first. Stated in terms of
+                 * calls rather than the counter, so it holds regardless of
+                 * which value arq.c counts from. */
                 ctx.tx.next_sn = 1;
 
                 auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
-                sdu->tx.retx_count = 2;
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+
+                for (std::uint32_t i = 0; i < conf.max_retx_threshhold; i++) {
+                        ::rlc_seg seg{0, 5};
+                        REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == true);
+
+                        /* Re-arm the SDU the way a completed retransmission
+                         * would: unsent list drained, awaiting ack again. */
+                        ::rlc_seg_list_clear(&sdu->tx.unsent, mem::alloc);
+                        sdu->state = RLC_WAIT;
+                }
 
                 ::rlc_seg seg{0, 5};
                 REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == false);
@@ -920,7 +930,9 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 ctx.tx.next_sn = 2;
 
                 auto sdu0 = make_sdu(&ctx, 0, RLC_WAIT, true);
-                sdu0->tx.retx_count = 1;
+                /* Already at the limit, so this NACK is the one that
+                 * exhausts it and removes the SDU mid-iteration. */
+                sdu0->tx.retx_count = conf.max_retx_threshhold;
                 sdu0->tx.buffer = buf::create(std::string(4, 'x')).strong();
 
                 auto sdu1 = make_sdu(&ctx, 1, RLC_WAIT, true);

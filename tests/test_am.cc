@@ -841,7 +841,9 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
 
         pump(link_a, link_b, 30);
 
-        for (std::uint32_t i = 0; i < conf.max_retx_threshhold; i++) {
+        /* maxRetxThreshold retransmissions are served before the limit is
+         * reached, so the give-up happens on the round after them. */
+        for (std::uint32_t i = 0; i < conf.max_retx_threshhold + 1; i++) {
                 REQUIRE(gabs_override::armed(
                                sender.get()->arq.t_poll_retransmit.gtimer) ==
                        true);

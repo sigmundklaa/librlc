@@ -324,13 +324,12 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
 /* The four TEST_CASEs below are tagged [.] (Catch2's hidden-test marker:
  * skipped by a bare run, still runnable by naming the tag explicitly) since
  * they all reliably hit a heap-use-after-free, not just a REQUIRE failure.
- * rlc_tx_yield (src/tx.c:179-183) frees a completed non-AM SDU - and, for
- * UM, pdu_size_adjust (src/tx.c:69-76) sets is_last on the very first PDU
- * whenever the whole SDU fits - without updating the rlc_list_foreach
- * iterator it's still running under, unlike the pop-before-free pattern
- * serve_sdu uses two lines above it (src/tx.c:129-130) for the same list.
- * The next loop iteration's rlc_list_it_next() then dereferences the freed
- * node. This affects any UM SDU that completes within rlc_tx_avail, so it
+ * rlc_tx_yield frees a completed non-AM SDU - and, for UM,
+ * pdu_size_adjust sets is_last on the very first PDU whenever the whole SDU
+ * fits - without updating the rlc_list_foreach iterator it is still running
+ * under, unlike the pop-before-free pattern serve_sdu uses for the same
+ * list. The next loop iteration's rlc_list_it_next() then dereferences the
+ * freed node. This affects any UM SDU that completes within rlc_tx_avail, so it
  * is not a narrow edge case - every TX/loopback test below hits it. */
 
 TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx][.]")
