@@ -85,21 +85,30 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
                              gabs_pbuf *buf)
 {
         struct rlc_pdu_status *last;
-        size_t size;
+        size_t lastsize;
+        size_t cursize;
+        size_t tailroom;
 
         last = status_last(pool);
         last->ext.has_more = 1;
 
         log_rx_status(ctx->logger, last);
 
-        size = rlc_status_size(last, ctx->conf->sn_width);
-        if (size > gabs_pbuf_tailroom(*buf)) {
+        lastsize = rlc_status_size(last, ctx->conf->sn_width);
+        cursize = rlc_status_size(status_get(pool), ctx->conf->sn_width);
+        tailroom = gabs_pbuf_tailroom(*buf);
+
+        if (lastsize > tailroom) {
                 return -ENOSPC;
+        } else if (lastsize + cursize > tailroom) {
+                /* Can't encode more in the buffer after this, so we shouldnt
+                 * set E1 bit */
+                last->ext.has_more = 0;
         }
 
         rlc_status_encode(last, buf, ctx->conf->sn_width);
 
-        return size;
+        return lastsize;
 }
 
 static ptrdiff_t create_nack_range(struct rlc_context *ctx,
@@ -133,9 +142,9 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
         return ret;
 }
 
-static size_t create_nack_segment(struct rlc_context *ctx,
-                                  struct status_pool *pool, gabs_pbuf *buf,
-                                  uint32_t sn, struct rlc_seg segment)
+static ptrdiff_t create_nack_segment(struct rlc_context *ctx,
+                                     struct status_pool *pool, gabs_pbuf *buf,
+                                     uint32_t sn, struct rlc_seg segment)
 {
         struct rlc_pdu_status *cur_status;
         ptrdiff_t bytes;
@@ -157,13 +166,10 @@ static size_t create_nack_segment(struct rlc_context *ctx,
          * encoding as there is no last */
         if (status_count(pool) > 0) {
                 bytes = encode_last(ctx, pool, buf);
-                if (bytes == -ENOSPC) {
-                        return 0;
-                }
         }
 
         status_advance(pool);
-        return (size_t)bytes;
+        return bytes;
 }
 
 static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
@@ -174,7 +180,7 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
         struct rlc_seg_item *last;
         struct rlc_seg_item *next;
         bool has_more;
-        ptrdiff_t bytes;
+        ptrdiff_t ret;
         size_t max_size;
         size_t remaining;
         rlc_list_it it;
@@ -199,49 +205,48 @@ static ptrdiff_t create_nack_offset(struct rlc_context *ctx,
 
                 /* Check if first segment(s) are missing */
                 if (last == NULL && seg->seg.start != 0) {
-                        bytes = create_nack_segment(
-                                ctx, pool, buf, sdu->sn,
-                                (struct rlc_seg){
-                                        .start = 0,
-                                        .end = seg->seg.start,
-                                });
-                        if (bytes == 0) {
+                        ret = create_nack_segment(ctx, pool, buf, sdu->sn,
+                                                  (struct rlc_seg){
+                                                          .start = 0,
+                                                          .end = seg->seg.start,
+                                                  });
+                        if (ret == -ENODATA) {
                                 break;
                         }
 
-                        remaining -= bytes;
+                        remaining -= (size_t)ret;
                 }
 
                 /* Check if last segment(s) are missing */
                 if (has_more) {
                         /* Between two segments */
-                        bytes = create_nack_segment(
+                        ret = create_nack_segment(
                                 ctx, pool, buf, sdu->sn,
                                 (struct rlc_seg){
                                         .start = seg->seg.end,
                                         .end = next->seg.start,
                                 });
-                        if (bytes == 0) {
+                        if (ret == -ENODATA) {
                                 break;
                         }
 
-                        remaining -= bytes;
+                        remaining -= (size_t)ret;
                 } else if (!sdu->rx.last_received) {
                         /* Last segment registered, but last
                          * segment of the transmission has not
                          * been received */
                         /* Between two segments */
-                        bytes = create_nack_segment(
+                        ret = create_nack_segment(
                                 ctx, pool, buf, sdu->sn,
                                 (struct rlc_seg){
                                         .start = seg->seg.end,
                                         .end = RLC_STATUS_SO_MAX,
                                 });
-                        if (bytes == 0) {
+                        if (ret == 0) {
                                 break;
                         }
 
-                        remaining -= bytes;
+                        remaining -= (size_t)ret;
                 }
 
                 last = seg;
