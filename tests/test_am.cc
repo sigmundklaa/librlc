@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <queue>
 #include <string>
@@ -85,21 +86,54 @@ void capture_listener(::rlc_context *raw_ctx, const ::rlc_event *ev)
         return ::rlc_attach_listener(&fx.ctx, capture_listener);
 }
 
+/* Spec 6.2.3.6: D/C is the MSB of a PDU's first octet - 1 for an AMD (data)
+ * PDU, 0 for a STATUS (control) PDU. Reads without touching buf's
+ * refcount, so the caller keeps full ownership either way. */
+bool pdu_is_data(::gabs_pbuf buf)
+{
+        auto it = ::gabs_pbuf_ci_init(&buf);
+        auto byte0 = reinterpret_cast<const std::uint8_t *>(
+                ::gabs_pbuf_ci_data(it))[0];
+
+        return (byte0 & 0x80) != 0;
+}
+
 /* Peer-to-peer wiring for the loopback tests: submitting a PDU on one side
- * delivers it directly into the other side's rlc_rx_submit. rlc_tx_avail
- * only sends what fits in one opportunity - a multi-segment SDU needs
- * several calls - so pump() grants opportunities to both sides repeatedly
- * (like a MAC polling on its own schedule) until neither has anything left
- * to send, rather than relying solely on tx_request. */
+ * delivers it directly into the other side's rlc_rx_submit, unless `drop`
+ * says to simulate the packet being lost in transit. rlc_tx_avail only
+ * sends what fits in one opportunity - a multi-segment SDU needs several
+ * calls - so pump() grants opportunities to both sides repeatedly (like a
+ * MAC polling on its own schedule) until neither has anything left to
+ * send, rather than relying solely on tx_request. */
 struct peer_link {
         ::rlc_context *self = nullptr;
         ::rlc_context *other = nullptr;
+        std::function<bool(bool is_data)> drop = [](bool) { return false; };
 };
+
+/* Drops the first data (or, if !want_data, control) PDU submitted on a
+ * link and forwards everything else - simulating a single lost packet. */
+std::function<bool(bool)> drop_first(bool want_data)
+{
+        return [want_data, dropped = false](bool is_data) mutable {
+                if (!dropped && is_data == want_data) {
+                        dropped = true;
+                        return true;
+                }
+
+                return false;
+        };
+}
 
 backend::backend make_peer_backend(peer_link &link)
 {
         return backend::backend(
                 [&link](::rlc_context *, ::gabs_pbuf buf) -> int {
+                        if (link.drop(pdu_is_data(buf))) {
+                                ::gabs_pbuf_decref(buf);
+                                return 0;
+                        }
+
                         ::rlc_rx_submit(link.other, buf);
                         return 0;
                 },
@@ -508,15 +542,19 @@ TEST_CASE("AM peers exchange a segmented SDU end-to-end", "[am][loopback]")
         REQUIRE(peer_b.events[0].payload == to_bytevec(content));
 }
 
-TEST_CASE("AM peers recover a lost segment via a poll-triggered STATUS",
+TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
          "[am][loopback]")
 {
         /* Spec 5.3.3.2: an AMD PDU that empties the transmission buffer is
          * always polled. Spec 5.3.4: the receiving side triggers a STATUS
          * report for a polled PDU. Spec 5.3.2: the resulting NACK causes
-         * peer_a to retransmit exactly the missing byte range. A single
-         * pump() drains the whole cascade - send, drop, poll, STATUS,
-         * retransmit, deliver - with no manual timer intervention needed. */
+         * the sender to retransmit exactly the missing byte range. A
+         * single pump() drains the whole cascade - send, drop, poll,
+         * STATUS, retransmit, deliver - with no manual timer intervention
+         * needed. Runs with the loss on each link in turn, so both the
+         * A->B and B->A data directions are covered. */
+        bool a_sends = GENERATE(true, false);
+
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         am_fixture peer_a;
@@ -525,36 +563,92 @@ TEST_CASE("AM peers recover a lost segment via a poll-triggered STATUS",
         peer_link link_a{&peer_a.ctx, &peer_b.ctx};
         peer_link link_b{&peer_b.ctx, &peer_a.ctx};
 
-        /* peer_a's backend drops the first submitted PDU (simulating a
-         * lost segment) and forwards every subsequent one normally. */
-        int drop_remaining = 1;
-        auto backend_a = backend::backend(
-                [&](::rlc_context *, ::gabs_pbuf buf) -> int {
-                        if (drop_remaining > 0) {
-                                drop_remaining--;
-                                ::gabs_pbuf_decref(buf);
-                                return 0;
-                        }
+        (a_sends ? link_a : link_b).drop = drop_first(true);
 
-                        ::rlc_rx_submit(link_a.other, buf);
-                        return 0;
-                },
-                [](::rlc_context *) -> int { return 0; });
+        auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
         REQUIRE(init_am(peer_a, backend_a) == 0);
         REQUIRE(init_am(peer_b, backend_b) == 0);
 
+        auto &sender = a_sends ? peer_a : peer_b;
+        auto &receiver = a_sends ? peer_b : peer_a;
+
         std::string content(50, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&peer_a.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(peer_b.events.size() == 1);
-        REQUIRE(peer_b.events[0].type ==
+        REQUIRE(receiver.events.size() == 1);
+        REQUIRE(receiver.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(peer_b.events[0].payload == to_bytevec(content));
+        REQUIRE(receiver.events[0].payload == to_bytevec(content));
+}
+
+TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
+         "[am][loopback]")
+{
+        /* Spec 5.3.3.4: if the acknowledgement never arrives, expiry of
+         * t-PollRetransmit makes the sender retransmit with a fresh poll,
+         * giving the receiver another chance to report status - this time
+         * without the control PDU being lost. Runs with the loss on each
+         * link in turn, so both the A->B and B->A control directions are
+         * covered. */
+        bool a_sends = GENERATE(true, false);
+
+        gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
+
+        am_fixture peer_a;
+        am_fixture peer_b;
+
+        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
+        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+
+        /* The STATUS report flows back from the receiver to the sender,
+         * i.e. on the *other* link from the data. */
+        (a_sends ? link_b : link_a).drop = drop_first(false);
+
+        auto backend_a = make_peer_backend(link_a);
+        auto backend_b = make_peer_backend(link_b);
+
+        REQUIRE(init_am(peer_a, backend_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b) == 0);
+
+        auto &sender = a_sends ? peer_a : peer_b;
+        auto &receiver = a_sends ? peer_b : peer_a;
+        auto &sender_link = a_sends ? link_a : link_b;
+        auto &receiver_link = a_sends ? link_b : link_a;
+
+        std::string content(10, 'z');
+        auto sdu = buf::create(content);
+        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+
+        pump(link_a, link_b, 30);
+
+        /* The data got through fine, but its ack was lost in transit. The
+         * receiver's own (dropped) attempt still started its
+         * t-StatusProhibit, which needs to expire too before a retry can
+         * go out. */
+        REQUIRE(receiver.events.size() == 1);
+        REQUIRE(sender.events.empty());
+
+        REQUIRE(gabs_override::armed(
+                       sender_link.self->arq.t_poll_retransmit.gtimer) ==
+               true);
+        gabs_override::fire(sender_link.self->arq.t_poll_retransmit.gtimer);
+
+        REQUIRE(gabs_override::armed(
+                       receiver_link.self->arq.t_status_prohibit.gtimer) ==
+               true);
+        gabs_override::fire(
+                receiver_link.self->arq.t_status_prohibit.gtimer);
+
+        pump(link_a, link_b, 30);
+
+        REQUIRE(sender.events.size() == 1);
+        REQUIRE(sender.events[0].type ==
+               static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
 }
 
 }; // namespace rlc::test
