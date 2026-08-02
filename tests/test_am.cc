@@ -243,7 +243,7 @@ TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
         ::rlc_rx_submit(&fx.ctx, buf::create(last_bytes).strong());
         REQUIRE(fx.events.empty());
 
-        REQUIRE(::rlc_timer_active(&fx.ctx.rx.t_reassembly) == true);
+        REQUIRE(gabs_override::armed(fx.ctx.rx.t_reassembly.gtimer) == true);
         gabs_override::fire(fx.ctx.rx.t_reassembly.gtimer);
 
         REQUIRE(fx.ctx.arq.gen_status == true);
@@ -360,7 +360,8 @@ TEST_CASE("AM TX retransmits the polled PDU when t-PollRetransmit expires",
         REQUIRE(tx_queue.size() == 1);
         tx_queue.pop();
 
-        REQUIRE(::rlc_timer_active(&fx.ctx.arq.t_poll_retransmit) == true);
+        REQUIRE(gabs_override::armed(
+                       fx.ctx.arq.t_poll_retransmit.gtimer) == true);
         gabs_override::fire(fx.ctx.arq.t_poll_retransmit.gtimer);
 
         (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 8);
@@ -473,7 +474,8 @@ TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
         (void)::rlc_tx_avail(&fx.ctx, 64);
         REQUIRE(tx_queue.size() == 1);
         tx_queue.pop();
-        REQUIRE(::rlc_timer_active(&fx.ctx.arq.t_status_prohibit) == true);
+        REQUIRE(gabs_override::armed(
+                       fx.ctx.arq.t_status_prohibit.gtimer) == true);
 
         ::rlc_rx_submit(&fx.ctx, buf::create(polled_pdu(1)).strong());
         REQUIRE(fx.ctx.arq.gen_status == true);

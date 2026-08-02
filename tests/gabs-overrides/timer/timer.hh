@@ -23,13 +23,15 @@ struct timer {
         fire_fn cb;
 
         /*
-         * Tracks whether the timer is currently armed. Set synchronously by
-         * start()/restart(), and cleared synchronously by stop() and by a
-         * resolver's callback once it actually fires (one-shot semantics) -
-         * unlike runner.joinable(), which only reflects whether the jthread
-         * has been joined, not whether it has been told to stop.
+         * Test-only extension, deliberately *not* what gabs_timer_active()
+         * reports: stopping a timer is asynchronous in the gabs API, so
+         * active() keeps its joinable()-based meaning. This flag instead
+         * records whether the timer has been *asked* to be running - set by
+         * start()/restart(), cleared by stop() and by a resolver's callback
+         * once it fires (one-shot) - which is what a test needs to assert
+         * on synchronously.
          */
-        std::atomic<bool> active{false};
+        std::atomic<bool> armed{false};
 
         /* Used by manual_resolver/fire() below to let a test drive this
          * timer's callback synchronously, without waiting on real time. */
@@ -98,7 +100,7 @@ class timer_ctx
         {
                 auto t = reinterpret_cast<timer *>(handle);
 
-                t->active.store(true);
+                t->armed.store(true);
 
                 {
                         std::lock_guard<std::mutex> lock(t->fire_mutex);
@@ -113,7 +115,7 @@ class timer_ctx
         {
                 auto t = reinterpret_cast<timer *>(handle);
 
-                t->active.store(false);
+                t->armed.store(false);
                 t->runner.request_stop();
         }
 
@@ -126,7 +128,22 @@ class timer_ctx
         {
                 auto t = reinterpret_cast<timer *>(handle);
 
-                return t->active.load();
+                return t->runner.joinable();
+        }
+
+        /**
+         * @brief Test-only: whether the timer is currently *meant* to be
+         * running, updated synchronously by start()/stop()/fire().
+         *
+         * gabs_timer_active() cannot answer this - stopping is
+         * asynchronous, so a stopped timer still reports active until its
+         * thread is joined.
+         */
+        bool armed(void *handle)
+        {
+                auto t = reinterpret_cast<timer *>(handle);
+
+                return t->armed.load();
         }
 
         /**
@@ -140,10 +157,10 @@ class timer_ctx
         {
                 auto t = reinterpret_cast<timer *>(handle);
 
-                if (!t->active.load()) {
+                if (!t->armed.load()) {
                         throw std::logic_error(
                                 "fire() called on a timer that is not "
-                                "active (never started, already stopped, "
+                                "armed (never started, already stopped, "
                                 "or already fired)");
                 }
 
@@ -187,7 +204,7 @@ inline void default_timer(std::stop_token stop_token, void *t_arg,
 
         if (!stopped) {
                 t->cb(t);
-                t->active.store(false);
+                t->armed.store(false);
         }
 }
 
@@ -211,7 +228,7 @@ inline void manual_timer(std::stop_token stop_token, timer *t,
         if (!stop_token.stop_requested()) {
                 lock.unlock();
                 t->cb(t);
-                t->active.store(false);
+                t->armed.store(false);
                 lock.lock();
         }
 
@@ -228,6 +245,11 @@ inline timer_ctx::callback_type manual_resolver(void *)
 inline void fire(gabs_timer handle)
 {
         timer_ctx::get_inst()->fire(handle);
+}
+
+inline bool armed(gabs_timer handle)
+{
+        return timer_ctx::get_inst()->armed(handle);
 }
 
 }; // namespace rlc::gabs_override

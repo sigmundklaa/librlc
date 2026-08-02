@@ -455,7 +455,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 REQUIRE(fx.events[0].sn == 0);
                 REQUIRE(fx.events[1].sn == 1);
 
-                REQUIRE(::rlc_timer_active(&ctx.rx.t_reassembly) == false);
+                REQUIRE(gabs_override::armed(ctx.rx.t_reassembly.gtimer) ==
+                       false);
         }
 
         SECTION("gap remains after expiry: delivers below base, restarts")
@@ -487,7 +488,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
 
                 REQUIRE(ctx.rx.next_status_trigger == 3);
-                REQUIRE(::rlc_timer_active(&ctx.rx.t_reassembly) == true);
+                REQUIRE(gabs_override::armed(ctx.rx.t_reassembly.gtimer) ==
+                       true);
 
                 ::rlc_sdu_decref(sdu1);
                 ::rlc_sdu_decref(sdu2);

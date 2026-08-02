@@ -400,8 +400,8 @@ TEST_CASE("restart_status_prohibit", "[arq][static]")
                 REQUIRE(restart_status_prohibit(&ctx) == 0);
 
                 REQUIRE(ctx.arq.status_prohibit == true);
-                REQUIRE(::rlc_timer_active(&ctx.arq.t_status_prohibit) ==
-                       true);
+                REQUIRE(gabs_override::armed(
+                               ctx.arq.t_status_prohibit.gtimer) == true);
         }
 
         REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_status_prohibit) == 0);
@@ -811,8 +811,8 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
                 process_nack_offset(&ctx, &cur);
 
-                REQUIRE(::rlc_timer_active(&ctx.arq.t_poll_retransmit) ==
-                       false);
+                REQUIRE(gabs_override::armed(
+                               ctx.arq.t_poll_retransmit.gtimer) == false);
 
                 ::rlc_sdu_decref(sdu);
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
