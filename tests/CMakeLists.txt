@@ -30,6 +30,7 @@ target_sources(
         test_am.cc
         test_encode.cc
         test_tx.cc
+        test_rx.cc
 )
 target_include_directories(
     tests
@@ -56,5 +57,6 @@ macro(remove_sources)
 endmacro()
 
 remove_sources(${CMAKE_CURRENT_SOURCE_DIR}/../src/tx.c)
+remove_sources(${CMAKE_CURRENT_SOURCE_DIR}/../src/rx.c)
 
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain rlc gabs)
