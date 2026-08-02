@@ -194,10 +194,7 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
         {
                 /* Per spec 5.2.3.2.3 third bullet, a trigger outside the
                  * receiving window (and not equal to the window end) should
-                 * stop t-Reassembly. The implementation never reaches that
-                 * outcome: both arms of its final `if` return false, so
-                 * this branch is dead code and t-Reassembly is never
-                 * stopped this way. */
+                 * stop t-Reassembly. Currently fails - known bug. */
                 ctx.rx.next_status_trigger = 15; /* base(0) + width(10) + 5 */
 
                 REQUIRE(should_stop_reassembly(&ctx) == true);
