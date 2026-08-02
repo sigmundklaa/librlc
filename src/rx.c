@@ -81,7 +81,7 @@ static bool should_stop_reassembly(struct rlc_context *ctx)
 
         if (!rlc_window_has(&ctx->rx.win, ctx->rx.next_status_trigger) &&
             ctx->rx.next_status_trigger != rlc_window_end(&ctx->rx.win)) {
-                return false;
+                return true;
         }
 
         return false;
