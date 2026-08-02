@@ -111,18 +111,32 @@ struct peer_link {
         std::function<bool(bool is_data)> drop = [](bool) { return false; };
 };
 
-/* Drops the first data (or, if !want_data, control) PDU submitted on a
- * link and forwards everything else - simulating a single lost packet. */
-std::function<bool(bool)> drop_first(bool want_data)
+/* Drops the first `count` data (or, if !want_data, control) PDUs
+ * submitted on a link and forwards everything else - simulating `count`
+ * lost packets (not necessarily the same one retransmitted, if several
+ * PDUs of the requested kind are already in flight before any retry). */
+std::function<bool(bool)> drop_up_to(bool want_data, int count)
 {
-        return [want_data, dropped = false](bool is_data) mutable {
-                if (!dropped && is_data == want_data) {
-                        dropped = true;
+        return [want_data, count](bool is_data) mutable {
+                if (count > 0 && is_data == want_data) {
+                        count--;
                         return true;
                 }
 
                 return false;
         };
+}
+
+std::function<bool(bool)> drop_first(bool want_data)
+{
+        return drop_up_to(want_data, 1);
+}
+
+/* Drops every data (or control) PDU submitted on a link, unconditionally -
+ * simulating a direction that never gets through at all. */
+std::function<bool(bool)> drop_always(bool want_data)
+{
+        return [want_data](bool is_data) { return is_data == want_data; };
 }
 
 backend::backend make_peer_backend(peer_link &link)
@@ -675,6 +689,115 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         REQUIRE(sender.events.size() == 1);
         REQUIRE(sender.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
+
+        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
+        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+}
+
+TEST_CASE("AM peers recover multiple lost segments of the same SDU",
+         "[am][loopback]")
+{
+        /* Generalizes the single-lost-segment case: losing more than one
+         * of a multi-segment SDU's PDUs, but staying under
+         * maxRetxThreshold, still recovers via repeated poll-triggered
+         * STATUS/NACK rounds within a single pump(). Runs with the loss
+         * on each link in turn. */
+        bool a_sends = GENERATE(true, false);
+
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
+        am_fixture peer_a;
+        am_fixture peer_b;
+
+        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
+        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+
+        (a_sends ? link_a : link_b).drop = drop_up_to(true, 2);
+
+        auto backend_a = make_peer_backend(link_a);
+        auto backend_b = make_peer_backend(link_b);
+
+        REQUIRE(init_am(peer_a, backend_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b) == 0);
+
+        auto &sender = a_sends ? peer_a : peer_b;
+        auto &receiver = a_sends ? peer_b : peer_a;
+
+        std::string content(50, 'y');
+        auto sdu = buf::create(content);
+        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+
+        pump(link_a, link_b, 20);
+
+        REQUIRE(receiver.events.size() == 1);
+        REQUIRE(receiver.events[0].type ==
+               static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
+        REQUIRE(receiver.events[0].payload == to_bytevec(content));
+
+        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
+        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+}
+
+TEST_CASE("AM TX gives up and fails the SDU after too many losses",
+         "[am][loopback]")
+{
+        /* Spec 5.3.2: once RETX_COUNT reaches maxRetxThreshold, the
+         * sender gives up on the RLC SDU and notifies upper layers of the
+         * failure. Modeled here as a direction that never gets through at
+         * all, so every t-PollRetransmit-driven retry attempt is lost too
+         * - each fire() only stages and sends one retry, so it's called
+         * up to maxRetxThreshold times. Runs with the failing direction
+         * on each link in turn.
+         *
+         * rlc_event_tx_fail and rlc_event_tx_done both report
+         * RLC_EVENT_TX_RELEASE, so failure is distinguished from success
+         * here by the receiver never having gotten anything. */
+        bool a_sends = GENERATE(true, false);
+
+        gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
+
+        am_fixture peer_a;
+        am_fixture peer_b;
+
+        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
+        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+
+        (a_sends ? link_a : link_b).drop = drop_always(true);
+
+        auto backend_a = make_peer_backend(link_a);
+        auto backend_b = make_peer_backend(link_b);
+
+        REQUIRE(init_am(peer_a, backend_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b) == 0);
+
+        auto &sender = a_sends ? peer_a : peer_b;
+        auto &receiver = a_sends ? peer_b : peer_a;
+
+        auto conf = *::rlc_get_config(&sender.ctx);
+        conf.max_retx_threshhold = 2;
+        ::rlc_set_config(&sender.ctx, &conf);
+
+        std::string content(10, 'w');
+        auto sdu = buf::create(content);
+        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+
+        pump(link_a, link_b, 30);
+
+        for (std::uint32_t i = 0; i < conf.max_retx_threshhold; i++) {
+                REQUIRE(gabs_override::armed(
+                               sender.ctx.arq.t_poll_retransmit.gtimer) ==
+                       true);
+                gabs_override::fire(
+                        sender.ctx.arq.t_poll_retransmit.gtimer);
+
+                pump(link_a, link_b, 30);
+        }
+
+        REQUIRE(receiver.events.empty());
+        REQUIRE(sender.events.size() == 1);
+        REQUIRE(sender.events[0].type ==
+               static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
+        REQUIRE(sender.events[0].sn == 0);
 
         REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
         REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
