@@ -181,9 +181,10 @@ size_t rlc_tx_yield(struct rlc_context *ctx, size_t max_size)
                 }
 
                 if (ctx->conf->type != RLC_AM && pdu.flags.is_last) {
+                        it = rlc_list_it_pop(it, NULL);
+
                         rlc_event_tx_done(ctx, sdu);
-                        rlc_sdu_queue_remove(&ctx->tx.sdus, sdu);
-                        rlc_dealloc(ctx, sdu);
+                        rlc_sdu_decref(sdu);
                 }
 
                 size += (size_t)ret;
