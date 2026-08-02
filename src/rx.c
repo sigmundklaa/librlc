@@ -346,24 +346,16 @@ void rlc_rx_submit(struct rlc_context *ctx, gabs_pbuf buf)
                 gabs_log_inff(ctx->logger, "RX; SN: %" PRIu32 " completed",
                               sdu->sn);
 
-                /* In acknowledged mode, we must wait until after receiving
-                 * the status before deallocating. */
-                if (ctx->conf->type == RLC_AM) {
-                        sdu->state = RLC_DONE;
-                        lowest = lowest_sn_not_recv(ctx);
+                sdu->state = RLC_DONE;
+                lowest = lowest_sn_not_recv(ctx);
 
-                        deliver_ready(ctx);
+                deliver_ready(ctx);
 
-                        if (sdu->sn == rlc_window_base(&ctx->rx.win)) {
-                                gabs_log_dbgf(ctx->logger,
-                                              "Shifting RX window to %" PRIu32,
-                                              lowest);
+                if (sdu->sn == rlc_window_base(&ctx->rx.win)) {
+                        gabs_log_dbgf(ctx->logger,
+                                      "Shifting RX window to %" PRIu32, lowest);
 
-                                rlc_window_move_to(&ctx->rx.win, lowest);
-                        }
-                } else {
-                        rlc_sdu_queue_remove(&ctx->rx.sdus, sdu);
-                        rlc_sdu_decref(sdu);
+                        rlc_window_move_to(&ctx->rx.win, lowest);
                 }
         }
 
