@@ -16,6 +16,7 @@
 #include "util/buf.hh"
 #include "util/backend.hh"
 #include "util/proto.hh"
+#include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
 
@@ -44,46 +45,40 @@ struct captured_event {
         std::vector<std::byte> payload;
 };
 
-/*
- * ctx->listener is a plain C function pointer with no user-data slot, so
- * `ctx` is embedded in this fixture and gabs_container_of recovers it (and
- * its local `events` vector) from the ctx pointer the listener is called
- * with - same pattern as rx_fixture/arq_fixture in the other test files.
- */
-struct am_fixture {
-        ::rlc_context ctx{};
-        std::vector<captured_event> events;
-};
-
-void capture_listener(::rlc_context *raw_ctx, const ::rlc_event *ev)
+/* Builds a fixture::rlc_ctx listener_fn that records events into a
+ * caller-owned vector, so each TEST_CASE keeps its own event storage in
+ * local scope instead of it living inside a fixture struct. */
+fixture::rlc_ctx::listener_fn capture_into(std::vector<captured_event> &events)
 {
-        auto *fx = gabs_container_of(raw_ctx, am_fixture, ctx);
-        captured_event e{static_cast<int>(ev->type), 0, {}};
+        return [&events](const ::rlc_event &ev) {
+                captured_event e{static_cast<int>(ev.type), 0, {}};
 
-        if (ev->sdu != nullptr) {
-                e.sn = ev->sdu->sn;
+                if (ev.sdu != nullptr) {
+                        e.sn = ev.sdu->sn;
 
-                if (ev->type == ::rlc_event::RLC_EVENT_RX_DONE) {
-                        /* pbuf_ptr takes ownership and decrefs on scope
-                         * exit, so incref the SDU's still-owned buffer to
-                         * keep it balanced. */
-                        ::gabs_pbuf_incref(ev->sdu->rx.buffer.buf);
-                        e.payload =
-                                buf::pbuf_ptr(ev->sdu->rx.buffer.buf).vec();
+                        if (ev.type == ::rlc_event::RLC_EVENT_RX_DONE) {
+                                /* pbuf_ptr takes ownership and decrefs on
+                                 * scope exit, so incref the SDU's
+                                 * still-owned buffer to keep it balanced. */
+                                ::gabs_pbuf_incref(ev.sdu->rx.buffer.buf);
+                                e.payload = buf::pbuf_ptr(ev.sdu->rx.buffer.buf)
+                                                   .vec();
+                        }
                 }
-        }
 
-        fx->events.push_back(std::move(e));
+                events.push_back(std::move(e));
+        };
 }
 
-::rlc_errno init_am(am_fixture &fx, ::rlc_backend *backend)
+::rlc_errno init_am(fixture::rlc_ctx &fx, ::rlc_backend *backend,
+                    std::vector<captured_event> &events)
 {
-        auto status = ::rlc_init(&fx.ctx, backend, mem::alloc, mem::alloc);
+        auto status = ::rlc_init(fx.get(), backend, mem::alloc, mem::alloc);
         if (status != 0) {
                 return status;
         }
 
-        return ::rlc_attach_listener(&fx.ctx, capture_listener);
+        return fx.attach_listener(capture_into(events));
 }
 
 /* Spec 6.2.3.6: D/C is the MSB of a PDU's first octet - 1 for an AMD (data)
@@ -218,8 +213,9 @@ TEST_CASE("AM RX reassembles a segmented SDU received out of order",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         auto w = proto::snwidth::W18;
         std::string payload = "hello world, this is a segmented AM SDU!";
@@ -239,17 +235,17 @@ TEST_CASE("AM RX reassembles a segmented SDU received out of order",
         last_bytes.insert(last_bytes.end(), seg2.begin(), seg2.end());
 
         /* Deliver the last segment first. */
-        ::rlc_rx_submit(&fx.ctx, buf::create(last_bytes).strong());
-        REQUIRE(fx.events.empty());
+        ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
+        REQUIRE(events.empty());
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(first_bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(first_bytes).strong());
 
-        REQUIRE(fx.events.size() == 1);
-        REQUIRE(fx.events[0].type ==
+        REQUIRE(events.size() == 1);
+        REQUIRE(events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(fx.events[0].payload == to_bytevec(payload));
+        REQUIRE(events[0].payload == to_bytevec(payload));
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
@@ -263,8 +259,9 @@ TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         auto w = proto::snwidth::W18;
 
@@ -276,11 +273,11 @@ TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
         auto payload = to_bytevec(std::string("unreachable"));
         bytes.insert(bytes.end(), payload.begin(), payload.end());
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(bytes).strong());
 
-        REQUIRE(fx.events.empty());
+        REQUIRE(events.empty());
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
@@ -296,8 +293,9 @@ TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         auto w = proto::snwidth::W18;
 
@@ -316,16 +314,16 @@ TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
         auto seg2 = to_bytevec(std::string("last!"));
         last_bytes.insert(last_bytes.end(), seg2.begin(), seg2.end());
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(first_bytes).strong());
-        ::rlc_rx_submit(&fx.ctx, buf::create(last_bytes).strong());
-        REQUIRE(fx.events.empty());
+        ::rlc_rx_submit(fx.get(), buf::create(first_bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
+        REQUIRE(events.empty());
 
-        REQUIRE(gabs_override::armed(fx.ctx.rx.t_reassembly.gtimer) == true);
-        gabs_override::fire(fx.ctx.rx.t_reassembly.gtimer);
+        REQUIRE(gabs_override::armed(fx.get()->rx.t_reassembly.gtimer) == true);
+        gabs_override::fire(fx.get()->rx.t_reassembly.gtimer);
 
-        REQUIRE(fx.ctx.arq.gen_status == true);
+        REQUIRE(fx.get()->arq.gen_status == true);
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM RX discards a duplicate AMD PDU segment", "[am][rx]")
@@ -339,8 +337,9 @@ TEST_CASE("AM RX discards a duplicate AMD PDU segment", "[am][rx]")
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         auto w = proto::snwidth::W18;
 
@@ -351,15 +350,15 @@ TEST_CASE("AM RX discards a duplicate AMD PDU segment", "[am][rx]")
 
         auto pdu = buf::create(bytes);
 
-        ::rlc_rx_submit(&fx.ctx, pdu.strong());
-        REQUIRE(fx.events.size() == 1);
+        ::rlc_rx_submit(fx.get(), pdu.strong());
+        REQUIRE(events.size() == 1);
 
-        ::rlc_rx_submit(&fx.ctx, pdu.strong());
+        ::rlc_rx_submit(fx.get(), pdu.strong());
 
         /* Only the first delivery counts. */
-        REQUIRE(fx.events.size() == 1);
+        REQUIRE(events.size() == 1);
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM RX discards a PDU with a reserved CPT value", "[am][rx]")
@@ -372,8 +371,9 @@ TEST_CASE("AM RX discards a PDU with a reserved CPT value", "[am][rx]")
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         auto w = proto::snwidth::W18;
 
@@ -382,11 +382,11 @@ TEST_CASE("AM RX discards a PDU with a reserved CPT value", "[am][rx]")
         /* CPT occupies bits 4-6 of octet 1; 0b001 is reserved. */
         bytes[0] |= static_cast<std::byte>(0b001 << 4);
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(bytes).strong());
 
-        REQUIRE(fx.events.empty());
+        REQUIRE(events.empty());
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM TX includes a poll once pollPDU is reached", "[am][tx]")
@@ -400,24 +400,25 @@ TEST_CASE("AM TX includes a poll once pollPDU is reached", "[am][tx]")
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
-        auto conf = *::rlc_get_config(&fx.ctx);
+        auto conf = *::rlc_get_config(fx.get());
         conf.pdu_without_poll_max = 1;
-        ::rlc_set_config(&fx.ctx, &conf);
+        ::rlc_set_config(fx.get(), &conf);
 
         auto sdu = buf::create(std::string("poll me"));
-        REQUIRE(::rlc_tx(&fx.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(fx.get(), sdu, nullptr) == 0);
 
-        (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 8);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 8);
         REQUIRE(!tx_queue.empty());
 
         auto [header, data] =
                 proto::am::split_data(tx_queue.front(), proto::snwidth::W18);
         REQUIRE(header.polled == true);
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM TX retransmits the polled PDU when t-PollRetransmit expires",
@@ -432,24 +433,25 @@ TEST_CASE("AM TX retransmits the polled PDU when t-PollRetransmit expires",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
-        auto conf = *::rlc_get_config(&fx.ctx);
+        auto conf = *::rlc_get_config(fx.get());
         conf.pdu_without_poll_max = 1;
-        ::rlc_set_config(&fx.ctx, &conf);
+        ::rlc_set_config(fx.get(), &conf);
 
         auto sdu = buf::create(std::string("poll me"));
-        REQUIRE(::rlc_tx(&fx.ctx, sdu, nullptr) == 0);
-        (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 8);
+        REQUIRE(::rlc_tx(fx.get(), sdu, nullptr) == 0);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 8);
         REQUIRE(tx_queue.size() == 1);
         tx_queue.pop();
 
         REQUIRE(gabs_override::armed(
-                       fx.ctx.arq.t_poll_retransmit.gtimer) == true);
-        gabs_override::fire(fx.ctx.arq.t_poll_retransmit.gtimer);
+                       fx.get()->arq.t_poll_retransmit.gtimer) == true);
+        gabs_override::fire(fx.get()->arq.t_poll_retransmit.gtimer);
 
-        (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 8);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 8);
         REQUIRE(!tx_queue.empty());
 
         auto [header, data] =
@@ -457,7 +459,7 @@ TEST_CASE("AM TX retransmits the polled PDU when t-PollRetransmit expires",
         REQUIRE(header.polled == true);
         REQUIRE(data == sdu.vec());
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM TX retransmits only the NACKed byte range from a STATUS PDU",
@@ -472,13 +474,14 @@ TEST_CASE("AM TX retransmits only the NACKed byte range from a STATUS PDU",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         std::string content = "0123456789";
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&fx.ctx, sdu, nullptr) == 0);
-        (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 8);
+        REQUIRE(::rlc_tx(fx.get(), sdu, nullptr) == 0);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 8);
         REQUIRE(tx_queue.size() == 1);
         tx_queue.pop();
 
@@ -487,9 +490,9 @@ TEST_CASE("AM TX retransmits only the NACKed byte range from a STATUS PDU",
                                     std::nullopt};
         proto::am::status status{0, {part}};
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(status.encode(w)).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(status.encode(w)).strong());
 
-        (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 8);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 8);
         REQUIRE(!tx_queue.empty());
 
         auto [header, data] = proto::am::split_data(tx_queue.front(), w);
@@ -497,7 +500,7 @@ TEST_CASE("AM TX retransmits only the NACKed byte range from a STATUS PDU",
         REQUIRE(header.so.value() == 2);
         REQUIRE(data == to_bytevec(content.substr(2, 3)));
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM TX advances TX_Next_Ack and releases the SDU on a positive "
@@ -513,24 +516,25 @@ TEST_CASE("AM TX advances TX_Next_Ack and releases the SDU on a positive "
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         auto sdu = buf::create(std::string("ack me"));
-        REQUIRE(::rlc_tx(&fx.ctx, sdu, nullptr) == 0);
-        (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 8);
+        REQUIRE(::rlc_tx(fx.get(), sdu, nullptr) == 0);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 8);
 
         auto w = proto::snwidth::W18;
         proto::am::status status{1, {}};
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(status.encode(w)).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(status.encode(w)).strong());
 
-        REQUIRE(fx.events.size() == 1);
-        REQUIRE(fx.events[0].type ==
+        REQUIRE(events.size() == 1);
+        REQUIRE(events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
-        REQUIRE(fx.events[0].sn == 0);
+        REQUIRE(events[0].sn == 0);
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
@@ -545,8 +549,9 @@ TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        am_fixture fx;
-        REQUIRE(init_am(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_am(fx, back, events) == 0);
 
         auto w = proto::snwidth::W18;
 
@@ -559,59 +564,61 @@ TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
                 return bytes;
         };
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(polled_pdu(0)).strong());
-        REQUIRE(fx.ctx.arq.gen_status == true);
+        ::rlc_rx_submit(fx.get(), buf::create(polled_pdu(0)).strong());
+        REQUIRE(fx.get()->arq.gen_status == true);
 
-        (void)::rlc_tx_avail(&fx.ctx, 64);
+        (void)::rlc_tx_avail(fx.get(), 64);
         REQUIRE(tx_queue.size() == 1);
         tx_queue.pop();
         REQUIRE(gabs_override::armed(
-                       fx.ctx.arq.t_status_prohibit.gtimer) == true);
+                       fx.get()->arq.t_status_prohibit.gtimer) == true);
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(polled_pdu(1)).strong());
-        REQUIRE(fx.ctx.arq.gen_status == true);
+        ::rlc_rx_submit(fx.get(), buf::create(polled_pdu(1)).strong());
+        REQUIRE(fx.get()->arq.gen_status == true);
 
         /* Still prohibited: no second STATUS goes out yet. */
-        (void)::rlc_tx_avail(&fx.ctx, 64);
+        (void)::rlc_tx_avail(fx.get(), 64);
         REQUIRE(tx_queue.empty());
 
-        gabs_override::fire(fx.ctx.arq.t_status_prohibit.gtimer);
+        gabs_override::fire(fx.get()->arq.t_status_prohibit.gtimer);
 
-        (void)::rlc_tx_avail(&fx.ctx, 64);
+        (void)::rlc_tx_avail(fx.get(), 64);
         REQUIRE(!tx_queue.empty());
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("AM peers exchange a segmented SDU end-to-end", "[am][loopback]")
 {
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
-        am_fixture peer_a;
-        am_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        std::vector<captured_event> events_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_am(peer_a, backend_a) == 0);
-        REQUIRE(init_am(peer_b, backend_b) == 0);
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
         std::string content(50, 'z');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&peer_a.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(peer_b.events.size() == 1);
-        REQUIRE(peer_b.events[0].type ==
+        REQUIRE(events_b.size() == 1);
+        REQUIRE(events_b[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(peer_b.events[0].payload == to_bytevec(content));
+        REQUIRE(events_b[0].payload == to_bytevec(content));
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
@@ -629,36 +636,40 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
-        am_fixture peer_a;
-        am_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        std::vector<captured_event> events_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         (a_sends ? link_a : link_b).drop = drop_first(true);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_am(peer_a, backend_a) == 0);
-        REQUIRE(init_am(peer_b, backend_b) == 0);
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
         auto &sender = a_sends ? peer_a : peer_b;
         auto &receiver = a_sends ? peer_b : peer_a;
+        auto &sender_events = a_sends ? events_a : events_b;
+        auto &receiver_events = a_sends ? events_b : events_a;
 
         std::string content(50, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver.events.size() == 1);
-        REQUIRE(receiver.events[0].type ==
+        REQUIRE(receiver_events.size() == 1);
+        REQUIRE(receiver_events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(receiver.events[0].payload == to_bytevec(content));
+        REQUIRE(receiver_events[0].payload == to_bytevec(content));
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
@@ -674,11 +685,13 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
-        am_fixture peer_a;
-        am_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        std::vector<captured_event> events_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         /* The STATUS report flows back from the receiver to the sender,
          * i.e. on the *other* link from the data. */
@@ -687,17 +700,19 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_am(peer_a, backend_a) == 0);
-        REQUIRE(init_am(peer_b, backend_b) == 0);
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
         auto &sender = a_sends ? peer_a : peer_b;
         auto &receiver = a_sends ? peer_b : peer_a;
+        auto &sender_events = a_sends ? events_a : events_b;
+        auto &receiver_events = a_sends ? events_b : events_a;
         auto &sender_link = a_sends ? link_a : link_b;
         auto &receiver_link = a_sends ? link_b : link_a;
 
         std::string content(10, 'z');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 30);
 
@@ -705,8 +720,8 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
          * receiver's own (dropped) attempt still started its
          * t-StatusProhibit, which needs to expire too before a retry can
          * go out. */
-        REQUIRE(receiver.events.size() == 1);
-        REQUIRE(sender.events.empty());
+        REQUIRE(receiver_events.size() == 1);
+        REQUIRE(sender_events.empty());
 
         REQUIRE(gabs_override::armed(
                        sender_link.self->arq.t_poll_retransmit.gtimer) ==
@@ -721,12 +736,12 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
 
         pump(link_a, link_b, 30);
 
-        REQUIRE(sender.events.size() == 1);
-        REQUIRE(sender.events[0].type ==
+        REQUIRE(sender_events.size() == 1);
+        REQUIRE(sender_events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 TEST_CASE("AM peers recover multiple lost segments of the same SDU",
@@ -741,36 +756,40 @@ TEST_CASE("AM peers recover multiple lost segments of the same SDU",
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
-        am_fixture peer_a;
-        am_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        std::vector<captured_event> events_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         (a_sends ? link_a : link_b).drop = drop_up_to(true, 2);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_am(peer_a, backend_a) == 0);
-        REQUIRE(init_am(peer_b, backend_b) == 0);
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
         auto &sender = a_sends ? peer_a : peer_b;
         auto &receiver = a_sends ? peer_b : peer_a;
+        auto &sender_events = a_sends ? events_a : events_b;
+        auto &receiver_events = a_sends ? events_b : events_a;
 
         std::string content(50, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver.events.size() == 1);
-        REQUIRE(receiver.events[0].type ==
+        REQUIRE(receiver_events.size() == 1);
+        REQUIRE(receiver_events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(receiver.events[0].payload == to_bytevec(content));
+        REQUIRE(receiver_events[0].payload == to_bytevec(content));
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 TEST_CASE("AM TX gives up and fails the SDU after too many losses",
@@ -791,51 +810,55 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
-        am_fixture peer_a;
-        am_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        std::vector<captured_event> events_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         (a_sends ? link_a : link_b).drop = drop_always(true);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_am(peer_a, backend_a) == 0);
-        REQUIRE(init_am(peer_b, backend_b) == 0);
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
         auto &sender = a_sends ? peer_a : peer_b;
         auto &receiver = a_sends ? peer_b : peer_a;
+        auto &sender_events = a_sends ? events_a : events_b;
+        auto &receiver_events = a_sends ? events_b : events_a;
 
-        auto conf = *::rlc_get_config(&sender.ctx);
+        auto conf = *::rlc_get_config(sender.get());
         conf.max_retx_threshhold = 2;
-        ::rlc_set_config(&sender.ctx, &conf);
+        ::rlc_set_config(sender.get(), &conf);
 
         std::string content(10, 'w');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 30);
 
         for (std::uint32_t i = 0; i < conf.max_retx_threshhold; i++) {
                 REQUIRE(gabs_override::armed(
-                               sender.ctx.arq.t_poll_retransmit.gtimer) ==
+                               sender.get()->arq.t_poll_retransmit.gtimer) ==
                        true);
                 gabs_override::fire(
-                        sender.ctx.arq.t_poll_retransmit.gtimer);
+                        sender.get()->arq.t_poll_retransmit.gtimer);
 
                 pump(link_a, link_b, 30);
         }
 
-        REQUIRE(receiver.events.empty());
-        REQUIRE(sender.events.size() == 1);
-        REQUIRE(sender.events[0].type ==
+        REQUIRE(receiver_events.empty());
+        REQUIRE(sender_events.size() == 1);
+        REQUIRE(sender_events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
-        REQUIRE(sender.events[0].sn == 0);
+        REQUIRE(sender_events[0].sn == 0);
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 TEST_CASE("AM peers advance the window and deliver in order around a "
@@ -855,52 +878,56 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
-        am_fixture peer_a;
-        am_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        std::vector<captured_event> events_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         (a_sends ? link_a : link_b).drop = drop_sn(1);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_am(peer_a, backend_a) == 0);
-        REQUIRE(init_am(peer_b, backend_b) == 0);
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
         auto &sender = a_sends ? peer_a : peer_b;
         auto &receiver = a_sends ? peer_b : peer_a;
+        auto &sender_events = a_sends ? events_a : events_b;
+        auto &receiver_events = a_sends ? events_b : events_a;
         auto &receiver_link = a_sends ? link_b : link_a;
 
         std::string content0 = "sdu zero";
         std::string content1 = "sdu one, dropped once";
         std::string content2 = "sdu two";
 
-        REQUIRE(::rlc_tx(&sender.ctx, buf::create(content0), nullptr) == 0);
-        REQUIRE(::rlc_tx(&sender.ctx, buf::create(content1), nullptr) == 0);
-        REQUIRE(::rlc_tx(&sender.ctx, buf::create(content2), nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), buf::create(content0), nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), buf::create(content1), nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), buf::create(content2), nullptr) == 0);
 
         pump(link_a, link_b, 64);
 
         /* SDU 0 is delivered right away; SDU 2 is complete on arrival but
          * withheld until SDU 1 is recovered, then both go out together. */
-        REQUIRE(receiver.events.size() == 3);
-        REQUIRE(receiver.events[0].sn == 0);
-        REQUIRE(receiver.events[0].payload == to_bytevec(content0));
-        REQUIRE(receiver.events[1].sn == 1);
-        REQUIRE(receiver.events[1].payload == to_bytevec(content1));
-        REQUIRE(receiver.events[2].sn == 2);
-        REQUIRE(receiver.events[2].payload == to_bytevec(content2));
+        REQUIRE(receiver_events.size() == 3);
+        REQUIRE(receiver_events[0].sn == 0);
+        REQUIRE(receiver_events[0].payload == to_bytevec(content0));
+        REQUIRE(receiver_events[1].sn == 1);
+        REQUIRE(receiver_events[1].payload == to_bytevec(content1));
+        REQUIRE(receiver_events[2].sn == 2);
+        REQUIRE(receiver_events[2].payload == to_bytevec(content2));
 
-        REQUIRE(::rlc_window_base(&receiver.ctx.rx.win) == 3);
+        REQUIRE(::rlc_window_base(&receiver.get()->rx.win) == 3);
 
         /* Only SDU 0 has been acked so far: the recovery of SDU 1 (and
          * the piggybacked ack for SDU 2) triggered another STATUS report,
          * but the receiver's own first STATUS already started its
          * t-StatusProhibit, so that second report is still pending. */
-        REQUIRE(sender.events.size() == 1);
-        REQUIRE(sender.events[0].sn == 0);
+        REQUIRE(sender_events.size() == 1);
+        REQUIRE(sender_events[0].sn == 0);
 
         REQUIRE(gabs_override::armed(
                        receiver_link.self->arq.t_status_prohibit.gtimer) ==
@@ -910,14 +937,14 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
 
         pump(link_a, link_b, 64);
 
-        REQUIRE(sender.events.size() == 3);
-        for (const auto &e : sender.events) {
+        REQUIRE(sender_events.size() == 3);
+        for (const auto &e : sender_events) {
                 REQUIRE(e.type ==
                        static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
         }
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 }; // namespace rlc::test

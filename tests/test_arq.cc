@@ -13,6 +13,7 @@
 #include "util/mem.hh"
 #include "util/buf.hh"
 #include "util/backend.hh"
+#include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
 
@@ -45,24 +46,16 @@ struct captured_event {
         std::uint32_t sn;
 };
 
-/*
- * Same rationale as rx_fixture in test_rx.cc: ctx->listener is a plain C
- * function pointer with no user-data slot, so `ctx` is embedded in this
- * fixture and gabs_container_of recovers it (and its local `events`
- * vector) from the ctx pointer the listener is called with.
- */
-struct arq_fixture {
-        ::rlc_context ctx{};
-        std::vector<captured_event> events;
-};
-
-constexpr auto capture_listener = [](::rlc_context *raw_ctx,
-                                     const ::rlc_event *ev) {
-        auto *fx = gabs_container_of(raw_ctx, arq_fixture, ctx);
-
-        fx->events.push_back({static_cast<int>(ev->type),
-                              ev->sdu != nullptr ? ev->sdu->sn : 0});
-};
+/* Builds a fixture::rlc_ctx listener_fn that records events into a
+ * caller-owned vector, so each TEST_CASE keeps its own event storage in
+ * local scope instead of it living inside a fixture struct. */
+fixture::rlc_ctx::listener_fn capture_into(std::vector<captured_event> &events)
+{
+        return [&events](const ::rlc_event &ev) {
+                events.push_back({static_cast<int>(ev.type),
+                                  ev.sdu != nullptr ? ev.sdu->sn : 0});
+        };
+}
 
 } // namespace
 
@@ -463,13 +456,15 @@ TEST_CASE("tx_ack", "[arq][static]")
 {
         /* Spec 5.2.3.1: positive acknowledgement advances TX_Next_Ack past
          * every RLC SDU up to (not including) ACK_SN. */
-        arq_fixture fx;
-        ::rlc_context &ctx = fx.ctx;
+        fixture::rlc_ctx fx;
+        ::rlc_context &ctx = *fx.get();
+        std::vector<captured_event> events;
 
         ::rlc_list_init(&ctx.tx.sdus);
         ::rlc_window_init(&ctx.tx.win, 0, 10);
         ctx.alloc_misc = mem::alloc;
-        ctx.listener = capture_listener;
+        fx.on_event(capture_into(events));
+        ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
         SECTION("acks a contiguous sent prefix, shifting window as it goes")
@@ -485,9 +480,9 @@ TEST_CASE("tx_ack", "[arq][static]")
                 tx_ack(&ctx, 2);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(fx.events.size() == 2);
-                REQUIRE(fx.events[0].sn == 0);
-                REQUIRE(fx.events[1].sn == 1);
+                REQUIRE(events.size() == 2);
+                REQUIRE(events[0].sn == 0);
+                REQUIRE(events[1].sn == 1);
 
                 REQUIRE(::rlc_window_base(&ctx.tx.win) == 2);
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 2) == sdu2);
@@ -506,8 +501,8 @@ TEST_CASE("tx_ack", "[arq][static]")
                 tx_ack(&ctx, 1);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(fx.events.size() == 1);
-                REQUIRE(fx.events[0].sn == 0);
+                REQUIRE(events.size() == 1);
+                REQUIRE(events[0].sn == 0);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 1) == sdu1);
 
@@ -523,7 +518,7 @@ TEST_CASE("tx_ack", "[arq][static]")
                 tx_ack(&ctx, 5);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(fx.events.empty());
+                REQUIRE(events.empty());
                 REQUIRE(::rlc_window_base(&ctx.tx.win) == 0);
 
                 ::rlc_sdu_decref(sdu);
@@ -592,14 +587,16 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
                 .max_retx_threshhold = 3,
         };
 
-        arq_fixture fx;
-        ::rlc_context &ctx = fx.ctx;
+        fixture::rlc_ctx fx;
+        ::rlc_context &ctx = *fx.get();
+        std::vector<captured_event> events;
         ctx.conf = &conf;
 
         ::rlc_list_init(&ctx.tx.sdus);
         ::rlc_window_init(&ctx.tx.win, 0, 10);
         ctx.alloc_misc = mem::alloc;
-        ctx.listener = capture_listener;
+        fx.on_event(capture_into(events));
+        ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
         SECTION("marks a not-yet-pending SDU for retransmission")
@@ -662,8 +659,8 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 0) == nullptr);
                 REQUIRE(::rlc_window_base(&ctx.tx.win) == 1);
-                REQUIRE(fx.events.size() == 1);
-                REQUIRE(fx.events[0].sn == 0);
+                REQUIRE(events.size() == 1);
+                REQUIRE(events[0].sn == 0);
         }
 
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
@@ -829,14 +826,16 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 .max_retx_threshhold = 2,
         };
 
-        arq_fixture fx;
-        ::rlc_context &ctx = fx.ctx;
+        fixture::rlc_ctx fx;
+        ::rlc_context &ctx = *fx.get();
+        std::vector<captured_event> events;
         ctx.conf = &conf;
 
         ::rlc_list_init(&ctx.tx.sdus);
         ::rlc_window_init(&ctx.tx.win, 0, 10);
         ctx.alloc_misc = mem::alloc;
-        ctx.listener = capture_listener;
+        fx.on_event(capture_into(events));
+        ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
         SECTION("retransmits every SDU within the range, ignores the rest")
@@ -893,8 +892,8 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 ::rlc_sched_yield(&ctx.sched);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 0) == nullptr);
-                REQUIRE(fx.events.size() == 1);
-                REQUIRE(fx.events[0].sn == 0);
+                REQUIRE(events.size() == 1);
+                REQUIRE(events[0].sn == 0);
 
                 REQUIRE(sdu1->state == RLC_READY);
                 auto it = ::rlc_list_it_init(&sdu1->tx.unsent);

@@ -10,6 +10,7 @@
 
 #include "util/mem.hh"
 #include "util/buf.hh"
+#include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
 
@@ -42,25 +43,16 @@ struct captured_event {
         std::uint32_t sn;
 };
 
-/*
- * ctx->listener is a plain C function pointer with no user-data slot, so a
- * capturing closure can't be assigned to it directly. `ctx` is embedded as a
- * member of this fixture instead, and gabs_container_of recovers the
- * fixture (and its local `events` vector) from the ctx pointer the listener
- * is called with - the same pattern util::backend uses for rlc_backend.
- */
-struct rx_fixture {
-        ::rlc_context ctx{};
-        std::vector<captured_event> events;
-};
-
-constexpr auto capture_listener = [](::rlc_context *raw_ctx,
-                                     const ::rlc_event *ev) {
-        auto *fx = gabs_container_of(raw_ctx, rx_fixture, ctx);
-
-        fx->events.push_back({static_cast<int>(ev->type),
-                              ev->sdu != nullptr ? ev->sdu->sn : 0});
-};
+/* Builds a fixture::rlc_ctx listener_fn that records events into a
+ * caller-owned vector, so each TEST_CASE keeps its own event storage in
+ * local scope instead of it living inside a fixture struct. */
+fixture::rlc_ctx::listener_fn capture_into(std::vector<captured_event> &events)
+{
+        return [&events](const ::rlc_event &ev) {
+                events.push_back({static_cast<int>(ev.type),
+                                  ev.sdu != nullptr ? ev.sdu->sn : 0});
+        };
+}
 
 } // namespace
 
@@ -335,13 +327,15 @@ TEST_CASE("lowest_sn_not_recv", "[rx][static]")
 
 TEST_CASE("deliver_ready", "[rx][static]")
 {
-        rx_fixture fx;
-        ::rlc_context &ctx = fx.ctx;
+        fixture::rlc_ctx fx;
+        ::rlc_context &ctx = *fx.get();
+        std::vector<captured_event> events;
 
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
         ctx.alloc_misc = mem::alloc;
-        ctx.listener = capture_listener;
+        fx.on_event(capture_into(events));
+        ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
         SECTION("delivers contiguous DONE prefix in order")
@@ -357,9 +351,9 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(fx.events.size() == 2);
-                REQUIRE(fx.events[0].sn == 0);
-                REQUIRE(fx.events[1].sn == 1);
+                REQUIRE(events.size() == 2);
+                REQUIRE(events[0].sn == 0);
+                REQUIRE(events[1].sn == 1);
 
                 /* sdu2 is not DONE, so it remains queued, undelivered. */
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
@@ -378,8 +372,8 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(fx.events.size() == 1);
-                REQUIRE(fx.events[0].sn == 0);
+                REQUIRE(events.size() == 1);
+                REQUIRE(events[0].sn == 0);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
 
@@ -395,7 +389,7 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(fx.events.empty());
+                REQUIRE(events.empty());
 
                 ::rlc_sdu_decref(sdu1);
         }
@@ -418,11 +412,13 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 .sn_width = RLC_SN_12BIT,
         };
 
-        rx_fixture fx;
-        ::rlc_context &ctx = fx.ctx;
+        fixture::rlc_ctx fx;
+        ::rlc_context &ctx = *fx.get();
+        std::vector<captured_event> events;
         ctx.conf = &conf;
         ctx.alloc_misc = mem::alloc;
-        ctx.listener = capture_listener;
+        fx.on_event(capture_into(events));
+        ctx.listener = fixture::rlc_ctx::listener_trampoline;
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
@@ -451,9 +447,9 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 2);
 
-                REQUIRE(fx.events.size() == 2);
-                REQUIRE(fx.events[0].sn == 0);
-                REQUIRE(fx.events[1].sn == 1);
+                REQUIRE(events.size() == 2);
+                REQUIRE(events[0].sn == 0);
+                REQUIRE(events[1].sn == 1);
 
                 REQUIRE(gabs_override::armed(ctx.rx.t_reassembly.gtimer) ==
                        false);
@@ -481,8 +477,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 1);
 
-                REQUIRE(fx.events.size() == 1);
-                REQUIRE(fx.events[0].sn == 0);
+                REQUIRE(events.size() == 1);
+                REQUIRE(events[0].sn == 0);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 1) == sdu1);
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);

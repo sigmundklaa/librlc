@@ -16,6 +16,7 @@
 #include "util/buf.hh"
 #include "util/backend.hh"
 #include "util/proto.hh"
+#include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
 
@@ -44,30 +45,26 @@ struct captured_event {
         std::vector<std::byte> payload;
 };
 
-/* Same gabs_container_of fixture pattern as am_fixture/arq_fixture/
- * rx_fixture: ctx->listener has no user-data slot, so ctx is embedded
- * here and recovered from the raw pointer the listener is called with. */
-struct um_fixture {
-        ::rlc_context ctx{};
-        std::vector<captured_event> events;
-};
-
-void capture_listener(::rlc_context *raw_ctx, const ::rlc_event *ev)
+/* Builds a fixture::rlc_ctx listener_fn that records events into a
+ * caller-owned vector, so each TEST_CASE keeps its own event storage in
+ * local scope instead of it living inside a fixture struct. */
+fixture::rlc_ctx::listener_fn capture_into(std::vector<captured_event> &events)
 {
-        auto *fx = gabs_container_of(raw_ctx, um_fixture, ctx);
-        captured_event e{static_cast<int>(ev->type), 0, {}};
+        return [&events](const ::rlc_event &ev) {
+                captured_event e{static_cast<int>(ev.type), 0, {}};
 
-        if (ev->sdu != nullptr) {
-                e.sn = ev->sdu->sn;
+                if (ev.sdu != nullptr) {
+                        e.sn = ev.sdu->sn;
 
-                if (ev->type == ::rlc_event::RLC_EVENT_RX_DONE) {
-                        ::gabs_pbuf_incref(ev->sdu->rx.buffer.buf);
-                        e.payload =
-                                buf::pbuf_ptr(ev->sdu->rx.buffer.buf).vec();
+                        if (ev.type == ::rlc_event::RLC_EVENT_RX_DONE) {
+                                ::gabs_pbuf_incref(ev.sdu->rx.buffer.buf);
+                                e.payload = buf::pbuf_ptr(ev.sdu->rx.buffer.buf)
+                                                   .vec();
+                        }
                 }
-        }
 
-        fx->events.push_back(std::move(e));
+                events.push_back(std::move(e));
+        };
 }
 
 /* rlc_init always installs the AM default_config; every context in this
@@ -84,16 +81,17 @@ const ::rlc_config um_conf = {
         .sn_width = RLC_SN_12BIT,
 };
 
-::rlc_errno init_um(um_fixture &fx, ::rlc_backend *backend)
+::rlc_errno init_um(fixture::rlc_ctx &fx, ::rlc_backend *backend,
+                    std::vector<captured_event> &events)
 {
-        auto status = ::rlc_init(&fx.ctx, backend, mem::alloc, mem::alloc);
+        auto status = ::rlc_init(fx.get(), backend, mem::alloc, mem::alloc);
         if (status != 0) {
                 return status;
         }
 
-        ::rlc_set_config(&fx.ctx, &um_conf);
+        ::rlc_set_config(fx.get(), &um_conf);
 
-        return ::rlc_attach_listener(&fx.ctx, capture_listener);
+        return fx.attach_listener(capture_into(events));
 }
 
 /* Peer-to-peer wiring, as in test_am.cc's peer_link/pump/make_peer_backend.
@@ -172,8 +170,9 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        um_fixture fx;
-        REQUIRE(init_um(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
         std::string payload = "hello world, this is a segmented UM SDU!";
@@ -191,15 +190,15 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
         first_bytes.insert(first_bytes.end(), seg1.begin(), seg1.end());
         last_bytes.insert(last_bytes.end(), seg2.begin(), seg2.end());
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(last_bytes).strong());
-        ::rlc_rx_submit(&fx.ctx, buf::create(first_bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(first_bytes).strong());
 
-        REQUIRE(fx.events.size() == 1);
-        REQUIRE(fx.events[0].type ==
+        REQUIRE(events.size() == 1);
+        REQUIRE(events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(fx.events[0].payload == to_bytevec(payload));
+        REQUIRE(events[0].payload == to_bytevec(payload));
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("UM RX discards a PDU with SN outside the receiving window",
@@ -213,8 +212,9 @@ TEST_CASE("UM RX discards a PDU with SN outside the receiving window",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        um_fixture fx;
-        REQUIRE(init_um(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
 
@@ -225,11 +225,11 @@ TEST_CASE("UM RX discards a PDU with SN outside the receiving window",
         auto payload = to_bytevec(std::string("unreachable"));
         bytes.insert(bytes.end(), payload.begin(), payload.end());
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(bytes).strong());
 
-        REQUIRE(fx.events.empty());
+        REQUIRE(events.empty());
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("UM RX discards a duplicate PDU segment", "[um][rx]")
@@ -245,8 +245,9 @@ TEST_CASE("UM RX discards a duplicate PDU segment", "[um][rx]")
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        um_fixture fx;
-        REQUIRE(init_um(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
 
@@ -257,13 +258,13 @@ TEST_CASE("UM RX discards a duplicate PDU segment", "[um][rx]")
 
         auto pdu = buf::create(bytes);
 
-        ::rlc_rx_submit(&fx.ctx, pdu.strong());
-        ::rlc_rx_submit(&fx.ctx, pdu.strong());
+        ::rlc_rx_submit(fx.get(), pdu.strong());
+        ::rlc_rx_submit(fx.get(), pdu.strong());
 
-        REQUIRE(fx.events.empty());
-        REQUIRE(::rlc_window_base(&fx.ctx.rx.win) == 0);
+        REQUIRE(events.empty());
+        REQUIRE(::rlc_window_base(&fx.get()->rx.win) == 0);
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
@@ -282,8 +283,9 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        um_fixture fx;
-        REQUIRE(init_um(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
 
@@ -302,20 +304,21 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
         auto seg2 = to_bytevec(std::string("last!"));
         last_bytes.insert(last_bytes.end(), seg2.begin(), seg2.end());
 
-        ::rlc_rx_submit(&fx.ctx, buf::create(first_bytes).strong());
-        ::rlc_rx_submit(&fx.ctx, buf::create(last_bytes).strong());
-        REQUIRE(fx.events.empty());
+        ::rlc_rx_submit(fx.get(), buf::create(first_bytes).strong());
+        ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
+        REQUIRE(events.empty());
 
-        REQUIRE(gabs_override::armed(fx.ctx.rx.t_reassembly.gtimer) == true);
-        gabs_override::fire(fx.ctx.rx.t_reassembly.gtimer);
+        REQUIRE(gabs_override::armed(fx.get()->rx.t_reassembly.gtimer) ==
+               true);
+        gabs_override::fire(fx.get()->rx.t_reassembly.gtimer);
 
-        REQUIRE(fx.events.size() == 1);
-        REQUIRE(fx.events[0].type ==
+        REQUIRE(events.size() == 1);
+        REQUIRE(events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_FAIL));
-        REQUIRE(fx.events[0].sn == 0);
-        REQUIRE(::rlc_window_base(&fx.ctx.rx.win) == 1);
+        REQUIRE(events[0].sn == 0);
+        REQUIRE(::rlc_window_base(&fx.get()->rx.win) == 1);
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 /* The four TEST_CASEs below are tagged [.] (Catch2's hidden-test marker:
@@ -342,18 +345,19 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx][.]")
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        um_fixture fx;
-        REQUIRE(init_um(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_um(fx, back, events) == 0);
 
         std::string content(30, 'x');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&fx.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(fx.get(), sdu, nullptr) == 0);
 
         auto w = proto::snwidth::W12;
         std::vector<std::byte> reassembled;
 
         while (reassembled.size() < content.size()) {
-                (void)::rlc_tx_avail(&fx.ctx, 12);
+                (void)::rlc_tx_avail(fx.get(), 12);
                 REQUIRE(!tx_queue.empty());
 
                 auto bytes = tx_queue.front().vec();
@@ -374,7 +378,7 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx][.]")
 
         REQUIRE(reassembled == to_bytevec(content));
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
@@ -389,13 +393,14 @@ TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
         backend::backend back(backend::queue_submitter(tx_queue),
                               backend::request_counter(tx_cnt));
 
-        um_fixture fx;
-        REQUIRE(init_um(fx, back) == 0);
+        fixture::rlc_ctx fx;
+        std::vector<captured_event> events;
+        REQUIRE(init_um(fx, back, events) == 0);
 
         auto sdu = buf::create(std::string("fits in one PDU"));
-        REQUIRE(::rlc_tx(&fx.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(fx.get(), sdu, nullptr) == 0);
 
-        (void)::rlc_tx_avail(&fx.ctx, gabs_pbuf_size(sdu) + 4);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 4);
         REQUIRE(tx_queue.size() == 1);
 
         auto w = proto::snwidth::W12;
@@ -408,38 +413,40 @@ TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
         REQUIRE(hdr.so.has_value() == false);
         REQUIRE(std::vector<std::byte>(it, bytes.cend()) == sdu.vec());
 
-        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
 TEST_CASE("UM peers exchange a complete SDU end-to-end", "[um][loopback][.]")
 {
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
-        um_fixture peer_a;
-        um_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_a;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_um(peer_a, backend_a) == 0);
-        REQUIRE(init_um(peer_b, backend_b) == 0);
+        REQUIRE(init_um(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_um(peer_b, backend_b, events_b) == 0);
 
         std::string content(50, 'z');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&peer_a.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(peer_b.events.size() == 1);
-        REQUIRE(peer_b.events[0].type ==
+        REQUIRE(events_b.size() == 1);
+        REQUIRE(events_b[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(peer_b.events[0].payload == to_bytevec(content));
+        REQUIRE(events_b[0].payload == to_bytevec(content));
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
@@ -454,46 +461,49 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
-        um_fixture peer_a;
-        um_fixture peer_b;
+        fixture::rlc_ctx peer_a;
+        fixture::rlc_ctx peer_b;
+        std::vector<captured_event> events_a;
+        std::vector<captured_event> events_b;
 
-        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
-        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
 
         (a_sends ? link_a : link_b).drop = drop_first();
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
 
-        REQUIRE(init_um(peer_a, backend_a) == 0);
-        REQUIRE(init_um(peer_b, backend_b) == 0);
+        REQUIRE(init_um(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_um(peer_b, backend_b, events_b) == 0);
 
         auto &sender = a_sends ? peer_a : peer_b;
         auto &receiver = a_sends ? peer_b : peer_a;
+        auto &receiver_events = a_sends ? events_b : events_a;
 
         std::string content(50, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(&sender.ctx, sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver.events.empty());
+        REQUIRE(receiver_events.empty());
 
-        REQUIRE(gabs_override::armed(receiver.ctx.rx.t_reassembly.gtimer) ==
+        REQUIRE(gabs_override::armed(receiver.get()->rx.t_reassembly.gtimer) ==
                true);
-        gabs_override::fire(receiver.ctx.rx.t_reassembly.gtimer);
+        gabs_override::fire(receiver.get()->rx.t_reassembly.gtimer);
 
-        REQUIRE(receiver.events.size() == 1);
-        REQUIRE(receiver.events[0].type ==
+        REQUIRE(receiver_events.size() == 1);
+        REQUIRE(receiver_events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_FAIL));
 
         pump(link_a, link_b, 20);
 
         /* No retransmission ever happens - the drop is permanent. */
-        REQUIRE(receiver.events.size() == 1);
+        REQUIRE(receiver_events.size() == 1);
 
-        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
-        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
 }; // namespace rlc::test
