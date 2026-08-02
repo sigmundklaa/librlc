@@ -5,6 +5,8 @@
 #include <functional>
 #include <chrono>
 #include <utility>
+#include <atomic>
+#include <mutex>
 #include <condition_variable>
 #include <thread>
 #include <stop_token>
@@ -19,6 +21,29 @@ struct timer {
         using fire_fn = std::function<void(gabs_timer)>;
 
         fire_fn cb;
+
+        /*
+         * Tracks whether the timer is currently armed. Set synchronously by
+         * start()/restart(), and cleared synchronously by stop() and by a
+         * resolver's callback once it actually fires (one-shot semantics) -
+         * unlike runner.joinable(), which only reflects whether the jthread
+         * has been joined, not whether it has been told to stop.
+         */
+        std::atomic<bool> active{false};
+
+        /* Used by manual_resolver/fire() below to let a test drive this
+         * timer's callback synchronously, without waiting on real time. */
+        std::mutex fire_mutex;
+        std::condition_variable_any fire_cv;
+        bool fire_requested = false;
+        bool fire_complete = false;
+
+        /*
+         * Declared last so it is destroyed *first* (member destruction runs
+         * in reverse declaration order): runner's destructor stops and
+         * joins the thread before fire_mutex/fire_cv/active go away, since
+         * a running resolver callback may still be using them.
+         */
         std::jthread runner;
 };
 
@@ -73,6 +98,14 @@ class timer_ctx
         {
                 auto t = reinterpret_cast<timer *>(handle);
 
+                t->active.store(true);
+
+                {
+                        std::lock_guard<std::mutex> lock(t->fire_mutex);
+                        t->fire_requested = false;
+                        t->fire_complete = false;
+                }
+
                 t->runner = std::jthread(resolve(handle), t, delay);
         }
 
@@ -80,6 +113,7 @@ class timer_ctx
         {
                 auto t = reinterpret_cast<timer *>(handle);
 
+                t->active.store(false);
                 t->runner.request_stop();
         }
 
@@ -92,7 +126,35 @@ class timer_ctx
         {
                 auto t = reinterpret_cast<timer *>(handle);
 
-                return t->runner.joinable();
+                return t->active.load();
+        }
+
+        /**
+         * @brief Drive `handle`'s callback to run now, blocking until it has
+         * finished (or a concurrent stop() wins the race).
+         *
+         * Only meaningful for a timer started with a resolver whose
+         * callback waits on `fire_requested` (see manual_resolver).
+         */
+        void fire(void *handle)
+        {
+                auto t = reinterpret_cast<timer *>(handle);
+
+                if (!t->active.load()) {
+                        throw std::logic_error(
+                                "fire() called on a timer that is not "
+                                "active (never started, already stopped, "
+                                "or already fired)");
+                }
+
+                {
+                        std::lock_guard<std::mutex> lock(t->fire_mutex);
+                        t->fire_requested = true;
+                }
+                t->fire_cv.notify_all();
+
+                std::unique_lock<std::mutex> lock(t->fire_mutex);
+                t->fire_cv.wait(lock, [t] { return t->fire_complete; });
         }
 
         static timer_ctx *get_inst()
@@ -125,12 +187,47 @@ inline void default_timer(std::stop_token stop_token, void *t_arg,
 
         if (!stopped) {
                 t->cb(t);
+                t->active.store(false);
         }
 }
 
 inline timer_ctx::callback_type default_resolver(void *)
 {
         return default_timer;
+}
+
+/**
+ * @brief Resolver whose timers never fire on their own. A test drives them
+ * explicitly via timer_ctx::fire()/fire(gabs_timer), synchronously and
+ * without depending on real elapsed time.
+ */
+inline void manual_timer(std::stop_token stop_token, timer *t,
+                         std::chrono::microseconds /*delay*/)
+{
+        std::unique_lock<std::mutex> lock(t->fire_mutex);
+
+        t->fire_cv.wait(lock, stop_token, [t] { return t->fire_requested; });
+
+        if (!stop_token.stop_requested()) {
+                lock.unlock();
+                t->cb(t);
+                t->active.store(false);
+                lock.lock();
+        }
+
+        t->fire_complete = true;
+        lock.unlock();
+        t->fire_cv.notify_all();
+}
+
+inline timer_ctx::callback_type manual_resolver(void *)
+{
+        return manual_timer;
+}
+
+inline void fire(gabs_timer handle)
+{
+        timer_ctx::get_inst()->fire(handle);
 }
 
 }; // namespace rlc::gabs_override

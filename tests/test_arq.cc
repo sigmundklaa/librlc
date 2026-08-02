@@ -811,13 +811,8 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
                 process_nack_offset(&ctx, &cur);
 
-                /* rlc_timer_active() only clears on uninstall (which
-                 * joins); a plain stop() only requests, so check the
-                 * underlying jthread's stop_source directly. */
-                auto *timer = reinterpret_cast<gabs_override::timer *>(
-                        ctx.arq.t_poll_retransmit.gtimer);
-                REQUIRE(timer->runner.get_stop_source().stop_requested() ==
-                       true);
+                REQUIRE(::rlc_timer_active(&ctx.arq.t_poll_retransmit) ==
+                       false);
 
                 ::rlc_sdu_decref(sdu);
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
