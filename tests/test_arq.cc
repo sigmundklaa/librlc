@@ -461,6 +461,8 @@ TEST_CASE("tx_ack", "[arq][static]")
 {
         /* Spec 5.2.3.1: positive acknowledgement advances TX_Next_Ack past
          * every RLC SDU up to (not including) ACK_SN. */
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
         fixture::rlc_ctx fx;
         ::rlc_context &ctx = *fx.get();
         std::vector<captured_event> events;
@@ -471,6 +473,13 @@ TEST_CASE("tx_ack", "[arq][static]")
         fx.on_event(capture_into(events));
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
+
+        /* Spec 5.3.3.3: an acknowledgement covering POLL_SN stops
+         * t-PollRetransmit, so tx_ack reaches the timer even when a case is
+         * only interested in which SDUs get released. */
+        REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
+        REQUIRE(::rlc_timer_install(&ctx.arq.t_poll_retransmit,
+                                    alarm_poll_retransmit, &ctx) == 0);
 
         SECTION("acks a contiguous sent prefix, shifting window as it goes")
         {
@@ -529,6 +538,8 @@ TEST_CASE("tx_ack", "[arq][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
+        REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) == 0);
+        REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
 }
 
@@ -881,6 +892,8 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 .max_retx_threshhold = 2,
         };
 
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
         fixture::rlc_ctx fx;
         ::rlc_context &ctx = *fx.get();
         std::vector<captured_event> events;
@@ -892,6 +905,13 @@ TEST_CASE("process_nack_range", "[arq][static]")
         fx.on_event(capture_into(events));
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
+
+        /* Spec 5.3.3.3: a range covering POLL_SN stops t-PollRetransmit, so
+         * the timer is reached whenever the range starts at the default
+         * POLL_SN of zero. */
+        REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
+        REQUIRE(::rlc_timer_install(&ctx.arq.t_poll_retransmit,
+                                    alarm_poll_retransmit, &ctx) == 0);
 
         SECTION("retransmits every SDU within the range, ignores the rest")
         {
@@ -962,6 +982,8 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 ::rlc_sdu_decref(sdu1);
         }
 
+        REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) == 0);
+        REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
 }
 
