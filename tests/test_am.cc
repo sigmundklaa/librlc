@@ -1,4 +1,5 @@
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -25,14 +26,13 @@ using namespace util;
 namespace
 {
 
-std::vector<std::byte> to_bytes(const std::string &s)
+template <class Container>
+std::vector<std::byte> to_bytevec(const Container &c)
 {
-        std::vector<std::byte> ret;
+        std::vector<std::byte> ret(c.size());
 
-        ret.reserve(s.size());
-        for (char c : s) {
-                ret.push_back(static_cast<std::byte>(c));
-        }
+        std::transform(c.begin(), c.end(), ret.begin(),
+                      [](auto v) { return static_cast<std::byte>(v); });
 
         return ret;
 }
@@ -149,8 +149,8 @@ TEST_CASE("AM RX reassembles a segmented SDU received out of order",
         auto first_bytes = first.encode(w);
         auto last_bytes = last.encode(w);
 
-        auto seg1 = to_bytes(payload.substr(0, 20));
-        auto seg2 = to_bytes(payload.substr(20));
+        auto seg1 = to_bytevec(payload.substr(0, 20));
+        auto seg2 = to_bytevec(payload.substr(20));
 
         first_bytes.insert(first_bytes.end(), seg1.begin(), seg1.end());
         last_bytes.insert(last_bytes.end(), seg2.begin(), seg2.end());
@@ -164,7 +164,7 @@ TEST_CASE("AM RX reassembles a segmented SDU received out of order",
         REQUIRE(fx.events.size() == 1);
         REQUIRE(fx.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(fx.events[0].payload == to_bytes(payload));
+        REQUIRE(fx.events[0].payload == to_bytevec(payload));
 }
 
 TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
@@ -188,7 +188,7 @@ TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
         proto::am::header hdr{false, proto::seginfo::ALL, 200000,
                               std::nullopt};
         auto bytes = hdr.encode(w);
-        auto payload = to_bytes("unreachable");
+        auto payload = to_bytevec(std::string("unreachable"));
         bytes.insert(bytes.end(), payload.begin(), payload.end());
 
         ::rlc_rx_submit(&fx.ctx, buf::create(bytes).strong());
@@ -220,13 +220,13 @@ TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
         proto::am::header first{false, proto::seginfo::FIRST, 0,
                                 std::nullopt};
         auto first_bytes = first.encode(w);
-        auto seg1 = to_bytes("first");
+        auto seg1 = to_bytevec(std::string("first"));
         first_bytes.insert(first_bytes.end(), seg1.begin(), seg1.end());
 
         proto::am::header last{false, proto::seginfo::LAST, 0,
                                std::optional<std::uint16_t>(10)};
         auto last_bytes = last.encode(w);
-        auto seg2 = to_bytes("last!");
+        auto seg2 = to_bytevec(std::string("last!"));
         last_bytes.insert(last_bytes.end(), seg2.begin(), seg2.end());
 
         ::rlc_rx_submit(&fx.ctx, buf::create(first_bytes).strong());
@@ -257,7 +257,7 @@ TEST_CASE("AM RX discards a duplicate AMD PDU segment", "[am][rx]")
 
         proto::am::header hdr{false, proto::seginfo::ALL, 0, std::nullopt};
         auto bytes = hdr.encode(w);
-        auto payload = to_bytes("no duplicates please");
+        auto payload = to_bytevec(std::string("no duplicates please"));
         bytes.insert(bytes.end(), payload.begin(), payload.end());
 
         auto pdu = buf::create(bytes);
@@ -398,7 +398,7 @@ TEST_CASE("AM TX retransmits only the NACKed byte range from a STATUS PDU",
         auto [header, data] = proto::am::split_data(tx_queue.front(), w);
         REQUIRE(header.si == proto::seginfo::NEITHER);
         REQUIRE(header.so.value() == 2);
-        REQUIRE(data == to_bytes(content.substr(2, 3)));
+        REQUIRE(data == to_bytevec(content.substr(2, 3)));
 }
 
 TEST_CASE("AM TX advances TX_Next_Ack and releases the SDU on a positive "
@@ -453,7 +453,7 @@ TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
                 proto::am::header hdr{true, proto::seginfo::ALL, sn,
                                       std::nullopt};
                 auto bytes = hdr.encode(w);
-                auto payload = to_bytes("x");
+                auto payload = to_bytevec(std::string("x"));
                 bytes.insert(bytes.end(), payload.begin(), payload.end());
                 return bytes;
         };
@@ -505,7 +505,7 @@ TEST_CASE("AM peers exchange a segmented SDU end-to-end", "[am][loopback]")
         REQUIRE(peer_b.events.size() == 1);
         REQUIRE(peer_b.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(peer_b.events[0].payload == to_bytes(content));
+        REQUIRE(peer_b.events[0].payload == to_bytevec(content));
 }
 
 TEST_CASE("AM peers recover a lost segment via a poll-triggered STATUS",
@@ -554,7 +554,7 @@ TEST_CASE("AM peers recover a lost segment via a poll-triggered STATUS",
         REQUIRE(peer_b.events.size() == 1);
         REQUIRE(peer_b.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(peer_b.events[0].payload == to_bytes(content));
+        REQUIRE(peer_b.events[0].payload == to_bytevec(content));
 }
 
 }; // namespace rlc::test
