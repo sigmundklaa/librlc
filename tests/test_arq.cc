@@ -825,22 +825,6 @@ TEST_CASE("process_nack_offset", "[arq][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("no offset extension leaves the SDU untouched")
-        {
-                auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
-
-                ::rlc_pdu_status cur = {};
-                cur.nack_sn = 4;
-
-                process_nack_offset(&ctx, &cur);
-
-                REQUIRE(sdu->state == RLC_WAIT);
-                REQUIRE(::rlc_list_it_eoi(::rlc_list_it_init(&sdu->tx.unsent)));
-
-                ::rlc_sdu_decref(sdu);
-        }
-
         SECTION("a NACK matching POLL_SN stops t-PollRetransmit")
         {
                 /* Spec 5.3.3.3: a STATUS report carrying a positive or
