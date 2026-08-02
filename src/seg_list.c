@@ -146,9 +146,8 @@ void rlc_seg_list_clear_until_last(rlc_seg_list *list,
         rlc_list_it it;
         struct rlc_seg_item *item;
 
-        it = rlc_list_it_init(list);
-
-        for (;;) {
+        rlc_list_foreach(list, it)
+        {
                 if (rlc_list_it_eoi(rlc_list_it_next(it))) {
                         break;
                 }
