@@ -98,6 +98,21 @@ bool pdu_is_data(::gabs_pbuf buf)
         return (byte0 & 0x80) != 0;
 }
 
+/* An AMD PDU's SN sits in the low 2 bits of octet 1 plus all of octets 2-3
+ * for an 18-bit SN width (spec 6.2.2.4) - every test in this file uses the
+ * default RLC_SN_18BIT config, so this doesn't need to be width-aware.
+ * Only meaningful when pdu_is_data(buf) is true. */
+std::uint32_t pdu_sn(::gabs_pbuf buf)
+{
+        auto it = ::gabs_pbuf_ci_init(&buf);
+        auto data = reinterpret_cast<const std::uint8_t *>(
+                ::gabs_pbuf_ci_data(it));
+
+        return (static_cast<std::uint32_t>(data[0] & 0x3) << 16) |
+              (static_cast<std::uint32_t>(data[1]) << 8) |
+              static_cast<std::uint32_t>(data[2]);
+}
+
 /* Peer-to-peer wiring for the loopback tests: submitting a PDU on one side
  * delivers it directly into the other side's rlc_rx_submit, unless `drop`
  * says to simulate the packet being lost in transit. rlc_tx_avail only
@@ -108,17 +123,19 @@ bool pdu_is_data(::gabs_pbuf buf)
 struct peer_link {
         ::rlc_context *self = nullptr;
         ::rlc_context *other = nullptr;
-        std::function<bool(bool is_data)> drop = [](bool) { return false; };
+        std::function<bool(::gabs_pbuf)> drop = [](::gabs_pbuf) {
+                return false;
+        };
 };
 
 /* Drops the first `count` data (or, if !want_data, control) PDUs
  * submitted on a link and forwards everything else - simulating `count`
  * lost packets (not necessarily the same one retransmitted, if several
  * PDUs of the requested kind are already in flight before any retry). */
-std::function<bool(bool)> drop_up_to(bool want_data, int count)
+std::function<bool(::gabs_pbuf)> drop_up_to(bool want_data, int count)
 {
-        return [want_data, count](bool is_data) mutable {
-                if (count > 0 && is_data == want_data) {
+        return [want_data, count](::gabs_pbuf buf) mutable {
+                if (count > 0 && pdu_is_data(buf) == want_data) {
                         count--;
                         return true;
                 }
@@ -127,23 +144,41 @@ std::function<bool(bool)> drop_up_to(bool want_data, int count)
         };
 }
 
-std::function<bool(bool)> drop_first(bool want_data)
+std::function<bool(::gabs_pbuf)> drop_first(bool want_data)
 {
         return drop_up_to(want_data, 1);
 }
 
 /* Drops every data (or control) PDU submitted on a link, unconditionally -
  * simulating a direction that never gets through at all. */
-std::function<bool(bool)> drop_always(bool want_data)
+std::function<bool(::gabs_pbuf)> drop_always(bool want_data)
 {
-        return [want_data](bool is_data) { return is_data == want_data; };
+        return [want_data](::gabs_pbuf buf) {
+                return pdu_is_data(buf) == want_data;
+        };
+}
+
+/* Drops the first AMD PDU submitted on a link with the given SN, and
+ * forwards everything else - simulating one specific SDU, out of several
+ * independently queued ones, being lost entirely (as opposed to just one
+ * segment of a single larger SDU). */
+std::function<bool(::gabs_pbuf)> drop_sn(std::uint32_t sn)
+{
+        return [sn, dropped = false](::gabs_pbuf buf) mutable {
+                if (dropped || !pdu_is_data(buf) || pdu_sn(buf) != sn) {
+                        return false;
+                }
+
+                dropped = true;
+                return true;
+        };
 }
 
 backend::backend make_peer_backend(peer_link &link)
 {
         return backend::backend(
                 [&link](::rlc_context *, ::gabs_pbuf buf) -> int {
-                        if (link.drop(pdu_is_data(buf))) {
+                        if (link.drop(buf)) {
                                 ::gabs_pbuf_decref(buf);
                                 return 0;
                         }
@@ -798,6 +833,88 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
         REQUIRE(sender.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
         REQUIRE(sender.events[0].sn == 0);
+
+        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
+        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
+}
+
+TEST_CASE("AM peers advance the window and deliver in order around a "
+         "dropped middle SDU",
+         "[am][loopback]")
+{
+        /* Three independently queued SDUs (not segments of one larger
+         * SDU) with the middle one's sole PDU lost entirely. Spec
+         * 5.2.3.2.1/5.2.3.2.3: RX_Next only advances past a completed SDU
+         * at the window base, so it stalls at the missing one even
+         * though the last SDU has already fully arrived; deliver_ready
+         * only hands SDUs to the upper layer in contiguous SN order, so
+         * the last SDU is withheld until the middle one is recovered -
+         * then both are delivered together, in order. Runs with the loss
+         * on each link in turn. */
+        bool a_sends = GENERATE(true, false);
+
+        gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
+
+        am_fixture peer_a;
+        am_fixture peer_b;
+
+        peer_link link_a{&peer_a.ctx, &peer_b.ctx};
+        peer_link link_b{&peer_b.ctx, &peer_a.ctx};
+
+        (a_sends ? link_a : link_b).drop = drop_sn(1);
+
+        auto backend_a = make_peer_backend(link_a);
+        auto backend_b = make_peer_backend(link_b);
+
+        REQUIRE(init_am(peer_a, backend_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b) == 0);
+
+        auto &sender = a_sends ? peer_a : peer_b;
+        auto &receiver = a_sends ? peer_b : peer_a;
+        auto &receiver_link = a_sends ? link_b : link_a;
+
+        std::string content0 = "sdu zero";
+        std::string content1 = "sdu one, dropped once";
+        std::string content2 = "sdu two";
+
+        REQUIRE(::rlc_tx(&sender.ctx, buf::create(content0), nullptr) == 0);
+        REQUIRE(::rlc_tx(&sender.ctx, buf::create(content1), nullptr) == 0);
+        REQUIRE(::rlc_tx(&sender.ctx, buf::create(content2), nullptr) == 0);
+
+        pump(link_a, link_b, 64);
+
+        /* SDU 0 is delivered right away; SDU 2 is complete on arrival but
+         * withheld until SDU 1 is recovered, then both go out together. */
+        REQUIRE(receiver.events.size() == 3);
+        REQUIRE(receiver.events[0].sn == 0);
+        REQUIRE(receiver.events[0].payload == to_bytevec(content0));
+        REQUIRE(receiver.events[1].sn == 1);
+        REQUIRE(receiver.events[1].payload == to_bytevec(content1));
+        REQUIRE(receiver.events[2].sn == 2);
+        REQUIRE(receiver.events[2].payload == to_bytevec(content2));
+
+        REQUIRE(::rlc_window_base(&receiver.ctx.rx.win) == 3);
+
+        /* Only SDU 0 has been acked so far: the recovery of SDU 1 (and
+         * the piggybacked ack for SDU 2) triggered another STATUS report,
+         * but the receiver's own first STATUS already started its
+         * t-StatusProhibit, so that second report is still pending. */
+        REQUIRE(sender.events.size() == 1);
+        REQUIRE(sender.events[0].sn == 0);
+
+        REQUIRE(gabs_override::armed(
+                       receiver_link.self->arq.t_status_prohibit.gtimer) ==
+               true);
+        gabs_override::fire(
+                receiver_link.self->arq.t_status_prohibit.gtimer);
+
+        pump(link_a, link_b, 64);
+
+        REQUIRE(sender.events.size() == 3);
+        for (const auto &e : sender.events) {
+                REQUIRE(e.type ==
+                       static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
+        }
 
         REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
         REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
