@@ -74,15 +74,14 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
         ::rlc_window_init(&ctx.rx.win, 0, 10);
         ctx.alloc_misc = mem::alloc;
 
-        SECTION("more than one SDU pending triggers start regardless of SDU "
-               "state")
+        SECTION("more than one SDU pending triggers start")
         {
                 ctx.rx.next_highest = 5;
 
                 REQUIRE(should_start_reassembly(&ctx) == true);
         }
 
-        SECTION("exactly one pending SDU with a detected gap triggers start")
+        SECTION("one pending SDU with a gap triggers start")
         {
                 ctx.rx.next_highest = 1;
 
@@ -102,8 +101,7 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("exactly one pending SDU fully contiguous from zero does not "
-               "trigger start")
+        SECTION("one pending SDU fully contiguous does not trigger start")
         {
                 ctx.rx.next_highest = 1;
 
@@ -119,8 +117,7 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("exactly one pending SDU with no SDU object at base does not "
-               "trigger start")
+        SECTION("no SDU object at base does not trigger start")
         {
                 ctx.rx.next_highest = 1;
 
@@ -150,8 +147,7 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
                 REQUIRE(should_stop_reassembly(&ctx) == true);
         }
 
-        SECTION("trigger one past base with base SDU fully received stops "
-               "reassembly")
+        SECTION("trigger one past base, SDU fully received, stops")
         {
                 ctx.rx.next_status_trigger = 1;
 
@@ -167,8 +163,7 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("trigger one past base with base SDU still gapped does not "
-               "stop")
+        SECTION("trigger one past base, SDU still gapped, does not stop")
         {
                 ctx.rx.next_status_trigger = 1;
 
@@ -188,22 +183,21 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("trigger one past base with no SDU object at base does not "
-               "stop")
+        SECTION("trigger one past base, no SDU object, does not stop")
         {
                 ctx.rx.next_status_trigger = 1;
 
                 REQUIRE(should_stop_reassembly(&ctx) == false);
         }
 
-        SECTION("trigger beyond the window end should stop, per spec "
-               "5.2.3.2.3 third bullet ('RX_Next_Status_Trigger falls "
-               "outside of the receiving window and ... is not equal to "
-               "RX_Next + AM_Window_Size'). The implementation never reaches "
-               "this outcome: both arms of its final `if` return false, so "
-               "this branch is dead code and t-Reassembly is never stopped "
-               "this way.")
+        SECTION("trigger beyond window end should stop (known bug)")
         {
+                /* Per spec 5.2.3.2.3 third bullet, a trigger outside the
+                 * receiving window (and not equal to the window end) should
+                 * stop t-Reassembly. The implementation never reaches that
+                 * outcome: both arms of its final `if` return false, so
+                 * this branch is dead code and t-Reassembly is never
+                 * stopped this way. */
                 ctx.rx.next_status_trigger = 15; /* base(0) + width(10) + 5 */
 
                 REQUIRE(should_stop_reassembly(&ctx) == true);
@@ -226,7 +220,7 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
                 REQUIRE(should_restart_reassembly(&ctx) == true);
         }
 
-        SECTION("exactly one pending SDU with a detected gap restarts")
+        SECTION("one pending SDU with a gap restarts")
         {
                 ctx.rx.next_highest = 1;
 
@@ -246,7 +240,7 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("exactly one pending SDU fully contiguous does not restart")
+        SECTION("one pending SDU fully contiguous does not restart")
         {
                 ctx.rx.next_highest = 1;
 
@@ -262,8 +256,7 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
                 ::rlc_sdu_decref(sdu);
         }
 
-        SECTION("exactly one pending SDU with no SDU object at base does not "
-               "restart")
+        SECTION("no SDU object at base does not restart")
         {
                 ctx.rx.next_highest = 1;
 
@@ -354,8 +347,7 @@ TEST_CASE("deliver_ready", "[rx][static]")
         ctx.listener = capture_listener;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
-        SECTION("delivers a contiguous DONE prefix from the window base, in "
-               "order")
+        SECTION("delivers contiguous DONE prefix in order")
         {
                 auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
                 auto sdu1 = make_sdu(&ctx, 1, RLC_DONE);
@@ -378,8 +370,7 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 ::rlc_sdu_decref(sdu2);
         }
 
-        SECTION("stops at the first gap in SN order even if a later SDU is "
-               "DONE")
+        SECTION("stops at first gap even if a later SDU is DONE")
         {
                 auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
                 auto sdu2 = make_sdu(&ctx, 2, RLC_DONE);
@@ -439,10 +430,13 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
         REQUIRE(::rlc_timer_install(&ctx.rx.t_reassembly, alarm_reassembly,
                                     &ctx) == 0);
 
-        SECTION("window advances to RX_Next_Highest when nothing else is "
-               "pending; delivers the completed SDU and drops the "
-               "incomplete one below the new base; timer is not restarted")
+        SECTION("nothing left pending: delivers, drops, no restart")
         {
+                /* Window advances all the way to RX_Next_Highest since
+                 * nothing remains pending at or after the trigger; the
+                 * completed SDU is delivered and the incomplete one below
+                 * the new base is dropped, and the timer is not
+                 * restarted. */
                 ctx.rx.next_status_trigger = 2;
                 ctx.rx.next_highest = 2;
 
@@ -464,10 +458,12 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 REQUIRE(::rlc_timer_active(&ctx.rx.t_reassembly) == false);
         }
 
-        SECTION("window advances only to the first still-incomplete SDU at "
-               "or after the trigger; delivers completed SDUs below the new "
-               "base and leaves the rest queued; timer is restarted")
+        SECTION("gap remains after expiry: delivers below base, restarts")
         {
+                /* Window advances only to the first still-incomplete SDU at
+                 * or after the trigger; SDUs below the new base that are
+                 * DONE are delivered, and the rest stay queued. Since a gap
+                 * remains, the timer is restarted. */
                 ctx.rx.next_status_trigger = 1;
                 ctx.rx.next_highest = 3;
 
