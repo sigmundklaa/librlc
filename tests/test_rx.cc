@@ -1,4 +1,5 @@
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -24,7 +25,8 @@ using namespace util;
 namespace
 {
 
-::rlc_sdu *make_sdu(::rlc_context *ctx, uint32_t sn, enum rlc_sdu_state state)
+::rlc_sdu *make_sdu(::rlc_context *ctx, std::uint32_t sn,
+                    enum rlc_sdu_state state)
 {
         auto sdu = ::rlc_sdu_alloc(ctx, false);
         REQUIRE(sdu != nullptr);
@@ -37,7 +39,7 @@ namespace
 
 struct captured_event {
         int type;
-        uint32_t sn;
+        std::uint32_t sn;
 };
 
 /*
