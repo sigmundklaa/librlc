@@ -14,12 +14,18 @@ namespace rlc::test::util::fixture
 
 /*
  * Equivalent to gabs::core::simple_handle_trait<::rlc_context>, but with a
- * working from(): simple_handle_trait::from() calls gabs's new
- * container_of(T *, T Container::*) with a `const handle_type *` argument,
- * which fails to deduce (the pointer gives T = const rlc_context, the
- * member pointer gives T = rlc_context) for any Handle type, always - not
- * specific to rlc_context. Sidesteps it via the same gabs_container_of
- * macro dynamic.hh's dyn_alloc trait already uses.
+ * working from(): simple_handle_trait::from() calls gabs's
+ * container_of(T *, const T Container::*) with a `const handle_type *`
+ * argument. This still fails to deduce as of gabs commit 618cb77 (which
+ * moved the const from the first template-parameter occurrence to the
+ * second, but didn't resolve the conflict - deducing T against `T *ptr`
+ * from a `const handle_type *` argument gives T = `const handle_type`,
+ * while deducing T against `const T Container::*member` from
+ * `&simple_handle_trait::handle_` (a non-const member) gives T =
+ * `handle_type`; these still disagree, for any Handle type, always).
+ * Confirmed via a minimal repro independent of rlc_context. Sidesteps it
+ * via the same gabs_container_of macro dynamic.hh's dyn_alloc trait
+ * already uses.
  */
 class ctx_trait
 {
