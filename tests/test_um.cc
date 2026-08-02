@@ -159,10 +159,7 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
 {
         /* Spec 5.2.2.2.2/5.2.2.2.3: byte segments of an RLC SDU may arrive
          * in any order; the SDU is delivered once every byte has been
-         * received. rx.c's completion handling only sets sdu->state to
-         * RLC_DONE and calls deliver_sdu/rlc_event_rx_done on the RLC_AM
-         * branch - the else branch taken for RLC_UM just removes and
-         * decrefs the SDU, so RLC_EVENT_RX_DONE never fires here. */
+         * received. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -321,18 +318,17 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
-/* The four TEST_CASEs below are tagged [.] (Catch2's hidden-test marker:
- * skipped by a bare run, still runnable by naming the tag explicitly) since
- * they all reliably hit a heap-use-after-free, not just a REQUIRE failure.
- * rlc_tx_yield frees a completed non-AM SDU - and, for UM,
- * pdu_size_adjust sets is_last on the very first PDU whenever the whole SDU
- * fits - without updating the rlc_list_foreach iterator it is still running
- * under, unlike the pop-before-free pattern serve_sdu uses for the same
- * list. The next loop iteration's rlc_list_it_next() then dereferences the
- * freed node. This affects any UM SDU that completes within rlc_tx_avail, so it
- * is not a narrow edge case - every TX/loopback test below hits it. */
+/* Every TX/loopback case below reaches a heap-use-after-free rather than a
+ * plain expectation failure, so under a sanitized build they abort the test
+ * process instead of reporting. rlc_tx_yield frees a completed non-AM SDU -
+ * and, for UM, pdu_size_adjust sets is_last on the very first PDU whenever
+ * the whole SDU fits - without updating the rlc_list_foreach iterator it is
+ * still running under, unlike the pop-before-free pattern serve_sdu uses for
+ * the same list. The next loop iteration's rlc_list_it_next() then
+ * dereferences the freed node, which any UM SDU completing within
+ * rlc_tx_avail runs into. */
 
-TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx][.]")
+TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
 {
         /* Spec 5.2.2.1: an SDU too large for one PDU is segmented; the
          * first segment carries SI=FIRST, later ones the SN of the SDU
@@ -381,7 +377,7 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx][.]")
 }
 
 TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
-         "[um][tx][.]")
+         "[um][tx]")
 {
         /* Spec 5.2.2.1.1: if the PDU contains the complete SDU, both the SN
          * and SO fields are omitted (SI=ALL). */
@@ -415,7 +411,7 @@ TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
-TEST_CASE("UM peers exchange a complete SDU end-to-end", "[um][loopback][.]")
+TEST_CASE("UM peers exchange a complete SDU end-to-end", "[um][loopback]")
 {
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
@@ -449,7 +445,7 @@ TEST_CASE("UM peers exchange a complete SDU end-to-end", "[um][loopback][.]")
 }
 
 TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
-         "[um][loopback][.]")
+         "[um][loopback]")
 {
         /* Spec 5.3.1: ARQ procedures are only performed by an AM RLC
          * entity - unlike the AM loopback tests, there is no
