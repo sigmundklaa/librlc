@@ -199,6 +199,8 @@ TEST_CASE("AM RX reassembles a segmented SDU received out of order",
         REQUIRE(fx.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
         REQUIRE(fx.events[0].payload == to_bytevec(payload));
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
@@ -228,6 +230,8 @@ TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
         ::rlc_rx_submit(&fx.ctx, buf::create(bytes).strong());
 
         REQUIRE(fx.events.empty());
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
@@ -271,6 +275,8 @@ TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
         gabs_override::fire(fx.ctx.rx.t_reassembly.gtimer);
 
         REQUIRE(fx.ctx.arq.gen_status == true);
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM RX discards a duplicate AMD PDU segment", "[am][rx]")
@@ -303,6 +309,8 @@ TEST_CASE("AM RX discards a duplicate AMD PDU segment", "[am][rx]")
 
         /* Only the first delivery counts. */
         REQUIRE(fx.events.size() == 1);
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM RX discards a PDU with a reserved CPT value", "[am][rx]")
@@ -328,6 +336,8 @@ TEST_CASE("AM RX discards a PDU with a reserved CPT value", "[am][rx]")
         ::rlc_rx_submit(&fx.ctx, buf::create(bytes).strong());
 
         REQUIRE(fx.events.empty());
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM TX includes a poll once pollPDU is reached", "[am][tx]")
@@ -357,6 +367,8 @@ TEST_CASE("AM TX includes a poll once pollPDU is reached", "[am][tx]")
         auto [header, data] =
                 proto::am::split_data(tx_queue.front(), proto::snwidth::W18);
         REQUIRE(header.polled == true);
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM TX retransmits the polled PDU when t-PollRetransmit expires",
@@ -395,6 +407,8 @@ TEST_CASE("AM TX retransmits the polled PDU when t-PollRetransmit expires",
                 proto::am::split_data(tx_queue.front(), proto::snwidth::W18);
         REQUIRE(header.polled == true);
         REQUIRE(data == sdu.vec());
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM TX retransmits only the NACKed byte range from a STATUS PDU",
@@ -433,6 +447,8 @@ TEST_CASE("AM TX retransmits only the NACKed byte range from a STATUS PDU",
         REQUIRE(header.si == proto::seginfo::NEITHER);
         REQUIRE(header.so.value() == 2);
         REQUIRE(data == to_bytevec(content.substr(2, 3)));
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM TX advances TX_Next_Ack and releases the SDU on a positive "
@@ -464,6 +480,8 @@ TEST_CASE("AM TX advances TX_Next_Ack and releases the SDU on a positive "
         REQUIRE(fx.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
         REQUIRE(fx.events[0].sn == 0);
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
@@ -512,6 +530,8 @@ TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
 
         (void)::rlc_tx_avail(&fx.ctx, 64);
         REQUIRE(!tx_queue.empty());
+
+        REQUIRE(::rlc_deinit(&fx.ctx) == 0);
 }
 
 TEST_CASE("AM peers exchange a segmented SDU end-to-end", "[am][loopback]")
@@ -540,6 +560,9 @@ TEST_CASE("AM peers exchange a segmented SDU end-to-end", "[am][loopback]")
         REQUIRE(peer_b.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
         REQUIRE(peer_b.events[0].payload == to_bytevec(content));
+
+        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
+        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
 }
 
 TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
@@ -584,6 +607,9 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
         REQUIRE(receiver.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
         REQUIRE(receiver.events[0].payload == to_bytevec(content));
+
+        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
+        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
 }
 
 TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
@@ -649,6 +675,9 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         REQUIRE(sender.events.size() == 1);
         REQUIRE(sender.events[0].type ==
                static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
+
+        REQUIRE(::rlc_deinit(&peer_a.ctx) == 0);
+        REQUIRE(::rlc_deinit(&peer_b.ctx) == 0);
 }
 
 }; // namespace rlc::test
