@@ -28,6 +28,7 @@ target_sources(
         test_seg_buf.cc
         test_seg_list.cc
         test_am.cc
+        test_um.cc
         test_encode.cc
         test_tx.cc
         test_rx.cc
