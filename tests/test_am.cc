@@ -87,8 +87,11 @@ void capture_listener(::rlc_context *raw_ctx, const ::rlc_event *ev)
 }
 
 /* Spec 6.2.3.6: D/C is the MSB of a PDU's first octet - 1 for an AMD (data)
- * PDU, 0 for a STATUS (control) PDU. Reads without touching buf's
- * refcount, so the caller keeps full ownership either way. */
+ * PDU, 0 for a STATUS (control) PDU. proto::am::header::decode() asserts
+ * this bit is set (it only models AMD headers), so it can't be used for
+ * the classification itself - just this one raw peek, which reads
+ * without touching buf's refcount so the caller keeps full ownership
+ * either way. */
 bool pdu_is_data(::gabs_pbuf buf)
 {
         auto it = ::gabs_pbuf_ci_init(&buf);
@@ -98,19 +101,16 @@ bool pdu_is_data(::gabs_pbuf buf)
         return (byte0 & 0x80) != 0;
 }
 
-/* An AMD PDU's SN sits in the low 2 bits of octet 1 plus all of octets 2-3
- * for an 18-bit SN width (spec 6.2.2.4) - every test in this file uses the
- * default RLC_SN_18BIT config, so this doesn't need to be width-aware.
- * Only meaningful when pdu_is_data(buf) is true. */
+/* Only meaningful when pdu_is_data(buf) is true. Every context in this
+ * file uses the default RLC_SN_18BIT config. Increfs buf for the
+ * duration, since pbuf_ptr takes ownership and decrefs on scope exit. */
 std::uint32_t pdu_sn(::gabs_pbuf buf)
 {
-        auto it = ::gabs_pbuf_ci_init(&buf);
-        auto data = reinterpret_cast<const std::uint8_t *>(
-                ::gabs_pbuf_ci_data(it));
+        ::gabs_pbuf_incref(buf);
+        auto bytes = buf::pbuf_ptr(buf).vec();
+        auto it = bytes.cbegin();
 
-        return (static_cast<std::uint32_t>(data[0] & 0x3) << 16) |
-              (static_cast<std::uint32_t>(data[1]) << 8) |
-              static_cast<std::uint32_t>(data[2]);
+        return proto::am::header::decode(it, proto::snwidth::W18).sn;
 }
 
 /* Peer-to-peer wiring for the loopback tests: submitting a PDU on one side
