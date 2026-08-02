@@ -155,6 +155,8 @@ static void alarm_reassembly(struct rlc_timer *timer, struct rlc_context *ctx)
 
                 rlc_timer_start(timer, ctx->conf->time_reassembly_us);
         }
+
+        ctx->arq.gen_status = true;
 }
 
 static uint32_t lowest_sn_not_recv(struct rlc_context *ctx)
