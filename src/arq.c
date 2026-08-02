@@ -71,6 +71,11 @@ static rlc_errno restart_status_prohibit(struct rlc_context *ctx)
         return status;
 }
 
+static void stop_poll_retransmit(struct rlc_context *ctx)
+{
+        (void)rlc_timer_stop(&ctx->arq.t_poll_retransmit);
+}
+
 static void log_rx_status(const gabs_logger_h *logger,
                           struct rlc_pdu_status *status)
 {
@@ -274,6 +279,10 @@ static void tx_ack(struct rlc_context *ctx, uint16_t sn)
 
         gabs_log_dbgf(ctx->logger, "TX AM STATUS ACK; ACK_SN: %" PRIu32, sn);
 
+        if (sn >= ctx->arq.poll_sn) {
+                stop_poll_retransmit(ctx);
+        }
+
         rlc_list_foreach(&ctx->tx.sdus, it)
         {
                 sdu = rlc_sdu_from_it(it);
@@ -312,11 +321,6 @@ static void tx_nack_clear(struct rlc_context *ctx, uint16_t sn)
 
                 rlc_seg_list_clear_until_last(&sdu->tx.unsent, ctx->alloc_misc);
         }
-}
-
-static void stop_poll_retransmit(struct rlc_context *ctx)
-{
-        (void)rlc_timer_stop(&ctx->arq.t_poll_retransmit);
 }
 
 /**
@@ -385,15 +389,15 @@ static void process_nack_offset(struct rlc_context *ctx,
 {
         struct rlc_sdu *sdu;
 
+        if (cur->nack_sn == ctx->arq.poll_sn) {
+                stop_poll_retransmit(ctx);
+        }
+
         sdu = rlc_sdu_queue_get(&ctx->tx.sdus, cur->nack_sn);
         if (sdu == NULL) {
                 gabs_log_errf(ctx->logger, "Unrecognized SN: %u", cur->nack_sn);
 
                 return;
-        }
-
-        if (sdu->sn == ctx->arq.poll_sn) {
-                stop_poll_retransmit(ctx);
         }
 
         if (cur->offset.end == RLC_STATUS_SO_MAX) {
@@ -407,6 +411,10 @@ static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
 {
         struct rlc_sdu *sdu;
         struct rlc_seg seg;
+
+        if (cur->nack_sn == ctx->arq.poll_sn) {
+                stop_poll_retransmit(ctx);
+        }
 
         sdu = rlc_sdu_queue_get(&ctx->tx.sdus, cur->nack_sn);
         if (sdu == NULL) {
@@ -432,6 +440,10 @@ static void process_nack_range(struct rlc_context *ctx,
         rlc_list_it skipped_to;
 
         rlc_window_init(&nack_win, cur->nack_sn, cur->range);
+
+        if (rlc_window_has(&nack_win, ctx->arq.poll_sn)) {
+                stop_poll_retransmit(ctx);
+        }
 
         rlc_list_foreach(&ctx->tx.sdus, it)
         {
