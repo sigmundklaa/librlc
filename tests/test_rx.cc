@@ -190,11 +190,11 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
                 REQUIRE(should_stop_reassembly(&ctx) == false);
         }
 
-        SECTION("trigger beyond window end should stop (known bug)")
+        SECTION("trigger beyond window end should stop")
         {
                 /* Per spec 5.2.3.2.3 third bullet, a trigger outside the
                  * receiving window (and not equal to the window end) should
-                 * stop t-Reassembly. Currently fails - known bug. */
+                 * stop t-Reassembly. */
                 ctx.rx.next_status_trigger = 15; /* base(0) + width(10) + 5 */
 
                 REQUIRE(should_stop_reassembly(&ctx) == true);
