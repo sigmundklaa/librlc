@@ -394,13 +394,11 @@ static void process_nack_offset(struct rlc_context *ctx,
                 stop_poll_retransmit(ctx);
         }
 
-        if (cur->ext.has_offset) {
-                if (cur->offset.end == RLC_STATUS_SO_MAX) {
-                        cur->offset.end = gabs_pbuf_size(sdu->tx.buffer);
-                }
-
-                (void)retransmit_sdu(ctx, sdu, &cur->offset);
+        if (cur->offset.end == RLC_STATUS_SO_MAX) {
+                cur->offset.end = gabs_pbuf_size(sdu->tx.buffer);
         }
+
+        (void)retransmit_sdu(ctx, sdu, &cur->offset);
 }
 
 static void process_nack(struct rlc_context *ctx, struct rlc_pdu_status *cur)
