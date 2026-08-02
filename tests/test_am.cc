@@ -25,21 +25,6 @@ using namespace util;
 namespace
 {
 
-std::vector<std::byte> copy_pbuf(::gabs_pbuf buf)
-{
-        std::vector<std::byte> ret;
-        ::gabs_pbuf_ci it;
-
-        gabs_pbuf_ci_foreach(&buf, it)
-        {
-                auto data = reinterpret_cast<const std::byte *>(
-                        ::gabs_pbuf_ci_data(it));
-                ret.insert(ret.end(), data, data + ::gabs_pbuf_ci_size(it));
-        }
-
-        return ret;
-}
-
 std::vector<std::byte> to_bytes(const std::string &s)
 {
         std::vector<std::byte> ret;
@@ -78,7 +63,12 @@ void capture_listener(::rlc_context *raw_ctx, const ::rlc_event *ev)
                 e.sn = ev->sdu->sn;
 
                 if (ev->type == ::rlc_event::RLC_EVENT_RX_DONE) {
-                        e.payload = copy_pbuf(ev->sdu->rx.buffer.buf);
+                        /* pbuf_ptr takes ownership and decrefs on scope
+                         * exit, so incref the SDU's still-owned buffer to
+                         * keep it balanced. */
+                        ::gabs_pbuf_incref(ev->sdu->rx.buffer.buf);
+                        e.payload =
+                                buf::pbuf_ptr(ev->sdu->rx.buffer.buf).vec();
                 }
         }
 
