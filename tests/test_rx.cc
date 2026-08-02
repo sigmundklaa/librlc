@@ -5,7 +5,6 @@
 #include <catch2/catch_all.hpp>
 
 #include <rlc/rlc.h>
-#include <rlc/seg_list.h>
 #include <rlc/seg_buf.h>
 
 #include "util/mem.hh"
@@ -25,49 +24,13 @@ using namespace util;
 namespace
 {
 
-/*
- * Stack-allocated SDU for the pure window/state statics (Group A). These
- * never flow through deliver_sdu/drop_sdu, so they must never be inserted
- * into a queue that gets passed to those functions - only the ones below.
- */
-::rlc_sdu make_stack_sdu(uint32_t sn, enum rlc_sdu_state state)
-{
-        ::rlc_sdu sdu = {};
-
-        sdu.sn = sn;
-        sdu.state = state;
-        ::rlc_list_init(&sdu.rx.buffer.segments);
-
-        return sdu;
-}
-
-void add_segment(::rlc_sdu &sdu, uint32_t start, uint32_t end)
-{
-        ::rlc_seg seg{start, end};
-
-        REQUIRE(::rlc_seg_list_insert_all(&sdu.rx.buffer.segments, seg,
-                                          mem::alloc) == 0);
-}
-
-/*
- * Heap-allocated SDU for the event/scheduler-driving statics (Group B).
- * deliver_sdu/drop_sdu decref to zero and free these, so they must be
- * allocated the same way rlc_rx_submit allocates them.
- */
-::rlc_sdu *make_heap_sdu(::rlc_context *ctx, uint32_t sn,
-                         enum rlc_sdu_state state, const std::string &data)
+::rlc_sdu *make_sdu(::rlc_context *ctx, uint32_t sn, enum rlc_sdu_state state)
 {
         auto sdu = ::rlc_sdu_alloc(ctx, false);
         REQUIRE(sdu != nullptr);
 
         sdu->sn = sn;
         sdu->state = state;
-        sdu->rx.last_received = true;
-
-        auto payload = buf::create(data);
-        ::rlc_seg seg{0, static_cast<uint32_t>(data.size())};
-        REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer, payload, seg, mem::alloc,
-                                     mem::alloc) == 0);
 
         return sdu;
 }
@@ -77,13 +40,25 @@ struct captured_event {
         uint32_t sn;
 };
 
-std::vector<captured_event> g_events;
+/*
+ * ctx->listener is a plain C function pointer with no user-data slot, so a
+ * capturing closure can't be assigned to it directly. `ctx` is embedded as a
+ * member of this fixture instead, and gabs_container_of recovers the
+ * fixture (and its local `events` vector) from the ctx pointer the listener
+ * is called with - the same pattern util::backend uses for rlc_backend.
+ */
+struct rx_fixture {
+        ::rlc_context ctx{};
+        std::vector<captured_event> events;
+};
 
-void capture_listener(::rlc_context *, const ::rlc_event *ev)
-{
-        g_events.push_back(
-                {static_cast<int>(ev->type), ev->sdu != nullptr ? ev->sdu->sn : 0});
-}
+constexpr auto capture_listener = [](::rlc_context *raw_ctx,
+                                     const ::rlc_event *ev) {
+        auto *fx = gabs_container_of(raw_ctx, rx_fixture, ctx);
+
+        fx->events.push_back({static_cast<int>(ev->type),
+                              ev->sdu != nullptr ? ev->sdu->sn : 0});
+};
 
 } // namespace
 
@@ -95,6 +70,7 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
         ::rlc_context ctx = {};
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
+        ctx.alloc_misc = mem::alloc;
 
         SECTION("more than one SDU pending triggers start regardless of SDU "
                "state")
@@ -108,14 +84,20 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
         {
                 ctx.rx.next_highest = 1;
 
-                auto sdu = make_stack_sdu(0, RLC_READY);
-                add_segment(sdu, 0, 3);
-                add_segment(sdu, 5, 8);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu);
+                auto sdu = make_sdu(&ctx, 0, RLC_READY);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{0, 3}, mem::alloc,
+                                             mem::alloc) == 0);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{5, 8}, mem::alloc,
+                                             mem::alloc) == 0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu);
 
                 REQUIRE(should_start_reassembly(&ctx) == true);
 
-                ::rlc_seg_list_clear(&sdu.rx.buffer.segments, mem::alloc);
+                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("exactly one pending SDU fully contiguous from zero does not "
@@ -123,13 +105,16 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
         {
                 ctx.rx.next_highest = 1;
 
-                auto sdu = make_stack_sdu(0, RLC_READY);
-                add_segment(sdu, 0, 5);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu);
+                auto sdu = make_sdu(&ctx, 0, RLC_READY);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(5, 'x')),
+                                             ::rlc_seg{0, 5}, mem::alloc,
+                                             mem::alloc) == 0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu);
 
                 REQUIRE(should_start_reassembly(&ctx) == false);
 
-                ::rlc_seg_list_clear(&sdu.rx.buffer.segments, mem::alloc);
+                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("exactly one pending SDU with no SDU object at base does not "
@@ -154,6 +139,7 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
         ::rlc_context ctx = {};
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
+        ctx.alloc_misc = mem::alloc;
 
         SECTION("trigger at or before window base stops reassembly")
         {
@@ -167,13 +153,16 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
         {
                 ctx.rx.next_status_trigger = 1;
 
-                auto sdu = make_stack_sdu(0, RLC_READY);
-                add_segment(sdu, 0, 5);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu);
+                auto sdu = make_sdu(&ctx, 0, RLC_READY);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(5, 'x')),
+                                             ::rlc_seg{0, 5}, mem::alloc,
+                                             mem::alloc) == 0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu);
 
                 REQUIRE(should_stop_reassembly(&ctx) == true);
 
-                ::rlc_seg_list_clear(&sdu.rx.buffer.segments, mem::alloc);
+                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("trigger one past base with base SDU still gapped does not "
@@ -181,14 +170,20 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
         {
                 ctx.rx.next_status_trigger = 1;
 
-                auto sdu = make_stack_sdu(0, RLC_READY);
-                add_segment(sdu, 0, 3);
-                add_segment(sdu, 5, 8);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu);
+                auto sdu = make_sdu(&ctx, 0, RLC_READY);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{0, 3}, mem::alloc,
+                                             mem::alloc) == 0);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{5, 8}, mem::alloc,
+                                             mem::alloc) == 0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu);
 
                 REQUIRE(should_stop_reassembly(&ctx) == false);
 
-                ::rlc_seg_list_clear(&sdu.rx.buffer.segments, mem::alloc);
+                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("trigger one past base with no SDU object at base does not "
@@ -220,6 +215,7 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
         ::rlc_context ctx = {};
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
+        ctx.alloc_misc = mem::alloc;
 
         SECTION("more than one SDU still pending after expiry restarts")
         {
@@ -232,27 +228,36 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
         {
                 ctx.rx.next_highest = 1;
 
-                auto sdu = make_stack_sdu(0, RLC_READY);
-                add_segment(sdu, 0, 3);
-                add_segment(sdu, 5, 8);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu);
+                auto sdu = make_sdu(&ctx, 0, RLC_READY);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{0, 3}, mem::alloc,
+                                             mem::alloc) == 0);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{5, 8}, mem::alloc,
+                                             mem::alloc) == 0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu);
 
                 REQUIRE(should_restart_reassembly(&ctx) == true);
 
-                ::rlc_seg_list_clear(&sdu.rx.buffer.segments, mem::alloc);
+                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("exactly one pending SDU fully contiguous does not restart")
         {
                 ctx.rx.next_highest = 1;
 
-                auto sdu = make_stack_sdu(0, RLC_READY);
-                add_segment(sdu, 0, 5);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu);
+                auto sdu = make_sdu(&ctx, 0, RLC_READY);
+                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                                             buf::create(std::string(5, 'x')),
+                                             ::rlc_seg{0, 5}, mem::alloc,
+                                             mem::alloc) == 0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu);
 
                 REQUIRE(should_restart_reassembly(&ctx) == false);
 
-                ::rlc_seg_list_clear(&sdu.rx.buffer.segments, mem::alloc);
+                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("exactly one pending SDU with no SDU object at base does not "
@@ -276,6 +281,7 @@ TEST_CASE("lowest_sn_not_recv", "[rx][static]")
         ::rlc_context ctx = {};
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
+        ctx.alloc_misc = mem::alloc;
 
         SECTION("empty queue returns RX_Next_Highest")
         {
@@ -286,61 +292,72 @@ TEST_CASE("lowest_sn_not_recv", "[rx][static]")
 
         SECTION("returns the first SN not in the DONE state")
         {
-                auto sdu0 = make_stack_sdu(0, RLC_DONE);
-                auto sdu1 = make_stack_sdu(1, RLC_DONE);
-                auto sdu2 = make_stack_sdu(2, RLC_READY);
+                auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
+                auto sdu1 = make_sdu(&ctx, 1, RLC_DONE);
+                auto sdu2 = make_sdu(&ctx, 2, RLC_READY);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu1);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu2);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2);
 
                 REQUIRE(lowest_sn_not_recv(&ctx) == 2);
+
+                ::rlc_sdu_decref(sdu0);
+                ::rlc_sdu_decref(sdu1);
+                ::rlc_sdu_decref(sdu2);
         }
 
         SECTION("returns the missing SN at a gap in the sequence")
         {
-                auto sdu0 = make_stack_sdu(0, RLC_DONE);
-                auto sdu2 = make_stack_sdu(2, RLC_DONE);
+                auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
+                auto sdu2 = make_sdu(&ctx, 2, RLC_DONE);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu2);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2);
 
                 REQUIRE(lowest_sn_not_recv(&ctx) == 1);
+
+                ::rlc_sdu_decref(sdu0);
+                ::rlc_sdu_decref(sdu2);
         }
 
         SECTION("all contiguous and done returns RX_Next_Highest")
         {
-                auto sdu0 = make_stack_sdu(0, RLC_DONE);
-                auto sdu1 = make_stack_sdu(1, RLC_DONE);
-                auto sdu2 = make_stack_sdu(2, RLC_DONE);
+                auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
+                auto sdu1 = make_sdu(&ctx, 1, RLC_DONE);
+                auto sdu2 = make_sdu(&ctx, 2, RLC_DONE);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu1);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, &sdu2);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1);
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2);
 
                 ctx.rx.next_highest = 3;
 
                 REQUIRE(lowest_sn_not_recv(&ctx) == 3);
+
+                ::rlc_sdu_decref(sdu0);
+                ::rlc_sdu_decref(sdu1);
+                ::rlc_sdu_decref(sdu2);
         }
 }
 
 TEST_CASE("deliver_ready", "[rx][static]")
 {
-        ::rlc_context ctx = {};
+        rx_fixture fx;
+        ::rlc_context &ctx = fx.ctx;
+
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
         ctx.alloc_misc = mem::alloc;
         ctx.listener = capture_listener;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
-        g_events.clear();
-
         SECTION("delivers a contiguous DONE prefix from the window base, in "
                "order")
         {
-                auto sdu0 = make_heap_sdu(&ctx, 0, RLC_DONE, "a");
-                auto sdu1 = make_heap_sdu(&ctx, 1, RLC_DONE, "b");
-                auto sdu2 = make_heap_sdu(&ctx, 2, RLC_READY, "c");
+                auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
+                auto sdu1 = make_sdu(&ctx, 1, RLC_DONE);
+                auto sdu2 = make_sdu(&ctx, 2, RLC_READY);
 
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0);
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1);
@@ -349,9 +366,9 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(g_events.size() == 2);
-                REQUIRE(g_events[0].sn == 0);
-                REQUIRE(g_events[1].sn == 1);
+                REQUIRE(fx.events.size() == 2);
+                REQUIRE(fx.events[0].sn == 0);
+                REQUIRE(fx.events[1].sn == 1);
 
                 /* sdu2 is not DONE, so it remains queued, undelivered. */
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
@@ -362,8 +379,8 @@ TEST_CASE("deliver_ready", "[rx][static]")
         SECTION("stops at the first gap in SN order even if a later SDU is "
                "DONE")
         {
-                auto sdu0 = make_heap_sdu(&ctx, 0, RLC_DONE, "a");
-                auto sdu2 = make_heap_sdu(&ctx, 2, RLC_DONE, "c");
+                auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
+                auto sdu2 = make_sdu(&ctx, 2, RLC_DONE);
 
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0);
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2);
@@ -371,8 +388,8 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(g_events.size() == 1);
-                REQUIRE(g_events[0].sn == 0);
+                REQUIRE(fx.events.size() == 1);
+                REQUIRE(fx.events[0].sn == 0);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
 
@@ -381,14 +398,14 @@ TEST_CASE("deliver_ready", "[rx][static]")
 
         SECTION("nothing ready at the base delivers nothing")
         {
-                auto sdu1 = make_heap_sdu(&ctx, 1, RLC_DONE, "b");
+                auto sdu1 = make_sdu(&ctx, 1, RLC_DONE);
 
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1);
 
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(g_events.empty());
+                REQUIRE(fx.events.empty());
 
                 ::rlc_sdu_decref(sdu1);
         }
@@ -408,7 +425,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 .sn_width = RLC_SN_12BIT,
         };
 
-        ::rlc_context ctx = {};
+        rx_fixture fx;
+        ::rlc_context &ctx = fx.ctx;
         ctx.conf = &conf;
         ctx.alloc_misc = mem::alloc;
         ctx.listener = capture_listener;
@@ -419,8 +437,6 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
         REQUIRE(::rlc_timer_install(&ctx.rx.t_reassembly, alarm_reassembly,
                                     &ctx) == 0);
 
-        g_events.clear();
-
         SECTION("window advances to RX_Next_Highest when nothing else is "
                "pending; delivers the completed SDU and drops the "
                "incomplete one below the new base; timer is not restarted")
@@ -428,8 +444,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 ctx.rx.next_status_trigger = 2;
                 ctx.rx.next_highest = 2;
 
-                auto sdu0 = make_heap_sdu(&ctx, 0, RLC_DONE, "a");
-                auto sdu1 = make_heap_sdu(&ctx, 1, RLC_READY, "b");
+                auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
+                auto sdu1 = make_sdu(&ctx, 1, RLC_READY);
 
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0);
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1);
@@ -439,9 +455,9 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 2);
 
-                REQUIRE(g_events.size() == 2);
-                REQUIRE(g_events[0].sn == 0);
-                REQUIRE(g_events[1].sn == 1);
+                REQUIRE(fx.events.size() == 2);
+                REQUIRE(fx.events[0].sn == 0);
+                REQUIRE(fx.events[1].sn == 1);
 
                 REQUIRE(::rlc_timer_active(&ctx.rx.t_reassembly) == false);
         }
@@ -453,9 +469,9 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 ctx.rx.next_status_trigger = 1;
                 ctx.rx.next_highest = 3;
 
-                auto sdu0 = make_heap_sdu(&ctx, 0, RLC_DONE, "a");
-                auto sdu1 = make_heap_sdu(&ctx, 1, RLC_READY, "b");
-                auto sdu2 = make_heap_sdu(&ctx, 2, RLC_DONE, "c");
+                auto sdu0 = make_sdu(&ctx, 0, RLC_DONE);
+                auto sdu1 = make_sdu(&ctx, 1, RLC_READY);
+                auto sdu2 = make_sdu(&ctx, 2, RLC_DONE);
 
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0);
                 ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1);
@@ -466,8 +482,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 1);
 
-                REQUIRE(g_events.size() == 1);
-                REQUIRE(g_events[0].sn == 0);
+                REQUIRE(fx.events.size() == 1);
+                REQUIRE(fx.events[0].sn == 0);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 1) == sdu1);
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
