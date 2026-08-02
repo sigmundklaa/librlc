@@ -119,11 +119,10 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
         cur_status = status_get(pool);
         range_diff = sdu_next->sn - sn;
 
-        *cur_status = (struct rlc_pdu_status){
-                .ext.has_range = range_diff > 1,
-                .nack_sn = sn,
-                .range = range_diff,
-        };
+        (void)memset(cur_status, 0, sizeof(*cur_status));
+        cur_status->nack_sn = sn;
+        cur_status->range = range_diff;
+        cur_status->ext.has_range = range_diff > 1;
 
         if (status_count(pool) > 1) {
                 ret = encode_last(ctx, pool, buf);
@@ -144,11 +143,10 @@ static size_t create_nack_segment(struct rlc_context *ctx,
         cur_status = status_get(pool);
         bytes = 0;
 
-        *cur_status = (struct rlc_pdu_status){
-                .ext.has_offset = 1,
-                .nack_sn = sn,
-                .offset = segment,
-        };
+        (void)memset(cur_status, 0, sizeof(*cur_status));
+        cur_status->nack_sn = sn;
+        cur_status->offset = segment;
+        cur_status->ext.has_offset = 1;
 
         gabs_log_dbgf(ctx->logger, "%" PRIu32 "->%" PRIu32,
                       cur_status->offset.start, cur_status->offset.end);
