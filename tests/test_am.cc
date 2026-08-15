@@ -661,23 +661,18 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &sender_events = events_a;
-        auto &receiver_events = events_b;
-
         std::string content(50, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         auto &first = sender_first ? link_a : link_b;
         auto &second = sender_first ? link_b : link_a;
 
         pump(first, second, 20);
 
-        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -709,39 +704,31 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &sender_events = events_a;
-        auto &receiver_events = events_b;
-        auto &sender_link = link_a;
-        auto &receiver_link = link_b;
-
         std::string content(10, 'z');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 30);
 
         /* The data arrived but its ack was lost. The dropped attempt still
          * started t-StatusProhibit, which must expire before a retry. */
-        REQUIRE(receiver_events.size() == 1);
-        REQUIRE(sender_events.empty());
+        REQUIRE(events_b.size() == 1);
+        REQUIRE(events_a.empty());
 
         REQUIRE(gabs_override::armed(
-                       sender_link.self->arq.t_poll_retransmit.gtimer) ==
+                       peer_a.get()->arq.t_poll_retransmit.gtimer) ==
                true);
-        gabs_override::fire(sender_link.self->arq.t_poll_retransmit.gtimer);
+        gabs_override::fire(peer_a.get()->arq.t_poll_retransmit.gtimer);
 
         REQUIRE(gabs_override::armed(
-                       receiver_link.self->arq.t_status_prohibit.gtimer) ==
+                       peer_b.get()->arq.t_status_prohibit.gtimer) ==
                true);
-        gabs_override::fire(
-                receiver_link.self->arq.t_status_prohibit.gtimer);
+        gabs_override::fire(peer_b.get()->arq.t_status_prohibit.gtimer);
 
         pump(link_a, link_b, 30);
 
-        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
-        REQUIRE(sender_events.empty());
+        (void)events_a.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
+        REQUIRE(events_a.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -771,20 +758,15 @@ TEST_CASE("AM peers recover multiple lost segments of the same SDU",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &sender_events = events_a;
-        auto &receiver_events = events_b;
-
         std::string content(50, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -817,18 +799,13 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &sender_events = events_a;
-        auto &receiver_events = events_b;
-
-        auto conf = *::rlc_get_config(sender.get());
+        auto conf = *::rlc_get_config(peer_a.get());
         conf.max_retx_threshhold = 2;
-        ::rlc_set_config(sender.get(), &conf);
+        ::rlc_set_config(peer_a.get(), &conf);
 
         std::string content(10, 'w');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 30);
 
@@ -836,17 +813,17 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
          * reached, so the give-up happens on the round after them. */
         for (std::uint32_t i = 0; i < conf.max_retx_threshhold + 1; i++) {
                 REQUIRE(gabs_override::armed(
-                               sender.get()->arq.t_poll_retransmit.gtimer) ==
+                               peer_a.get()->arq.t_poll_retransmit.gtimer) ==
                        true);
                 gabs_override::fire(
-                        sender.get()->arq.t_poll_retransmit.gtimer);
+                        peer_a.get()->arq.t_poll_retransmit.gtimer);
 
                 pump(link_a, link_b, 30);
         }
 
-        REQUIRE(receiver_events.empty());
-        REQUIRE(sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
-        REQUIRE(sender_events.empty());
+        REQUIRE(events_b.empty());
+        REQUIRE(events_a.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
+        REQUIRE(events_a.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -879,19 +856,13 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &sender_events = events_a;
-        auto &receiver_events = events_b;
-        auto &receiver_link = link_b;
-
         std::string content0 = "sdu zero";
         std::string content1 = "sdu one, dropped once";
         std::string content2 = "sdu two";
 
-        REQUIRE(::rlc_tx(sender.get(), buf::create(content0), nullptr) == 0);
-        REQUIRE(::rlc_tx(sender.get(), buf::create(content1), nullptr) == 0);
-        REQUIRE(::rlc_tx(sender.get(), buf::create(content2), nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), buf::create(content0), nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), buf::create(content1), nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), buf::create(content2), nullptr) == 0);
 
         pump(link_a, link_b, 64);
 
@@ -899,32 +870,31 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
          * withheld until SDU 1 is recovered, then both go out together. */
         for (const auto &content : {content0, content1, content2}) {
                 const auto &ev =
-                        receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE);
+                        events_b.pop(::rlc_event::RLC_EVENT_RX_DONE);
 
                 REQUIRE(ev.payload == to_bytevec(content));
         }
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
-        REQUIRE(::rlc_window_base(&receiver.get()->rx.win) == 3);
+        REQUIRE(::rlc_window_base(&peer_b.get()->rx.win) == 3);
 
         /* Only SDU 0 is acked so far: the second STATUS report is held
          * back by t-StatusProhibit from the first. */
-        REQUIRE(sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
-        REQUIRE(sender_events.empty());
+        REQUIRE(events_a.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
+        REQUIRE(events_a.empty());
 
         REQUIRE(gabs_override::armed(
-                       receiver_link.self->arq.t_status_prohibit.gtimer) ==
+                       peer_b.get()->arq.t_status_prohibit.gtimer) ==
                true);
-        gabs_override::fire(
-                receiver_link.self->arq.t_status_prohibit.gtimer);
+        gabs_override::fire(peer_b.get()->arq.t_status_prohibit.gtimer);
 
         pump(link_a, link_b, 64);
 
         /* SDU 0 was released above, so the remaining two arrive now. */
-        REQUIRE(sender_events.size() == 2);
-        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
-        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
-        REQUIRE(sender_events.empty());
+        REQUIRE(events_a.size() == 2);
+        (void)events_a.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
+        (void)events_a.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
+        REQUIRE(events_a.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -950,10 +920,9 @@ TEST_CASE("AM peers reassemble an SDU whose segments arrive out of order",
         peer_link link_b{peer_b.get(), peer_a.get()};
 
         unsigned int sent = 0;
-        auto &data_link = link_a;
 
-        data_link.hold = hold_first(true);
-        data_link.drop = [&sent](::gabs_pbuf buf) {
+        link_a.hold = hold_first(true);
+        link_a.drop = [&sent](::gabs_pbuf buf) {
                 sent += pdu_is_data(buf);
                 return false;
         };
@@ -964,33 +933,29 @@ TEST_CASE("AM peers reassemble an SDU whose segments arrive out of order",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &receiver_events = events_b;
-
         /* 6.2.2.4: a 3 octet header on the first segment and 5 on the rest,
          * so a 20 byte grant carries 17 bytes and then 15. */
         const unsigned int segments = 4;
 
         std::string content(50, 'r');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
         /* The second segment arrived before the first. */
-        REQUIRE(data_link.arrived[0].second != 0);
-        REQUIRE(data_link.arrived[1].second == 0);
+        REQUIRE(link_a.arrived[0].second != 0);
+        REQUIRE(link_a.arrived[1].second == 0);
 
         /* Reordering alone costs no retransmission: every PDU the sender
          * put on the wire was a segment of the SDU. */
         REQUIRE(sent == segments);
 
-        REQUIRE(::rlc_window_base(&receiver.get()->rx.win) == 1);
+        REQUIRE(::rlc_window_base(&peer_b.get()->rx.win) == 1);
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -1013,9 +978,7 @@ TEST_CASE("AM peers deliver in order when an SDU overtakes its predecessor",
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        auto &data_link = link_a;
-
-        data_link.hold = hold_sn(0);
+        link_a.hold = hold_sn(0);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -1023,29 +986,25 @@ TEST_CASE("AM peers deliver in order when an SDU overtakes its predecessor",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &receiver_events = events_b;
-
         std::string first = "sdu zero, held back";
         std::string second = "sdu one, overtakes it";
 
-        REQUIRE(::rlc_tx(sender.get(), buf::create(first), nullptr) == 0);
-        REQUIRE(::rlc_tx(sender.get(), buf::create(second), nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), buf::create(first), nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), buf::create(second), nullptr) == 0);
 
         pump(link_a, link_b, 64);
 
-        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(first));
-        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(second));
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
         /* SN 1 reached the peer first, but SN 0 was delivered first. */
-        REQUIRE(data_link.arrived[0].first == 1);
-        REQUIRE(data_link.arrived[1].first == 0);
+        REQUIRE(link_a.arrived[0].first == 1);
+        REQUIRE(link_a.arrived[1].first == 0);
 
-        REQUIRE(::rlc_window_base(&receiver.get()->rx.win) == 2);
+        REQUIRE(::rlc_window_base(&peer_b.get()->rx.win) == 2);
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);

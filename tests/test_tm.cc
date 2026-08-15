@@ -299,23 +299,19 @@ TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
         REQUIRE(init_tm(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_tm(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &sender_events = events_a;
-        auto &receiver_events = events_b;
-
         std::string content(30, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 64);
 
-        REQUIRE(receiver_events.empty());
-        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
-        REQUIRE(sender_events.empty());
+        REQUIRE(events_b.empty());
+        (void)events_a.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
+        REQUIRE(events_a.empty());
 
         pump(link_a, link_b, 64);
 
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);

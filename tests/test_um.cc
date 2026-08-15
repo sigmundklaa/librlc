@@ -433,29 +433,25 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
         REQUIRE(init_um(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_um(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = peer_a;
-        auto &receiver = peer_b;
-        auto &receiver_events = events_b;
-
         std::string content(50, 'y');
         auto sdu = buf::create(content);
-        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+        REQUIRE(::rlc_tx(peer_a.get(), sdu, nullptr) == 0);
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
-        REQUIRE(gabs_override::armed(receiver.get()->rx.t_reassembly.gtimer) ==
+        REQUIRE(gabs_override::armed(peer_b.get()->rx.t_reassembly.gtimer) ==
                true);
-        gabs_override::fire(receiver.get()->rx.t_reassembly.gtimer);
+        gabs_override::fire(peer_b.get()->rx.t_reassembly.gtimer);
 
-        (void)receiver_events.pop(::rlc_event::RLC_EVENT_RX_FAIL);
-        REQUIRE(receiver_events.empty());
+        (void)events_b.pop(::rlc_event::RLC_EVENT_RX_FAIL);
+        REQUIRE(events_b.empty());
 
         pump(link_a, link_b, 20);
 
         /* No retransmission ever happens - the drop is permanent. */
-        REQUIRE(receiver_events.empty());
+        REQUIRE(events_b.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
