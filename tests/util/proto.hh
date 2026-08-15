@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -320,7 +321,12 @@ struct status {
                 }
 
                 for (auto it = parts.begin(); it < parts.end(); it++) {
-                        auto bytes = it->encode(it != parts.end(), w);
+                        /* 6.2.3.11: E1 says whether a further set of
+                         * NACK_SN, E1, E2 and E3 follows, so it must be 0
+                         * on the last one. Inside this loop it != end() is
+                         * always true, which would set it on every set. */
+                        auto bytes = it->encode(std::next(it) != parts.end(),
+                                                w);
                         ret.insert(ret.end(), bytes.begin(), bytes.end());
                 }
 
