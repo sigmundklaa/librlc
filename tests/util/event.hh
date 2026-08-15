@@ -36,34 +36,25 @@ inline std::string name(event_type type)
         return "unknown(" + std::to_string(static_cast<int>(type)) + ")";
 }
 
-/*
- * A flattened copy of one ::rlc_event. The event itself, and everything it
- * points at, is only valid for the duration of the callback, so anything a
- * test may want to assert on has to be copied out while it runs.
- */
+/* A copy of one ::rlc_event. The event and everything it points at is only
+ * valid inside the callback, so it has to be copied out there. */
 struct record {
         event_type type;
         std::uint32_t sn = 0;
         std::vector<std::byte> payload;
 };
 
-/*
- * Records the events an ::rlc_context emits, in order, and hands them back
- * one at a time. Storage lives in the handler rather than in the fixture, so
- * a test declares one per entity (two for a loopback pair) and keeps it in
- * local scope.
- */
+/* Records the events an ::rlc_context emits, in order. One per entity, so a
+ * loopback test can keep the two sides apart. */
 class event_handler
 {
       public:
-        /* Pass to rlc_ctx::attach_listener, or to on_event for a context
-         * that was hand-built rather than rlc_init'd. */
         fixture::rlc_ctx::listener_fn listener()
         {
                 return [this](const ::rlc_event &ev) { capture(ev); };
         }
 
-        /* Consumes the next event, requiring it to be of the expected
+        /* Consume the next event, requiring it to be of the expected
          * type. */
         const record &pop(event_type expected)
         {
@@ -78,13 +69,12 @@ class event_handler
                 return rec;
         }
 
-        /* True once every recorded event has been consumed by pop(). */
         bool empty() const
         {
                 return pos >= records.size();
         }
 
-        /* Number of events recorded but not yet consumed. */
+        /* Events recorded but not yet popped. */
         std::size_t size() const
         {
                 return records.size() - pos;
@@ -98,9 +88,8 @@ class event_handler
 
                 switch (ev.type) {
                 case ::rlc_event::RLC_EVENT_RX_DONE_DIRECT:
-                        /* rlc_event's payload is a union: for this type the
-                         * live member is a gabs_pbuf*, so there is no SDU to
-                         * read an SN from. */
+                        /* The payload is a union: this type carries a pbuf,
+                         * not an SDU. */
                         payload = ev.buf;
                         break;
 
@@ -118,9 +107,7 @@ class event_handler
                         break;
                 }
 
-                /* Tests that hand-build an ::rlc_sdu to drive a static
-                 * function directly leave the reassembly buffer empty, so
-                 * there is nothing to read and no frag list to walk. */
+                /* A hand-built ::rlc_sdu has no reassembly buffer to read. */
                 if (payload != nullptr && ::gabs_pbuf_okay(*payload)) {
                         rec.payload = buf::pbuf_ptr::from_weak(*payload).vec();
                 }

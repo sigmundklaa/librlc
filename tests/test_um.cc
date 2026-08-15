@@ -162,14 +162,10 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
 TEST_CASE("UM RX discards a PDU with a SN the reassembly window has passed",
          "[um][rx]")
 {
-        /* Spec 5.2.2.2.2 second bullet: discard when (RX_Next_Highest -
-         * UM_Window_Size) <= SN < RX_Next_Reassembly. Per 7.1 that
-         * comparison takes RX_Next_Highest - UM_Window_Size as its modulus
-         * base, so with both state variables at 0 and a 12 bit SN the base
-         * is 2048 and the range covers every SN from 2048 to the wrap.
-         * Note this is not a case of falling outside the reassembly
-         * window: 5.2.2.2.1 places that window at [2048, 4096) here, and
-         * the SN below is inside it. */
+        /* Spec 5.2.2.2.2: discard when (RX_Next_Highest - UM_Window_Size)
+         * <= SN < RX_Next_Reassembly, compared modulo the base 7.1 gives,
+         * RX_Next_Highest - UM_Window_Size. At rest that base is 2048, so
+         * the range is every SN from 2048 up to the wrap. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -183,12 +179,9 @@ TEST_CASE("UM RX discards a PDU with a SN the reassembly window has passed",
 
         auto w = proto::snwidth::W12;
 
-        /* 3000 falls in the discard range described above. The entity
-         * itself never gets that far: um_conf sets window_size to 10,
-         * which is not one of the two UM_Window_Size values 7.2 allows
-         * (32 for a 6 bit SN, 2048 for a 12 bit SN), so rlc_rx_submit
-         * drops the PDU against its own narrower window. Either way
-         * nothing may be delivered. */
+        /* 3000 is in that range. The entity never gets that far anyway:
+         * um_conf's window_size of 10 is not a UM_Window_Size 7.2 allows,
+         * so it drops against a narrower window. */
         proto::um::header hdr{proto::seginfo::FIRST, 3000, std::nullopt};
         auto bytes = hdr.encode(w);
         auto payload = to_bytevec(std::string("unreachable"));
@@ -203,14 +196,12 @@ TEST_CASE("UM RX discards a PDU with a SN the reassembly window has passed",
 
 TEST_CASE("UM RX discards a duplicate PDU segment", "[um][rx]")
 {
-        /* Spec 5.2.2.2.3: an SDU is reassembled and delivered once "all
-         * byte segments with SN = x are received", so re-receiving a
-         * segment must not complete it. Note UM has no explicit
-         * discard-the-duplicate rule - that is 5.2.3.2.2, an AM clause -
-         * so this pins reassembly-level behaviour, not a UM requirement.
-         * Uses a segmented SDU (SI=FIRST) rather than SI=ALL so
-         * the duplicate is caught by rlc_seg_buf_insert rather than the
-         * SDU already having been removed by the first delivery attempt. */
+        /* Spec 5.2.2.2.3: an SDU is delivered once "all byte segments with
+         * SN = x are received", so a repeated segment must not complete
+         * it. UM has no explicit duplicate rule - 5.2.3.2.2 is AM - so
+         * this pins reassembly, not a UM requirement. SI=FIRST rather than
+         * SI=ALL so the duplicate reaches rlc_seg_buf_insert instead of an
+         * SDU already removed by the first delivery. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -291,10 +282,8 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
 
 TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
 {
-        /* Spec 4.2.1.2.2: the transmitting entity segments the RLC SDUs,
-         * if needed, so that the UMD PDUs fit within the size indicated by
-         * the lower layer. The header of each is fixed by 6.2.2.3 and
-         * Table 6.2.3.4-1, checked per PDU below. */
+        /* Spec 4.2.1.2.2: segment so that each PDU fits the size the lower
+         * layer indicates. Headers follow 6.2.2.3 and Table 6.2.3.4-1. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -328,15 +317,13 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
                 REQUIRE(hdr.sn.value() == 0);
 
                 if (offset == 0) {
-                        /* 6.2.2.3: the SN is carried because the SDU is
-                         * segmented, and "an UMD PDU carrying the first
-                         * segment of an RLC SDU does not carry the SO field
-                         * in its header". */
+                        /* 6.2.2.3: a segmented SDU carries the SN, and the
+                         * first segment carries no SO. */
                         REQUIRE(hdr.si == proto::seginfo::FIRST);
                         REQUIRE(hdr.so.has_value() == false);
                 } else {
-                        /* Table 6.2.3.4-1: 10 is the last segment, 11 one
-                         * that is neither first nor last. */
+                        /* Table 6.2.3.4-1: 10 is last, 11 is neither first
+                         * nor last. */
                         REQUIRE(hdr.si == (is_last ? proto::seginfo::LAST
                                                    : proto::seginfo::NEITHER));
                         REQUIRE(hdr.so.value() == offset);
@@ -353,14 +340,10 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
 TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
          "[um][tx]")
 {
-        /* Spec 6.2.2.3: "When an UMD PDU contains a complete RLC SDU, the
-         * UMD PDU header only contains the SI and R fields" - Figure
-         * 6.2.2.3-1 makes that header exactly one octet, against the four
-         * of Figure 6.2.2.3-5 (12 bit SN plus a 16 bit SO). The header
-         * size is normative, so the transmit opportunity below is the SDU
-         * plus exactly one byte: the smallest grant for which the spec
-         * still requires a single PDU with SI=ALL. Per 5.2.2.1.1 the SN is
-         * set only when the PDU carries a segment. */
+        /* Spec 6.2.2.3: a PDU holding a complete SDU carries only SI and
+         * R, one octet (Figure 6.2.2.3-1). The opportunity below is
+         * therefore the SDU plus one byte - the smallest grant that still
+         * requires a single PDU with SI=ALL. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;

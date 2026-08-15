@@ -9,12 +9,8 @@
 namespace rlc::test::util
 {
 
-/*
- * Restates a container of byte-sized elements - a std::string literal in a
- * test, a std::vector<std::uint8_t> - as the std::vector<std::byte> that
- * pbuf_ptr::vec() and the proto encoders deal in, so the two can be
- * compared directly.
- */
+/* Convert a container of byte-sized elements to the std::vector<std::byte>
+ * that pbuf_ptr::vec() and the proto encoders return. */
 template <class Container>
 std::vector<std::byte> to_bytevec(const Container &c)
 {
