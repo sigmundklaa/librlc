@@ -63,12 +63,8 @@ class event_handler
                 return [this](const ::rlc_event &ev) { capture(ev); };
         }
 
-        /*
-         * Consumes the next event, requiring it to be of the expected type.
-         * Naming the type at every step means a test says which events it
-         * expects in which order, and an unexpected one fails where it
-         * happens instead of shifting every later index by one.
-         */
+        /* Consumes the next event, requiring it to be of the expected
+         * type. */
         const record &get(event_type expected)
         {
                 INFO("expected a " << name(expected) << " event");
