@@ -10,6 +10,7 @@
 #include "util/mem.hh"
 #include "util/buf.hh"
 #include "util/event.hh"
+#include "util/fake_sdu.hh"
 #include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
@@ -22,46 +23,6 @@ namespace rlc::test
 {
 
 using namespace util;
-
-namespace
-{
-
-/* An RX SDU to hand to the code under test. Holds a reference of its own,
- * so it stays readable after being delivered or dropped, and releases only
- * that one. Whatever the queue still holds is the queue's to answer for. */
-class fake_sdu
-{
-      public:
-        fake_sdu(::rlc_context *ctx, std::uint32_t sn,
-                 enum rlc_sdu_state state)
-                : ctx(ctx), sdu(::rlc_sdu_alloc(ctx, false))
-        {
-                REQUIRE(sdu != nullptr);
-
-                sdu->sn = sn;
-                sdu->state = state;
-
-                ::rlc_sdu_incref(sdu);
-        }
-
-        fake_sdu(const fake_sdu &) = delete;
-
-        ~fake_sdu()
-        {
-                ::rlc_sdu_decref(sdu);
-        }
-
-        ::rlc_sdu *get() const
-        {
-                return sdu;
-        }
-
-      private:
-        ::rlc_context *ctx;
-        ::rlc_sdu *sdu;
-};
-
-} // namespace
 
 TEST_CASE("should_start_reassembly", "[rx][static]")
 {
@@ -93,7 +54,7 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
                                              buf::create(std::string(3, 'x')),
                                              ::rlc_seg{5, 8}, mem::alloc,
                                              mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.strong());
 
                 REQUIRE(should_start_reassembly(&ctx) == true);
         }
@@ -107,7 +68,7 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{0, 5}, mem::alloc,
                                              mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.strong());
 
                 REQUIRE(should_start_reassembly(&ctx) == false);
         }
@@ -153,7 +114,7 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{0, 5}, mem::alloc,
                                              mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.strong());
 
                 REQUIRE(should_stop_reassembly(&ctx) == true);
         }
@@ -171,7 +132,7 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
                                              buf::create(std::string(3, 'x')),
                                              ::rlc_seg{5, 8}, mem::alloc,
                                              mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.strong());
 
                 REQUIRE(should_stop_reassembly(&ctx) == false);
         }
@@ -225,7 +186,7 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
                                              buf::create(std::string(3, 'x')),
                                              ::rlc_seg{5, 8}, mem::alloc,
                                              mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.strong());
 
                 REQUIRE(should_restart_reassembly(&ctx) == true);
         }
@@ -239,7 +200,7 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{0, 5}, mem::alloc,
                                              mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.strong());
 
                 REQUIRE(should_restart_reassembly(&ctx) == false);
         }
@@ -281,9 +242,9 @@ TEST_CASE("lowest_sn_not_recv", "[rx][static]")
                 fake_sdu sdu1(&ctx, 1, RLC_DONE);
                 fake_sdu sdu2(&ctx, 2, RLC_READY);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.strong());
 
                 REQUIRE(lowest_sn_not_recv(&ctx) == 2);
         }
@@ -293,8 +254,8 @@ TEST_CASE("lowest_sn_not_recv", "[rx][static]")
                 fake_sdu sdu0(&ctx, 0, RLC_DONE);
                 fake_sdu sdu2(&ctx, 2, RLC_DONE);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.strong());
 
                 REQUIRE(lowest_sn_not_recv(&ctx) == 1);
         }
@@ -305,9 +266,9 @@ TEST_CASE("lowest_sn_not_recv", "[rx][static]")
                 fake_sdu sdu1(&ctx, 1, RLC_DONE);
                 fake_sdu sdu2(&ctx, 2, RLC_DONE);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.strong());
 
                 ctx.rx.next_highest = 3;
 
@@ -336,9 +297,9 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 fake_sdu sdu1(&ctx, 1, RLC_DONE);
                 fake_sdu sdu2(&ctx, 2, RLC_READY);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.strong());
 
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
@@ -356,8 +317,8 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 fake_sdu sdu0(&ctx, 0, RLC_DONE);
                 fake_sdu sdu2(&ctx, 2, RLC_DONE);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.strong());
 
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
@@ -372,7 +333,7 @@ TEST_CASE("deliver_ready", "[rx][static]")
         {
                 fake_sdu sdu1(&ctx, 1, RLC_DONE);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.strong());
 
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
@@ -424,8 +385,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 fake_sdu sdu0(&ctx, 0, RLC_DONE);
                 fake_sdu sdu1(&ctx, 1, RLC_READY);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.strong());
 
                 alarm_reassembly(&ctx.rx.t_reassembly, &ctx);
                 ::rlc_sched_yield(&ctx.sched);
@@ -452,9 +413,9 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 fake_sdu sdu1(&ctx, 1, RLC_READY);
                 fake_sdu sdu2(&ctx, 2, RLC_DONE);
 
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.get());
-                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.get());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.strong());
 
                 alarm_reassembly(&ctx.rx.t_reassembly, &ctx);
                 ::rlc_sched_yield(&ctx.sched);

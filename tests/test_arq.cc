@@ -13,6 +13,7 @@
 #include "util/buf.hh"
 #include "util/backend.hh"
 #include "util/event.hh"
+#include "util/fake_sdu.hh"
 #include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
@@ -28,19 +29,6 @@ using namespace util;
 
 namespace
 {
-
-::rlc_sdu *make_sdu(::rlc_context *ctx, std::uint32_t sn,
-                    enum rlc_sdu_state state, bool is_tx)
-{
-        auto sdu = ::rlc_sdu_alloc(ctx, is_tx);
-        REQUIRE(sdu != nullptr);
-
-        sdu->sn = sn;
-        sdu->state = state;
-
-        return sdu;
-}
-
 } // namespace
 
 TEST_CASE("highest_sn_submitted", "[arq][static]")
@@ -51,57 +39,51 @@ TEST_CASE("highest_sn_submitted", "[arq][static]")
 
         SECTION("no submitted SDUs returns null")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 REQUIRE(highest_sn_submitted(&ctx) == nullptr);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("returns the only submitted SDU")
         {
-                auto sdu = make_sdu(&ctx, 3, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 3, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{5, 10},
                                                   mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
-                REQUIRE(highest_sn_submitted(&ctx) == sdu);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(highest_sn_submitted(&ctx) == sdu.get());
         }
 
         SECTION("returns the highest SN among submitted SDUs")
         {
-                auto low = make_sdu(&ctx, 1, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&low->tx.unsent,
+                fake_sdu low(&ctx, 1, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&low.get()->tx.unsent,
                                                   ::rlc_seg{5, 10},
                                                   mem::alloc) == 0);
 
-                auto high = make_sdu(&ctx, 2, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&high->tx.unsent,
+                fake_sdu high(&ctx, 2, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&high.get()->tx.unsent,
                                                   ::rlc_seg{5, 10},
                                                   mem::alloc) == 0);
 
-                auto unsubmitted = make_sdu(&ctx, 3, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&unsubmitted->tx.unsent,
+                fake_sdu unsubmitted(&ctx, 3, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&unsubmitted.get()->tx.unsent,
                                                   ::rlc_seg{0, 10},
                                                   mem::alloc) == 0);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, low);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, high);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, unsubmitted);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, low.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, high.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, unsubmitted.strong());
 
-                REQUIRE(highest_sn_submitted(&ctx) == high);
-
-                ::rlc_sdu_decref(low);
-                ::rlc_sdu_decref(high);
-                ::rlc_sdu_decref(unsubmitted);
+                REQUIRE(highest_sn_submitted(&ctx) == high.get());
         }
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("last_segment", "[arq][static]")
@@ -150,42 +132,37 @@ TEST_CASE("adjust_poll_sn", "[arq][static]")
 
         SECTION("raises poll_sn to the highest submitted SN")
         {
-                auto low = make_sdu(&ctx, 1, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&low->tx.unsent,
+                fake_sdu low(&ctx, 1, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&low.get()->tx.unsent,
                                                   ::rlc_seg{5, 10},
                                                   mem::alloc) == 0);
 
-                auto high = make_sdu(&ctx, 4, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&high->tx.unsent,
+                fake_sdu high(&ctx, 4, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&high.get()->tx.unsent,
                                                   ::rlc_seg{5, 10},
                                                   mem::alloc) == 0);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, low);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, high);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, low.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, high.strong());
 
                 adjust_poll_sn(&ctx);
 
                 REQUIRE(ctx.arq.poll_sn == 4);
-
-                ::rlc_sdu_decref(low);
-                ::rlc_sdu_decref(high);
         }
 
         SECTION("ignores SDUs that have not been submitted")
         {
-                auto unsubmitted = make_sdu(&ctx, 9, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&unsubmitted->tx.unsent,
+                fake_sdu unsubmitted(&ctx, 9, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&unsubmitted.get()->tx.unsent,
                                                   ::rlc_seg{0, 10},
                                                   mem::alloc) == 0);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, unsubmitted);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, unsubmitted.strong());
                 ctx.arq.poll_sn = 2;
 
                 adjust_poll_sn(&ctx);
 
                 REQUIRE(ctx.arq.poll_sn == 2);
-
-                ::rlc_sdu_decref(unsubmitted);
         }
 
         SECTION("never decreases an already higher poll_sn")
@@ -193,20 +170,20 @@ TEST_CASE("adjust_poll_sn", "[arq][static]")
                 /* 5.3.3.2 says to set POLL_SN, not to take a maximum. The
                  * two agree while SNs advance, so this covers defensive
                  * behaviour, not a requirement. */
-                auto sdu = make_sdu(&ctx, 1, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 1, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{5, 10},
                                                   mem::alloc) == 0);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
                 ctx.arq.poll_sn = 9;
 
                 adjust_poll_sn(&ctx);
 
                 REQUIRE(ctx.arq.poll_sn == 9);
-
-                ::rlc_sdu_decref(sdu);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("tx_pollable", "[arq][static]")
@@ -230,99 +207,85 @@ TEST_CASE("tx_pollable", "[arq][static]")
                 ctx.conf = &um_conf;
                 ctx.arq.force_poll = true;
 
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
 
-                REQUIRE(tx_pollable(&ctx, sdu) == false);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(tx_pollable(&ctx, sdu.get()) == false);
         }
 
         SECTION("force_poll always polls")
         {
                 ctx.arq.force_poll = true;
 
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
 
-                REQUIRE(tx_pollable(&ctx, sdu) == true);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(tx_pollable(&ctx, sdu.get()) == true);
         }
 
         SECTION("PDU count threshold polls")
         {
                 ctx.arq.pdu_without_poll = 4;
 
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
 
-                REQUIRE(tx_pollable(&ctx, sdu) == true);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(tx_pollable(&ctx, sdu.get()) == true);
         }
 
         SECTION("byte count threshold polls")
         {
                 ctx.arq.byte_without_poll = 100;
 
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
 
-                REQUIRE(tx_pollable(&ctx, sdu) == true);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(tx_pollable(&ctx, sdu.get()) == true);
         }
 
         SECTION("more unsent segments after this one skips poll")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{5, 10},
                                                   mem::alloc) == 0);
 
-                REQUIRE(tx_pollable(&ctx, sdu) == false);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(tx_pollable(&ctx, sdu.get()) == false);
         }
 
         SECTION("bytes left in the single unsent segment skips poll")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
 
-                REQUIRE(tx_pollable(&ctx, sdu) == false);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(tx_pollable(&ctx, sdu.get()) == false);
         }
 
         SECTION("last segment fully consumed polls")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
 
-                auto it = ::rlc_list_it_init(&sdu->tx.unsent);
+                auto it = ::rlc_list_it_init(&sdu.get()->tx.unsent);
                 auto item = ::rlc_seg_item_from_it(it);
                 item->seg.start = item->seg.end;
 
-                REQUIRE(tx_pollable(&ctx, sdu) == true);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(tx_pollable(&ctx, sdu.get()) == true);
         }
 }
 
@@ -348,15 +311,15 @@ TEST_CASE("tx_win_shift", "[arq][static]")
         {
                 ctx.tx.next_sn = 7;
 
-                auto sdu = make_sdu(&ctx, 3, RLC_READY, true);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 3, RLC_READY, true);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 tx_win_shift(&ctx);
 
                 REQUIRE(::rlc_window_base(&ctx.tx.win) == 3);
-
-                ::rlc_sdu_decref(sdu);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("restart_status_prohibit", "[arq][static]")
@@ -464,13 +427,13 @@ TEST_CASE("tx_ack", "[arq][static]")
 
         SECTION("acks a contiguous sent prefix, shifting window as it goes")
         {
-                auto sdu0 = make_sdu(&ctx, 0, RLC_WAIT, true);
-                auto sdu1 = make_sdu(&ctx, 1, RLC_WAIT, true);
-                auto sdu2 = make_sdu(&ctx, 2, RLC_READY, true);
+                fake_sdu sdu0(&ctx, 0, RLC_WAIT, true);
+                fake_sdu sdu1(&ctx, 1, RLC_WAIT, true);
+                fake_sdu sdu2(&ctx, 2, RLC_READY, true);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu2);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu2.strong());
 
                 tx_ack(&ctx, 2);
                 ::rlc_sched_yield(&ctx.sched);
@@ -482,18 +445,16 @@ TEST_CASE("tx_ack", "[arq][static]")
                 REQUIRE(events.empty());
 
                 REQUIRE(::rlc_window_base(&ctx.tx.win) == 2);
-                REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 2) == sdu2);
-
-                ::rlc_sdu_decref(sdu2);
+                REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 2) == sdu2.get());
         }
 
         SECTION("stops at the ack boundary even if more SDUs were sent")
         {
-                auto sdu0 = make_sdu(&ctx, 0, RLC_WAIT, true);
-                auto sdu1 = make_sdu(&ctx, 1, RLC_WAIT, true);
+                fake_sdu sdu0(&ctx, 0, RLC_WAIT, true);
+                fake_sdu sdu1(&ctx, 1, RLC_WAIT, true);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1.strong());
 
                 tx_ack(&ctx, 1);
                 ::rlc_sched_yield(&ctx.sched);
@@ -502,29 +463,27 @@ TEST_CASE("tx_ack", "[arq][static]")
                        0);
                 REQUIRE(events.empty());
 
-                REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 1) == sdu1);
-
-                ::rlc_sdu_decref(sdu1);
+                REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 1) == sdu1.get());
         }
 
         SECTION("stops at an SDU still awaiting its first transmission")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 tx_ack(&ctx, 5);
                 ::rlc_sched_yield(&ctx.sched);
 
                 REQUIRE(events.empty());
                 REQUIRE(::rlc_window_base(&ctx.tx.win) == 0);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) == 0);
         REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("tx_nack_clear", "[arq][static]")
@@ -535,49 +494,47 @@ TEST_CASE("tx_nack_clear", "[arq][static]")
 
         SECTION("trims a below-SN SDU's unsent list to its last segment")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{10, 15},
                                                   mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 tx_nack_clear(&ctx, 1);
 
-                auto it = ::rlc_list_it_init(&sdu->tx.unsent);
+                auto it = ::rlc_list_it_init(&sdu.get()->tx.unsent);
                 auto item = ::rlc_seg_item_from_it(it);
                 REQUIRE(item != nullptr);
                 REQUIRE(item->seg.start == 10);
                 REQUIRE(item->seg.end == 15);
                 REQUIRE(::rlc_list_it_eoi(::rlc_list_it_next(it)) == true);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("leaves SDUs at or above the SN untouched")
         {
-                auto sdu = make_sdu(&ctx, 3, RLC_READY, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 3, RLC_READY, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{10, 15},
                                                   mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 tx_nack_clear(&ctx, 1);
 
-                auto it = ::rlc_list_it_init(&sdu->tx.unsent);
+                auto it = ::rlc_list_it_init(&sdu.get()->tx.unsent);
                 auto item = ::rlc_seg_item_from_it(it);
                 REQUIRE(item != nullptr);
                 REQUIRE(item->seg.start == 0);
                 REQUIRE(item->seg.end == 5);
                 REQUIRE(::rlc_list_it_eoi(::rlc_list_it_next(it)) == false);
-
-                ::rlc_sdu_decref(sdu);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("retransmit_sdu", "[arq][static]")
@@ -604,48 +561,42 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
                 /* Spec 5.3.2 counts a first retransmission as zero; arq.c
                  * counts from one and raises the threshold to match, so
                  * this counts retransmissions, not the spec's variable. */
-                auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 0, RLC_WAIT, true);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_seg seg{0, 5};
-                REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == true);
+                REQUIRE(retransmit_sdu(&ctx, sdu.get(), &seg) == true);
 
-                REQUIRE(sdu->state == RLC_READY);
-                REQUIRE(sdu->tx.retx_count == 1);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(sdu.get()->state == RLC_READY);
+                REQUIRE(sdu.get()->tx.retx_count == 1);
         }
 
         SECTION("already pending does not increment RETX_COUNT again")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_READY, true);
-                sdu->tx.retx_count = 1;
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 0, RLC_READY, true);
+                sdu.get()->tx.retx_count = 1;
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_seg seg{5, 10};
-                REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == true);
+                REQUIRE(retransmit_sdu(&ctx, sdu.get(), &seg) == true);
 
-                REQUIRE(sdu->state == RLC_READY);
-                REQUIRE(sdu->tx.retx_count == 1);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(sdu.get()->state == RLC_READY);
+                REQUIRE(sdu.get()->tx.retx_count == 1);
         }
 
         SECTION("a fully duplicate segment is a no-op besides state")
         {
-                auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
-                REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
+                fake_sdu sdu(&ctx, 0, RLC_WAIT, true);
+                REQUIRE(::rlc_seg_list_insert_all(&sdu.get()->tx.unsent,
                                                   ::rlc_seg{0, 5},
                                                   mem::alloc) == 0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_seg seg{0, 5};
-                REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == true);
+                REQUIRE(retransmit_sdu(&ctx, sdu.get(), &seg) == true);
 
-                REQUIRE(sdu->state == RLC_READY);
-                REQUIRE(sdu->tx.retx_count == 0);
-
-                ::rlc_sdu_decref(sdu);
+                REQUIRE(sdu.get()->state == RLC_READY);
+                REQUIRE(sdu.get()->tx.retx_count == 0);
         }
 
         SECTION("survives maxRetxThreshold retransmissions, then fails")
@@ -656,21 +607,21 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
                  * arq.c counts from. */
                 ctx.tx.next_sn = 1;
 
-                auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 0, RLC_WAIT, true);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 for (std::uint32_t i = 0; i < conf.max_retx_threshhold; i++) {
                         ::rlc_seg seg{0, 5};
-                        REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == true);
+                        REQUIRE(retransmit_sdu(&ctx, sdu.get(), &seg) == true);
 
                         /* Re-arm the SDU the way a completed retransmission
                          * would: unsent list drained, awaiting ack again. */
-                        ::rlc_seg_list_clear(&sdu->tx.unsent, mem::alloc);
-                        sdu->state = RLC_WAIT;
+                        ::rlc_seg_list_clear(&sdu.get()->tx.unsent, mem::alloc);
+                        sdu.get()->state = RLC_WAIT;
                 }
 
                 ::rlc_seg seg{0, 5};
-                REQUIRE(retransmit_sdu(&ctx, sdu, &seg) == false);
+                REQUIRE(retransmit_sdu(&ctx, sdu.get(), &seg) == false);
                 ::rlc_sched_yield(&ctx.sched);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 0) == nullptr);
@@ -681,6 +632,8 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
         }
 
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("process_nack", "[arq][static]")
@@ -698,24 +651,22 @@ TEST_CASE("process_nack", "[arq][static]")
 
         SECTION("queues the whole SDU buffer for retransmission")
         {
-                auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
-                sdu->tx.buffer = buf::create(std::string(10, 'x')).strong();
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
+                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_pdu_status cur = {};
                 cur.nack_sn = 4;
 
                 process_nack(&ctx, &cur);
 
-                REQUIRE(sdu->state == RLC_READY);
+                REQUIRE(sdu.get()->state == RLC_READY);
 
-                auto it = ::rlc_list_it_init(&sdu->tx.unsent);
+                auto it = ::rlc_list_it_init(&sdu.get()->tx.unsent);
                 auto item = ::rlc_seg_item_from_it(it);
                 REQUIRE(item != nullptr);
                 REQUIRE(item->seg.start == 0);
                 REQUIRE(item->seg.end == 10);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("an unknown SN is a no-op")
@@ -741,9 +692,9 @@ TEST_CASE("process_nack", "[arq][static]")
                 REQUIRE(::rlc_timer_start(&ctx.arq.t_poll_retransmit,
                                           5000000) == 0);
 
-                auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
-                sdu->tx.buffer = buf::create(std::string(10, 'x')).strong();
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
+                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
                 ctx.arq.poll_sn = 4;
 
                 ::rlc_pdu_status cur = {};
@@ -756,13 +707,14 @@ TEST_CASE("process_nack", "[arq][static]")
                 auto still_armed =
                         gabs_override::armed(ctx.arq.t_poll_retransmit.gtimer);
 
-                ::rlc_sdu_decref(sdu);
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
                        0);
                 REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
 
                 REQUIRE(still_armed == false);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("process_nack_offset", "[arq][static]")
@@ -781,9 +733,9 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
         SECTION("retransmits only the NACKed byte range")
         {
-                auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
-                sdu->tx.buffer = buf::create(std::string(10, 'x')).strong();
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
+                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_pdu_status cur = {};
                 cur.nack_sn = 4;
@@ -792,22 +744,20 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
                 process_nack_offset(&ctx, &cur);
 
-                REQUIRE(sdu->state == RLC_READY);
+                REQUIRE(sdu.get()->state == RLC_READY);
 
-                auto it = ::rlc_list_it_init(&sdu->tx.unsent);
+                auto it = ::rlc_list_it_init(&sdu.get()->tx.unsent);
                 auto item = ::rlc_seg_item_from_it(it);
                 REQUIRE(item != nullptr);
                 REQUIRE(item->seg.start == 2);
                 REQUIRE(item->seg.end == 5);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("a max SOend resolves to the SDU buffer size")
         {
-                auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
-                sdu->tx.buffer = buf::create(std::string(10, 'x')).strong();
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
+                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_pdu_status cur = {};
                 cur.nack_sn = 4;
@@ -816,13 +766,11 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
                 process_nack_offset(&ctx, &cur);
 
-                auto it = ::rlc_list_it_init(&sdu->tx.unsent);
+                auto it = ::rlc_list_it_init(&sdu.get()->tx.unsent);
                 auto item = ::rlc_seg_item_from_it(it);
                 REQUIRE(item != nullptr);
                 REQUIRE(item->seg.start == 2);
                 REQUIRE(item->seg.end == 10);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("a NACK matching POLL_SN stops t-PollRetransmit")
@@ -839,9 +787,9 @@ TEST_CASE("process_nack_offset", "[arq][static]")
                 REQUIRE(::rlc_timer_start(&ctx.arq.t_poll_retransmit,
                                           5000000) == 0);
 
-                auto sdu = make_sdu(&ctx, 4, RLC_WAIT, true);
-                sdu->tx.buffer = buf::create(std::string(10, 'x')).strong();
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
+                fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
+                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
                 ctx.arq.poll_sn = 4;
 
                 ::rlc_pdu_status cur = {};
@@ -854,11 +802,12 @@ TEST_CASE("process_nack_offset", "[arq][static]")
                 REQUIRE(gabs_override::armed(
                                ctx.arq.t_poll_retransmit.gtimer) == false);
 
-                ::rlc_sdu_decref(sdu);
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
                        0);
                 REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("process_nack_range", "[arq][static]")
@@ -891,17 +840,17 @@ TEST_CASE("process_nack_range", "[arq][static]")
 
         SECTION("retransmits every SDU within the range, ignores the rest")
         {
-                auto sdu0 = make_sdu(&ctx, 0, RLC_WAIT, true);
-                sdu0->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                fake_sdu sdu0(&ctx, 0, RLC_WAIT, true);
+                sdu0.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
 
-                auto sdu1 = make_sdu(&ctx, 1, RLC_WAIT, true);
-                sdu1->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                fake_sdu sdu1(&ctx, 1, RLC_WAIT, true);
+                sdu1.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
 
-                auto sdu2 = make_sdu(&ctx, 2, RLC_WAIT, true);
+                fake_sdu sdu2(&ctx, 2, RLC_WAIT, true);
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu2);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu2.strong());
 
                 ::rlc_pdu_status cur = {};
                 cur.nack_sn = 0;
@@ -909,33 +858,29 @@ TEST_CASE("process_nack_range", "[arq][static]")
 
                 process_nack_range(&ctx, &cur);
 
-                REQUIRE(sdu0->state == RLC_READY);
-                REQUIRE(sdu1->state == RLC_READY);
-                REQUIRE(sdu2->state == RLC_WAIT);
+                REQUIRE(sdu0.get()->state == RLC_READY);
+                REQUIRE(sdu1.get()->state == RLC_READY);
+                REQUIRE(sdu2.get()->state == RLC_WAIT);
 
-                auto it2 = ::rlc_list_it_init(&sdu2->tx.unsent);
+                auto it2 = ::rlc_list_it_init(&sdu2.get()->tx.unsent);
                 REQUIRE(::rlc_list_it_eoi(it2));
-
-                ::rlc_sdu_decref(sdu0);
-                ::rlc_sdu_decref(sdu1);
-                ::rlc_sdu_decref(sdu2);
         }
 
         SECTION("an SDU removed mid-range does not stop later ones")
         {
                 ctx.tx.next_sn = 2;
 
-                auto sdu0 = make_sdu(&ctx, 0, RLC_WAIT, true);
+                fake_sdu sdu0(&ctx, 0, RLC_WAIT, true);
                 /* Already at the limit, so this NACK is the one that
                  * exhausts it and removes the SDU mid-iteration. */
-                sdu0->tx.retx_count = conf.max_retx_threshhold;
-                sdu0->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                sdu0.get()->tx.retx_count = conf.max_retx_threshhold;
+                sdu0.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
 
-                auto sdu1 = make_sdu(&ctx, 1, RLC_WAIT, true);
-                sdu1->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                fake_sdu sdu1(&ctx, 1, RLC_WAIT, true);
+                sdu1.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
 
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0);
-                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1);
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1.strong());
 
                 ::rlc_pdu_status cur = {};
                 cur.nack_sn = 0;
@@ -949,19 +894,19 @@ TEST_CASE("process_nack_range", "[arq][static]")
                        0);
                 REQUIRE(events.empty());
 
-                REQUIRE(sdu1->state == RLC_READY);
-                auto it = ::rlc_list_it_init(&sdu1->tx.unsent);
+                REQUIRE(sdu1.get()->state == RLC_READY);
+                auto it = ::rlc_list_it_init(&sdu1.get()->tx.unsent);
                 auto item = ::rlc_seg_item_from_it(it);
                 REQUIRE(item != nullptr);
                 REQUIRE(item->seg.start == 0);
                 REQUIRE(item->seg.end == 4);
-
-                ::rlc_sdu_decref(sdu1);
         }
 
         REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) == 0);
         REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
+
+        ::rlc_sdu_queue_clear(&ctx.tx.sdus);
 }
 
 TEST_CASE("encode_last", "[arq][static]")
@@ -1101,14 +1046,14 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 struct status_pool pool = {};
                 auto buf = buf::create(RLC_STATUS_MAX_SIZE);
 
-                auto sdu = make_sdu(&ctx, 7, RLC_READY, false);
-                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                fake_sdu sdu(&ctx, 7, RLC_READY, false);
+                REQUIRE(::rlc_seg_buf_insert(&sdu.get()->rx.buffer,
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{5, 10}, mem::alloc,
                                              mem::alloc) == 0);
-                sdu->rx.last_received = true;
+                sdu.get()->rx.last_received = true;
 
-                create_nack_offset(&ctx, &pool, buf, sdu);
+                create_nack_offset(&ctx, &pool, buf, sdu.get());
 
                 REQUIRE(status_count(&pool) == 1);
                 REQUIRE(encode_last(&ctx, &pool, buf) > 0);
@@ -1118,8 +1063,6 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 REQUIRE(decoded.nack_sn == 7);
                 REQUIRE(decoded.offset.start == 0);
                 REQUIRE(decoded.offset.end == 5);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("reports a trailing gap after the last received byte")
@@ -1127,14 +1070,14 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 struct status_pool pool = {};
                 auto buf = buf::create(RLC_STATUS_MAX_SIZE);
 
-                auto sdu = make_sdu(&ctx, 7, RLC_READY, false);
-                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                fake_sdu sdu(&ctx, 7, RLC_READY, false);
+                REQUIRE(::rlc_seg_buf_insert(&sdu.get()->rx.buffer,
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{0, 5}, mem::alloc,
                                              mem::alloc) == 0);
-                sdu->rx.last_received = false;
+                sdu.get()->rx.last_received = false;
 
-                create_nack_offset(&ctx, &pool, buf, sdu);
+                create_nack_offset(&ctx, &pool, buf, sdu.get());
 
                 REQUIRE(status_count(&pool) == 1);
                 REQUIRE(encode_last(&ctx, &pool, buf) > 0);
@@ -1144,8 +1087,6 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 REQUIRE(decoded.nack_sn == 7);
                 REQUIRE(decoded.offset.start == 5);
                 REQUIRE(decoded.offset.end == RLC_STATUS_SO_MAX);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("reports a gap between two received segments")
@@ -1153,18 +1094,18 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 struct status_pool pool = {};
                 auto buf = buf::create(RLC_STATUS_MAX_SIZE);
 
-                auto sdu = make_sdu(&ctx, 7, RLC_READY, false);
-                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                fake_sdu sdu(&ctx, 7, RLC_READY, false);
+                REQUIRE(::rlc_seg_buf_insert(&sdu.get()->rx.buffer,
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{0, 5}, mem::alloc,
                                              mem::alloc) == 0);
-                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                REQUIRE(::rlc_seg_buf_insert(&sdu.get()->rx.buffer,
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{10, 15}, mem::alloc,
                                              mem::alloc) == 0);
-                sdu->rx.last_received = true;
+                sdu.get()->rx.last_received = true;
 
-                create_nack_offset(&ctx, &pool, buf, sdu);
+                create_nack_offset(&ctx, &pool, buf, sdu.get());
 
                 REQUIRE(status_count(&pool) == 1);
                 REQUIRE(encode_last(&ctx, &pool, buf) > 0);
@@ -1174,8 +1115,6 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 REQUIRE(decoded.nack_sn == 7);
                 REQUIRE(decoded.offset.start == 5);
                 REQUIRE(decoded.offset.end == 10);
-
-                ::rlc_sdu_decref(sdu);
         }
 
         SECTION("reports both a leading and a trailing gap")
@@ -1183,19 +1122,16 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 struct status_pool pool = {};
                 auto buf = buf::create(RLC_STATUS_MAX_SIZE);
 
-                auto sdu = make_sdu(&ctx, 7, RLC_READY, false);
-                REQUIRE(::rlc_seg_buf_insert(&sdu->rx.buffer,
+                fake_sdu sdu(&ctx, 7, RLC_READY, false);
+                REQUIRE(::rlc_seg_buf_insert(&sdu.get()->rx.buffer,
                                              buf::create(std::string(5, 'x')),
                                              ::rlc_seg{5, 10}, mem::alloc,
                                              mem::alloc) == 0);
-                sdu->rx.last_received = false;
+                sdu.get()->rx.last_received = false;
 
-                create_nack_offset(&ctx, &pool, buf, sdu);
+                create_nack_offset(&ctx, &pool, buf, sdu.get());
 
                 REQUIRE(status_count(&pool) == 2);
-
-                ::rlc_sdu_decref(sdu);
         }
 }
-
 }; // namespace rlc::test
