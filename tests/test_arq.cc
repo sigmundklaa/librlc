@@ -920,22 +920,24 @@ TEST_CASE("encode_last", "[arq][static]")
         ::rlc_context ctx = {};
         ctx.conf = &conf;
 
-        SECTION("encodes the pool's last entry and sets its more-bit")
+        SECTION("encodes the pool's last entry with the more-bit it is given")
         {
+                auto more = GENERATE(true, false);
+
                 struct status_pool pool = {};
                 pool.index = 1;
                 pool.mem[0].nack_sn = 5;
 
                 auto buf = buf::create(RLC_STATUS_MAX_SIZE);
-                auto bytes = encode_last(&ctx, &pool, buf);
+                auto bytes = encode_last(&ctx, &pool, buf, more);
 
                 REQUIRE(bytes > 0);
-                REQUIRE(pool.mem[0].ext.has_more == true);
+                REQUIRE(pool.mem[0].ext.has_more == more);
 
                 ::rlc_pdu_status decoded = {};
                 REQUIRE(::rlc_status_decode(&decoded, buf, RLC_SN_18BIT) == 0);
                 REQUIRE(decoded.nack_sn == 5);
-                REQUIRE(decoded.ext.has_more == true);
+                REQUIRE(decoded.ext.has_more == more);
         }
 
         SECTION("returns -ENOSPC when the buffer is too small")
@@ -946,7 +948,7 @@ TEST_CASE("encode_last", "[arq][static]")
 
                 auto buf = buf::create(1);
 
-                REQUIRE(encode_last(&ctx, &pool, buf) == -ENOSPC);
+                REQUIRE(encode_last(&ctx, &pool, buf, true) == -ENOSPC);
         }
 }
 
@@ -972,7 +974,7 @@ TEST_CASE("create_nack_range", "[arq][static]")
 
                 REQUIRE(create_nack_range(&ctx, &pool, buf, &sdu_next, 5) ==
                        0);
-                REQUIRE(encode_last(&ctx, &pool, buf) > 0);
+                REQUIRE(encode_last(&ctx, &pool, buf, false) > 0);
 
                 ::rlc_pdu_status decoded = {};
                 REQUIRE(::rlc_status_decode(&decoded, buf, RLC_SN_18BIT) == 0);
@@ -990,7 +992,7 @@ TEST_CASE("create_nack_range", "[arq][static]")
 
                 REQUIRE(create_nack_range(&ctx, &pool, buf, &sdu_next, 5) ==
                        0);
-                REQUIRE(encode_last(&ctx, &pool, buf) > 0);
+                REQUIRE(encode_last(&ctx, &pool, buf, false) > 0);
 
                 ::rlc_pdu_status decoded = {};
                 REQUIRE(::rlc_status_decode(&decoded, buf, RLC_SN_18BIT) == 0);
@@ -1019,7 +1021,7 @@ TEST_CASE("create_nack_segment", "[arq][static]")
 
                 REQUIRE(create_nack_segment(&ctx, &pool, buf, 5,
                                             ::rlc_seg{2, 9}) == 0);
-                REQUIRE(encode_last(&ctx, &pool, buf) > 0);
+                REQUIRE(encode_last(&ctx, &pool, buf, false) > 0);
 
                 ::rlc_pdu_status decoded = {};
                 REQUIRE(::rlc_status_decode(&decoded, buf, RLC_SN_18BIT) == 0);
@@ -1057,7 +1059,7 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 create_nack_offset(&ctx, &pool, buf, sdu.get());
 
                 REQUIRE(status_count(&pool) == 1);
-                REQUIRE(encode_last(&ctx, &pool, buf) > 0);
+                REQUIRE(encode_last(&ctx, &pool, buf, false) > 0);
 
                 ::rlc_pdu_status decoded = {};
                 REQUIRE(::rlc_status_decode(&decoded, buf, RLC_SN_18BIT) == 0);
@@ -1081,7 +1083,7 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 create_nack_offset(&ctx, &pool, buf, sdu.get());
 
                 REQUIRE(status_count(&pool) == 1);
-                REQUIRE(encode_last(&ctx, &pool, buf) > 0);
+                REQUIRE(encode_last(&ctx, &pool, buf, false) > 0);
 
                 ::rlc_pdu_status decoded = {};
                 REQUIRE(::rlc_status_decode(&decoded, buf, RLC_SN_18BIT) == 0);
@@ -1109,7 +1111,7 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 create_nack_offset(&ctx, &pool, buf, sdu.get());
 
                 REQUIRE(status_count(&pool) == 1);
-                REQUIRE(encode_last(&ctx, &pool, buf) > 0);
+                REQUIRE(encode_last(&ctx, &pool, buf, false) > 0);
 
                 ::rlc_pdu_status decoded = {};
                 REQUIRE(::rlc_status_decode(&decoded, buf, RLC_SN_18BIT) == 0);
@@ -1237,6 +1239,10 @@ TEST_CASE("tx_status", "[arq][static]")
 
                 /* One 3 octet ACK_SN part and one bare NACK set. */
                 REQUIRE(bytes.size() == 6);
+
+                /* 6.2.2.5: the header's E1 says a NACK set follows it, which
+                 * is what rlc_arq_rx_status now starts its decode loop on. */
+                CHECK((bytes[2] & std::byte{0x02}) != std::byte{0});
 
                 auto it = bytes.cbegin() + 3;
                 auto [nack, more] =

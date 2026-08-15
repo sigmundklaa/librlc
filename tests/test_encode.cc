@@ -156,7 +156,7 @@ TEST_CASE("tm pdu header encode/decode is a no-op", "[encode][tm]")
 TEST_CASE("am status pdu ack header encode/decode", "[encode][am][status]")
 {
         auto sn_width = GENERATE(RLC_SN_12BIT, RLC_SN_18BIT);
-        auto ext = GENERATE(false, true);
+        auto e1 = GENERATE(false, true);
 
         auto w = (sn_width == RLC_SN_12BIT) ? proto::snwidth::W12
                                             : proto::snwidth::W18;
@@ -166,14 +166,14 @@ TEST_CASE("am status pdu ack header encode/decode", "[encode][am][status]")
         ::rlc_pdu pdu = {};
         pdu.flags.is_status = true;
         pdu.sn = sn;
-        pdu.flags.ext = ext;
+        pdu.flags.e1 = e1;
 
         /* rlc_pdu_encode only writes the ACK_SN/E1 part; the NACK list is
          * rlc_status_encode's job. A proto::am::status with no parts is
          * that same layout, `has_parts` sitting where E1 does. */
         proto::am::status expect{sn, {}};
         auto expect_bytes = expect.encode(w);
-        if (ext) {
+        if (e1) {
                 expect_bytes[2] |= (w == proto::snwidth::W12)
                                            ? std::byte{0x80}
                                            : std::byte{0x02};
@@ -190,7 +190,7 @@ TEST_CASE("am status pdu ack header encode/decode", "[encode][am][status]")
         REQUIRE(status == 0);
         REQUIRE(pdu2.flags.is_status == true);
         REQUIRE(pdu2.sn == pdu.sn);
-        REQUIRE(pdu2.flags.ext == pdu.flags.ext);
+        REQUIRE(pdu2.flags.e1 == pdu.flags.e1);
 }
 
 TEST_CASE("am status pdu with reserved CPT is rejected",
