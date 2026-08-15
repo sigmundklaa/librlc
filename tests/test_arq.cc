@@ -912,6 +912,53 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 REQUIRE(item->seg.end == 4);
         }
 
+        SECTION("a range covering POLL_SN stops t-PollRetransmit")
+        {
+                /* Spec 5.3.3.3: the acknowledgement for POLL_SN that stops
+                 * the timer may be negative, and a range NACK covers every
+                 * SN from NACK_SN to NACK_SN + range. */
+                REQUIRE(::rlc_timer_start(&ctx.arq.t_poll_retransmit,
+                                          5000000) == 0);
+
+                fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
+                sdu.get()->tx.buffer =
+                        buf::create(std::string(4, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
+                ctx.arq.poll_sn = 4;
+
+                ::rlc_pdu_status cur = {};
+                cur.nack_sn = 3;
+                cur.range = 3;
+
+                process_nack_range(&ctx, &cur);
+
+                REQUIRE(timer_ctx.armed(ctx.arq.t_poll_retransmit.gtimer) ==
+                       false);
+        }
+
+        SECTION("a range clear of POLL_SN leaves t-PollRetransmit running")
+        {
+                REQUIRE(::rlc_timer_start(&ctx.arq.t_poll_retransmit,
+                                          5000000) == 0);
+
+                fake_sdu sdu(&ctx, 1, RLC_WAIT, true);
+                sdu.get()->tx.buffer =
+                        buf::create(std::string(4, 'x')).strong();
+                ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
+                ctx.arq.poll_sn = 9;
+
+                ::rlc_pdu_status cur = {};
+                cur.nack_sn = 0;
+                cur.range = 3;
+
+                process_nack_range(&ctx, &cur);
+
+                REQUIRE(timer_ctx.armed(ctx.arq.t_poll_retransmit.gtimer) ==
+                       true);
+
+                REQUIRE(::rlc_timer_stop(&ctx.arq.t_poll_retransmit) == 0);
+        }
+
         REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) == 0);
         REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
