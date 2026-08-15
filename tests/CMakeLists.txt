@@ -76,35 +76,11 @@ include(Catch)
 catch_discover_tests(tests)
 
 if(RLC_COVERAGE)
-    # The tests #include tx.c, rx.c and arq.c to reach their statics, so the
-    # counters for those live in the test objects rather than in rlc.
+    # Both targets: tx.c, rx.c and arq.c are #included by the tests, so their
+    # counters live in the test objects, but the rest of the library is only
+    # reached through rlc.
     foreach(target rlc tests)
         target_compile_options(${target} PRIVATE --coverage -O0 -g)
         target_link_options(${target} PRIVATE --coverage)
     endforeach()
-
-    find_program(GCOVR gcovr REQUIRED)
-
-    # gcovr matches --filter against the paths as written, so normalize each
-    # one: neither the tests/.. nor the // from joining survives a match.
-    cmake_path(SET RLC_ROOT NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    cmake_path(SET RLC_SRC NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
-    cmake_path(SET RLC_INCLUDE NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
-
-    # --delete clears the counters on the way out, so each run reports what
-    # this run covered rather than accumulating across runs.
-    add_custom_target(
-        coverage
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        COMMAND
-            ${GCOVR} ${CMAKE_BINARY_DIR}
-            --root ${RLC_ROOT}
-            --filter ${RLC_SRC}
-            --filter ${RLC_INCLUDE}
-            --txt --print-summary --delete
-        DEPENDS tests
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-        USES_TERMINAL
-        VERBATIM
-    )
 endif()
