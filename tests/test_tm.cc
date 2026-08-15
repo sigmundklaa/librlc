@@ -14,6 +14,7 @@
 #include "util/mem.hh"
 #include "util/buf.hh"
 #include "util/backend.hh"
+#include "util/event.hh"
 #include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
@@ -37,35 +38,6 @@ std::vector<std::byte> to_bytevec(const Container &c)
         return ret;
 }
 
-struct captured_event {
-        int type;
-        std::uint32_t sn;
-        std::vector<std::byte> payload;
-};
-
-/* Builds a fixture::rlc_ctx listener_fn that records events into a
- * caller-owned vector, so each TEST_CASE keeps its own event storage in
- * local scope instead of it living inside a fixture struct. */
-fixture::rlc_ctx::listener_fn capture_into(std::vector<captured_event> &events)
-{
-        return [&events](const ::rlc_event &ev) {
-                captured_event e{static_cast<int>(ev.type), 0, {}};
-
-                if (ev.type == ::rlc_event::RLC_EVENT_RX_DONE_DIRECT) {
-                        /* rlc_event's payload is a union: for this type the
-                         * live member is a gabs_pbuf*, so there is no SDU to
-                         * read an SN from. pbuf_ptr takes ownership and
-                         * decrefs on scope exit, hence the incref. */
-                        ::gabs_pbuf_incref(*ev.buf);
-                        e.payload = buf::pbuf_ptr(*ev.buf).vec();
-                } else if (ev.sdu != nullptr) {
-                        e.sn = ev.sdu->sn;
-                }
-
-                events.push_back(std::move(e));
-        };
-}
-
 /* rlc_init always installs the AM default_config; every context in this
  * file is switched to RLC_TM right after init. The SN width and the timer
  * durations are never consulted in transparent mode. */
@@ -82,7 +54,7 @@ const ::rlc_config tm_conf = {
 };
 
 ::rlc_errno init_tm(fixture::rlc_ctx &fx, ::rlc_backend *backend,
-                    std::vector<captured_event> &events)
+                    event::event_handler &events)
 {
         auto status = ::rlc_init(fx.get(), backend, mem::alloc, mem::alloc);
         if (status != 0) {
@@ -91,7 +63,7 @@ const ::rlc_config tm_conf = {
 
         ::rlc_set_config(fx.get(), &tm_conf);
 
-        return fx.attach_listener(capture_into(events));
+        return fx.attach_listener(events.listener());
 }
 
 /* Peer-to-peer wiring, as in test_am.cc/test_um.cc. A TMD PDU carries no
@@ -167,17 +139,16 @@ TEST_CASE("TM RX delivers a received PDU unmodified", "[tm][rx]")
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_tm(fx, back, events) == 0);
 
         std::string payload = "a transparent mode SDU, carried verbatim";
 
         ::rlc_rx_submit(fx.get(), buf::create(payload).strong());
 
-        REQUIRE(events.size() == 1);
-        REQUIRE(events[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE_DIRECT));
-        REQUIRE(events[0].payload == to_bytevec(payload));
+        REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE_DIRECT).payload ==
+               to_bytevec(payload));
+        REQUIRE(events.empty());
 
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
@@ -194,7 +165,7 @@ TEST_CASE("TM TX submits an SDU without adding a header", "[tm][tx]")
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_tm(fx, back, events) == 0);
 
         std::string content = "no header goes in front of this";
@@ -206,9 +177,8 @@ TEST_CASE("TM TX submits an SDU without adding a header", "[tm][tx]")
         REQUIRE(tx_queue.size() == 1);
         REQUIRE(tx_queue.front().vec() == to_bytevec(content));
 
-        REQUIRE(events.size() == 1);
-        REQUIRE(events[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
+        (void)events.get(::rlc_event::RLC_EVENT_TX_RELEASE);
+        REQUIRE(events.empty());
 
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
@@ -227,7 +197,7 @@ TEST_CASE("TM TX does not segment an SDU that exceeds the opportunity",
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_tm(fx, back, events) == 0);
 
         std::string content(40, 'x');
@@ -250,9 +220,9 @@ TEST_CASE("TM peers exchange an SDU end-to-end", "[tm][loopback]")
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         fixture::rlc_ctx peer_a;
-        std::vector<captured_event> events_a;
+        event::event_handler events_a;
         fixture::rlc_ctx peer_b;
-        std::vector<captured_event> events_b;
+        event::event_handler events_b;
 
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
@@ -269,10 +239,9 @@ TEST_CASE("TM peers exchange an SDU end-to-end", "[tm][loopback]")
 
         pump(link_a, link_b, 64);
 
-        REQUIRE(events_b.size() == 1);
-        REQUIRE(events_b[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE_DIRECT));
-        REQUIRE(events_b[0].payload == to_bytevec(content));
+        REQUIRE(events_b.get(::rlc_event::RLC_EVENT_RX_DONE_DIRECT)
+                       .payload == to_bytevec(content));
+        REQUIRE(events_b.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -285,9 +254,9 @@ TEST_CASE("TM peers deliver several SDUs in order", "[tm][loopback]")
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         fixture::rlc_ctx peer_a;
-        std::vector<captured_event> events_a;
+        event::event_handler events_a;
         fixture::rlc_ctx peer_b;
-        std::vector<captured_event> events_b;
+        event::event_handler events_b;
 
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
@@ -308,10 +277,13 @@ TEST_CASE("TM peers deliver several SDUs in order", "[tm][loopback]")
 
         pump(link_a, link_b, 64);
 
-        REQUIRE(events_b.size() == 3);
-        REQUIRE(events_b[0].payload == to_bytevec(first));
-        REQUIRE(events_b[1].payload == to_bytevec(second));
-        REQUIRE(events_b[2].payload == to_bytevec(third));
+        for (const auto &content : {first, second, third}) {
+                const auto &ev = events_b.get(
+                        ::rlc_event::RLC_EVENT_RX_DONE_DIRECT);
+
+                REQUIRE(ev.payload == to_bytevec(content));
+        }
+        REQUIRE(events_b.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -329,9 +301,9 @@ TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         fixture::rlc_ctx peer_a;
-        std::vector<captured_event> events_a;
+        event::event_handler events_a;
         fixture::rlc_ctx peer_b;
-        std::vector<captured_event> events_b;
+        event::event_handler events_b;
 
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
@@ -355,9 +327,8 @@ TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
         pump(link_a, link_b, 64);
 
         REQUIRE(receiver_events.empty());
-        REQUIRE(sender_events.size() == 1);
-        REQUIRE(sender_events[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_TX_RELEASE));
+        (void)sender_events.get(::rlc_event::RLC_EVENT_TX_RELEASE);
+        REQUIRE(sender_events.empty());
 
         pump(link_a, link_b, 64);
 

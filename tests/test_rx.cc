@@ -1,7 +1,6 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 #include <catch2/catch_all.hpp>
 
@@ -10,6 +9,7 @@
 
 #include "util/mem.hh"
 #include "util/buf.hh"
+#include "util/event.hh"
 #include "util/fixture.hh"
 
 #include "gabs-overrides/timer/timer.hh"
@@ -36,22 +36,6 @@ namespace
         sdu->state = state;
 
         return sdu;
-}
-
-struct captured_event {
-        int type;
-        std::uint32_t sn;
-};
-
-/* Builds a fixture::rlc_ctx listener_fn that records events into a
- * caller-owned vector, so each TEST_CASE keeps its own event storage in
- * local scope instead of it living inside a fixture struct. */
-fixture::rlc_ctx::listener_fn capture_into(std::vector<captured_event> &events)
-{
-        return [&events](const ::rlc_event &ev) {
-                events.push_back({static_cast<int>(ev.type),
-                                  ev.sdu != nullptr ? ev.sdu->sn : 0});
-        };
 }
 
 } // namespace
@@ -329,12 +313,12 @@ TEST_CASE("deliver_ready", "[rx][static]")
 {
         fixture::rlc_ctx fx;
         ::rlc_context &ctx = *fx.get();
-        std::vector<captured_event> events;
+        event::event_handler events;
 
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
         ctx.alloc_misc = mem::alloc;
-        fx.on_event(capture_into(events));
+        fx.on_event(events.listener());
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
@@ -351,9 +335,9 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(events.size() == 2);
-                REQUIRE(events[0].sn == 0);
-                REQUIRE(events[1].sn == 1);
+                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 1);
+                REQUIRE(events.empty());
 
                 /* sdu2 is not DONE, so it remains queued, undelivered. */
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
@@ -372,8 +356,8 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(events.size() == 1);
-                REQUIRE(events[0].sn == 0);
+                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.empty());
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
 
@@ -414,10 +398,10 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
         fixture::rlc_ctx fx;
         ::rlc_context &ctx = *fx.get();
-        std::vector<captured_event> events;
+        event::event_handler events;
         ctx.conf = &conf;
         ctx.alloc_misc = mem::alloc;
-        fx.on_event(capture_into(events));
+        fx.on_event(events.listener());
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         ::rlc_list_init(&ctx.rx.sdus);
         ::rlc_window_init(&ctx.rx.win, 0, 10);
@@ -447,9 +431,9 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 2);
 
-                REQUIRE(events.size() == 2);
-                REQUIRE(events[0].sn == 0);
-                REQUIRE(events[1].sn == 1);
+                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_FAIL).sn == 1);
+                REQUIRE(events.empty());
 
                 REQUIRE(gabs_override::armed(ctx.rx.t_reassembly.gtimer) ==
                        false);
@@ -477,8 +461,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 1);
 
-                REQUIRE(events.size() == 1);
-                REQUIRE(events[0].sn == 0);
+                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.empty());
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 1) == sdu1);
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);

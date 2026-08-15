@@ -15,6 +15,7 @@
 #include "util/mem.hh"
 #include "util/buf.hh"
 #include "util/backend.hh"
+#include "util/event.hh"
 #include "util/proto.hh"
 #include "util/fixture.hh"
 
@@ -39,34 +40,6 @@ std::vector<std::byte> to_bytevec(const Container &c)
         return ret;
 }
 
-struct captured_event {
-        int type;
-        std::uint32_t sn;
-        std::vector<std::byte> payload;
-};
-
-/* Builds a fixture::rlc_ctx listener_fn that records events into a
- * caller-owned vector, so each TEST_CASE keeps its own event storage in
- * local scope instead of it living inside a fixture struct. */
-fixture::rlc_ctx::listener_fn capture_into(std::vector<captured_event> &events)
-{
-        return [&events](const ::rlc_event &ev) {
-                captured_event e{static_cast<int>(ev.type), 0, {}};
-
-                if (ev.sdu != nullptr) {
-                        e.sn = ev.sdu->sn;
-
-                        if (ev.type == ::rlc_event::RLC_EVENT_RX_DONE) {
-                                ::gabs_pbuf_incref(ev.sdu->rx.buffer.buf);
-                                e.payload = buf::pbuf_ptr(ev.sdu->rx.buffer.buf)
-                                                   .vec();
-                        }
-                }
-
-                events.push_back(std::move(e));
-        };
-}
-
 /* rlc_init always installs the AM default_config; every context in this
  * file is switched to RLC_UM with a 12-bit SN right after init. */
 const ::rlc_config um_conf = {
@@ -82,7 +55,7 @@ const ::rlc_config um_conf = {
 };
 
 ::rlc_errno init_um(fixture::rlc_ctx &fx, ::rlc_backend *backend,
-                    std::vector<captured_event> &events)
+                    event::event_handler &events)
 {
         auto status = ::rlc_init(fx.get(), backend, mem::alloc, mem::alloc);
         if (status != 0) {
@@ -91,7 +64,7 @@ const ::rlc_config um_conf = {
 
         ::rlc_set_config(fx.get(), &um_conf);
 
-        return fx.attach_listener(capture_into(events));
+        return fx.attach_listener(events.listener());
 }
 
 /* Peer-to-peer wiring, as in test_am.cc's peer_link/pump/make_peer_backend.
@@ -168,7 +141,7 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
@@ -190,10 +163,9 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
         ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
         ::rlc_rx_submit(fx.get(), buf::create(first_bytes).strong());
 
-        REQUIRE(events.size() == 1);
-        REQUIRE(events[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(events[0].payload == to_bytevec(payload));
+        REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+               to_bytevec(payload));
+        REQUIRE(events.empty());
 
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
@@ -217,7 +189,7 @@ TEST_CASE("UM RX discards a PDU with a SN the reassembly window has passed",
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
@@ -258,7 +230,7 @@ TEST_CASE("UM RX discards a duplicate PDU segment", "[um][rx]")
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
@@ -293,7 +265,7 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_um(fx, back, events) == 0);
 
         auto w = proto::snwidth::W12;
@@ -321,10 +293,8 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
                true);
         gabs_override::fire(fx.get()->rx.t_reassembly.gtimer);
 
-        REQUIRE(events.size() == 1);
-        REQUIRE(events[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_RX_FAIL));
-        REQUIRE(events[0].sn == 0);
+        REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_FAIL).sn == 0);
+        REQUIRE(events.empty());
         REQUIRE(::rlc_window_base(&fx.get()->rx.win) == 1);
 
         REQUIRE(::rlc_deinit(fx.get()) == 0);
@@ -344,7 +314,7 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_um(fx, back, events) == 0);
 
         std::string content(30, 'x');
@@ -410,7 +380,7 @@ TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
                               backend::request_counter(tx_cnt));
 
         fixture::rlc_ctx fx;
-        std::vector<captured_event> events;
+        event::event_handler events;
         REQUIRE(init_um(fx, back, events) == 0);
 
         auto sdu = buf::create(std::string("fits in one PDU"));
@@ -438,8 +408,8 @@ TEST_CASE("UM peers exchange a complete SDU end-to-end", "[um][loopback]")
 
         fixture::rlc_ctx peer_a;
         fixture::rlc_ctx peer_b;
-        std::vector<captured_event> events_a;
-        std::vector<captured_event> events_b;
+        event::event_handler events_a;
+        event::event_handler events_b;
 
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
@@ -456,10 +426,9 @@ TEST_CASE("UM peers exchange a complete SDU end-to-end", "[um][loopback]")
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(events_b.size() == 1);
-        REQUIRE(events_b[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_RX_DONE));
-        REQUIRE(events_b[0].payload == to_bytevec(content));
+        REQUIRE(events_b.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+               to_bytevec(content));
+        REQUIRE(events_b.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
@@ -479,8 +448,8 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
 
         fixture::rlc_ctx peer_a;
         fixture::rlc_ctx peer_b;
-        std::vector<captured_event> events_a;
-        std::vector<captured_event> events_b;
+        event::event_handler events_a;
+        event::event_handler events_b;
 
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
@@ -509,14 +478,13 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
                true);
         gabs_override::fire(receiver.get()->rx.t_reassembly.gtimer);
 
-        REQUIRE(receiver_events.size() == 1);
-        REQUIRE(receiver_events[0].type ==
-               static_cast<int>(::rlc_event::RLC_EVENT_RX_FAIL));
+        (void)receiver_events.get(::rlc_event::RLC_EVENT_RX_FAIL);
+        REQUIRE(receiver_events.empty());
 
         pump(link_a, link_b, 20);
 
         /* No retransmission ever happens - the drop is permanent. */
-        REQUIRE(receiver_events.size() == 1);
+        REQUIRE(receiver_events.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
