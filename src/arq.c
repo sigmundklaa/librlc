@@ -87,7 +87,7 @@ static void log_rx_status(const gabs_logger_h *logger,
 }
 
 static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
-                             gabs_pbuf *buf)
+                             gabs_pbuf *buf, bool has_more)
 {
         struct rlc_pdu_status *last;
         size_t lastsize;
@@ -95,7 +95,7 @@ static ptrdiff_t encode_last(struct rlc_context *ctx, struct status_pool *pool,
         size_t tailroom;
 
         last = status_last(pool);
-        last->ext.has_more = 1;
+        last->ext.has_more = has_more;
 
         log_rx_status(ctx->logger, last);
 
@@ -139,7 +139,7 @@ static ptrdiff_t create_nack_range(struct rlc_context *ctx,
         cur_status->ext.has_range = range_diff > 1;
 
         if (status_count(pool) > 1) {
-                ret = encode_last(ctx, pool, buf);
+                ret = encode_last(ctx, pool, buf, true);
         }
 
         status_advance(pool);
@@ -170,7 +170,7 @@ static ptrdiff_t create_nack_segment(struct rlc_context *ctx,
          * appropriately. On the first iteration, skip
          * encoding as there is no last */
         if (status_count(pool) > 0) {
-                bytes = encode_last(ctx, pool, buf);
+                bytes = encode_last(ctx, pool, buf, true);
         }
 
         status_advance(pool);
@@ -529,9 +529,7 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
         }
 
         if (status_count(&pool) > 0) {
-                encode_last(ctx, &pool, &buf);
-
-                pdu.flags.ext = 1;
+                encode_last(ctx, &pool, &buf, false);
         }
 
         /* The RLC spec states: "set the ACK_SN to the SN of the next not
