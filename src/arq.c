@@ -530,6 +530,8 @@ static size_t tx_status(struct rlc_context *ctx, size_t max_size)
 
         if (status_count(&pool) > 0) {
                 encode_last(ctx, &pool, &buf, false);
+
+                pdu.flags.e1 = 1;
         }
 
         /* The RLC spec states: "set the ACK_SN to the SN of the next not
