@@ -344,8 +344,7 @@ TEST_CASE("restart_status_prohibit", "[arq][static]")
                 REQUIRE(restart_status_prohibit(&ctx) == 0);
 
                 REQUIRE(ctx.arq.status_prohibit == true);
-                REQUIRE(gabs_override::armed(
-                               ctx.arq.t_status_prohibit.gtimer) == true);
+                REQUIRE(timer_ctx.armed(ctx.arq.t_status_prohibit) == true);
         }
 
         REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_status_prohibit) == 0);
@@ -706,7 +705,7 @@ TEST_CASE("process_nack", "[arq][static]")
                 /* Tear down before asserting: a failing REQUIRE unwinds
                  * out of the SECTION and would leak. */
                 auto still_armed =
-                        gabs_override::armed(ctx.arq.t_poll_retransmit.gtimer);
+                        timer_ctx.armed(ctx.arq.t_poll_retransmit);
 
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
                        0);
@@ -800,8 +799,7 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
                 process_nack_offset(&ctx, &cur);
 
-                REQUIRE(gabs_override::armed(
-                               ctx.arq.t_poll_retransmit.gtimer) == false);
+                REQUIRE(timer_ctx.armed(ctx.arq.t_poll_retransmit) == false);
 
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
                        0);
