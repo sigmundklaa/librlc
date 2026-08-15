@@ -1,5 +1,4 @@
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -13,6 +12,7 @@
 
 #include "util/mem.hh"
 #include "util/buf.hh"
+#include "util/bytevec.hh"
 #include "util/backend.hh"
 #include "util/event.hh"
 #include "util/fixture.hh"
@@ -26,17 +26,6 @@ using namespace util;
 
 namespace
 {
-
-template <class Container>
-std::vector<std::byte> to_bytevec(const Container &c)
-{
-        std::vector<std::byte> ret(c.size());
-
-        std::transform(c.begin(), c.end(), ret.begin(),
-                      [](auto v) { return static_cast<std::byte>(v); });
-
-        return ret;
-}
 
 /* rlc_init always installs the AM default_config; every context in this
  * file is switched to RLC_TM right after init. The SN width and the timer

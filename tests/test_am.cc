@@ -1,5 +1,4 @@
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -14,6 +13,7 @@
 
 #include "util/mem.hh"
 #include "util/buf.hh"
+#include "util/bytevec.hh"
 #include "util/backend.hh"
 #include "util/event.hh"
 #include "util/proto.hh"
@@ -28,17 +28,6 @@ using namespace util;
 
 namespace
 {
-
-template <class Container>
-std::vector<std::byte> to_bytevec(const Container &c)
-{
-        std::vector<std::byte> ret(c.size());
-
-        std::transform(c.begin(), c.end(), ret.begin(),
-                      [](auto v) { return static_cast<std::byte>(v); });
-
-        return ret;
-}
 
 ::rlc_errno init_am(fixture::rlc_ctx &fx, ::rlc_backend *backend,
                     event::event_handler &events)
