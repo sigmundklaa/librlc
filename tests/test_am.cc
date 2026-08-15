@@ -1006,4 +1006,92 @@ TEST_CASE("AM peers deliver in order when an SDU overtakes its predecessor",
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
+TEST_CASE("AM TX refuses an SDU that would fall outside the window",
+         "[am][tx]")
+{
+        /* Spec 5.2.3.1: a SN falls within the transmitting window if
+         * TX_Next_Ack <= SN < TX_Next_Ack + AM_Window_Size, and the entity
+         * shall not submit a PDU whose SN falls outside it. This
+         * implementation applies the bound at the other end, refusing the
+         * SDU at rlc_tx, so nothing unsubmittable is ever queued. */
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
+        std::queue<buf::pbuf_ptr> tx_queue;
+        unsigned int tx_cnt = 0;
+        backend::backend back(backend::queue_submitter(tx_queue),
+                              backend::request_counter(tx_cnt));
+
+        fixture::rlc_ctx fx;
+        event::event_handler events;
+        REQUIRE(init_am(fx, back, events) == 0);
+
+        auto window = ::rlc_get_config(fx.get())->window_size;
+
+        for (std::uint32_t i = 0; i < window; i++) {
+                REQUIRE(::rlc_tx(fx.get(), buf::create(std::string(4, 'q')),
+                                 nullptr) == 0);
+        }
+
+        REQUIRE(::rlc_window_base(&fx.get()->tx.win) == 0);
+        REQUIRE(fx.get()->tx.next_sn == window);
+
+        REQUIRE(::rlc_tx(fx.get(), buf::create(std::string(4, 'q')),
+                         nullptr) == -ENOSPC);
+        REQUIRE(fx.get()->tx.next_sn == window);
+
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
+}
+
+TEST_CASE("AM TX accepts again once an acknowledgement moves the window",
+         "[am][loopback]")
+{
+        /* Spec 5.2.3.1: TX_Next_Ack is the window's lower edge, so a
+         * positive acknowledgement is what admits further SDUs. */
+        gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
+
+        fixture::rlc_ctx peer_a;
+        event::event_handler events_a;
+        fixture::rlc_ctx peer_b;
+        event::event_handler events_b;
+
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
+
+        auto backend_a = make_peer_backend(link_a);
+        auto backend_b = make_peer_backend(link_b);
+
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
+
+        auto window = ::rlc_get_config(peer_a.get())->window_size;
+
+        for (std::uint32_t i = 0; i < window; i++) {
+                REQUIRE(::rlc_tx(peer_a.get(),
+                                 buf::create(std::string(4, 'q')),
+                                 nullptr) == 0);
+        }
+
+        REQUIRE(::rlc_tx(peer_a.get(), buf::create(std::string(4, 'q')),
+                         nullptr) == -ENOSPC);
+
+        pump(link_a, link_b, 64);
+
+        /* pollPDU is 3, so the run triggers several STATUS reports and
+         * t-StatusProhibit holds back all but the first. The last SDU is
+         * only acked once it expires. */
+        REQUIRE(timer_ctx.armed(peer_b.get()->arq.t_status_prohibit.gtimer) ==
+               true);
+        timer_ctx.fire(peer_b.get()->arq.t_status_prohibit.gtimer);
+
+        pump(link_a, link_b, 64);
+
+        REQUIRE(::rlc_window_base(&peer_a.get()->tx.win) == window);
+
+        REQUIRE(::rlc_tx(peer_a.get(), buf::create(std::string(4, 'q')),
+                         nullptr) == 0);
+
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
+}
+
 }; // namespace rlc::test
