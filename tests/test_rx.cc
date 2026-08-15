@@ -26,9 +26,9 @@ using namespace util;
 namespace
 {
 
-/* An RX SDU to hand to the code under test. Holds a reference of its own
- * on top of the one the queue takes, so it survives being delivered or
- * dropped, and releases whatever is left in the destructor. */
+/* An RX SDU to hand to the code under test. Holds a reference of its own,
+ * so it stays readable after being delivered or dropped, and releases only
+ * that one. Whatever the queue still holds is the queue's to answer for. */
 class fake_sdu
 {
       public:
@@ -48,13 +48,6 @@ class fake_sdu
 
         ~fake_sdu()
         {
-                /* Still queued means the code under test never took the
-                 * queue's reference, and nothing here clears the queue. */
-                if (::rlc_sdu_queue_get(&ctx->rx.sdus, sdu->sn) == sdu) {
-                        ::rlc_sdu_queue_remove(&ctx->rx.sdus, sdu);
-                        ::rlc_sdu_decref(sdu);
-                }
-
                 ::rlc_sdu_decref(sdu);
         }
 
@@ -132,6 +125,8 @@ TEST_CASE("should_start_reassembly", "[rx][static]")
 
                 REQUIRE(should_start_reassembly(&ctx) == false);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.rx.sdus);
 }
 
 TEST_CASE("should_stop_reassembly", "[rx][static]")
@@ -197,6 +192,8 @@ TEST_CASE("should_stop_reassembly", "[rx][static]")
 
                 REQUIRE(should_stop_reassembly(&ctx) == true);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.rx.sdus);
 }
 
 TEST_CASE("should_restart_reassembly", "[rx][static]")
@@ -260,6 +257,8 @@ TEST_CASE("should_restart_reassembly", "[rx][static]")
 
                 REQUIRE(should_restart_reassembly(&ctx) == false);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.rx.sdus);
 }
 
 TEST_CASE("lowest_sn_not_recv", "[rx][static]")
@@ -314,6 +313,8 @@ TEST_CASE("lowest_sn_not_recv", "[rx][static]")
 
                 REQUIRE(lowest_sn_not_recv(&ctx) == 3);
         }
+
+        ::rlc_sdu_queue_clear(&ctx.rx.sdus);
 }
 
 TEST_CASE("deliver_ready", "[rx][static]")
@@ -379,6 +380,7 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 REQUIRE(events.empty());
         }
 
+        ::rlc_sdu_queue_clear(&ctx.rx.sdus);
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
 }
 
@@ -471,6 +473,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
         }
 
         REQUIRE(::rlc_timer_uninstall(&ctx.rx.t_reassembly) == 0);
+
+        ::rlc_sdu_queue_clear(&ctx.rx.sdus);
         REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
 }
