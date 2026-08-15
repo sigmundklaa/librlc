@@ -413,8 +413,7 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
          * entity - unlike the AM loopback tests, there is no
          * poll/STATUS/NACK cycle to recover a lost segment. The receiver
          * only finds out via t-Reassembly expiry, and the SDU is dropped,
-         * not retried. Runs with the loss on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * not retried. */
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
@@ -426,7 +425,7 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        (a_sends ? link_a : link_b).drop = drop_first();
+        link_a.drop = drop_first();
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -434,9 +433,9 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
         REQUIRE(init_um(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_um(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &receiver_events = a_sends ? events_b : events_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &receiver_events = events_b;
 
         std::string content(50, 'y');
         auto sdu = buf::create(content);

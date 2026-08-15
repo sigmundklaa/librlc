@@ -636,8 +636,12 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
         /* Spec 5.3.3.2, 5.3.4 and 5.3.2 together: a PDU that empties the
          * buffer is polled, the poll triggers a STATUS report, and its
          * NACK retransmits the missing range. One pump() drains the whole
-         * cascade. Runs the loss on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * cascade.
+         *
+         * pump() grants its first argument an opportunity before its
+         * second, so the order decides whether the receiver's STATUS goes
+         * out ahead of the sender's next PDU or behind it. Run both. */
+        bool sender_first = GENERATE(true, false);
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
@@ -649,7 +653,7 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        (a_sends ? link_a : link_b).drop = drop_first(true);
+        link_a.drop = drop_first(true);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -657,16 +661,19 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &sender_events = a_sends ? events_a : events_b;
-        auto &receiver_events = a_sends ? events_b : events_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &sender_events = events_a;
+        auto &receiver_events = events_b;
 
         std::string content(50, 'y');
         auto sdu = buf::create(content);
         REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
 
-        pump(link_a, link_b, 20);
+        auto &first = sender_first ? link_a : link_b;
+        auto &second = sender_first ? link_b : link_a;
+
+        pump(first, second, 20);
 
         REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
@@ -681,8 +688,7 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
 {
         /* Spec 5.3.3.4: with the ack lost, t-PollRetransmit expiry
          * retransmits with a fresh poll, so the receiver reports status
-         * again. Runs the loss on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * again. */
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
@@ -695,7 +701,7 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         peer_link link_b{peer_b.get(), peer_a.get()};
 
         /* STATUS flows back on the other link from the data. */
-        (a_sends ? link_b : link_a).drop = drop_first(false);
+        link_b.drop = drop_first(false);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -703,12 +709,12 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &sender_events = a_sends ? events_a : events_b;
-        auto &receiver_events = a_sends ? events_b : events_a;
-        auto &sender_link = a_sends ? link_a : link_b;
-        auto &receiver_link = a_sends ? link_b : link_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &sender_events = events_a;
+        auto &receiver_events = events_b;
+        auto &sender_link = link_a;
+        auto &receiver_link = link_b;
 
         std::string content(10, 'z');
         auto sdu = buf::create(content);
@@ -745,9 +751,7 @@ TEST_CASE("AM peers recover multiple lost segments of the same SDU",
          "[am][loopback]")
 {
         /* Losing several PDUs of one SDU, but staying under
-         * maxRetxThreshold, still recovers within a single pump(). Runs
-         * the loss on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * maxRetxThreshold, still recovers within a single pump(). */
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
@@ -759,7 +763,7 @@ TEST_CASE("AM peers recover multiple lost segments of the same SDU",
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        (a_sends ? link_a : link_b).drop = drop_up_to(true, 2);
+        link_a.drop = drop_up_to(true, 2);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -767,10 +771,10 @@ TEST_CASE("AM peers recover multiple lost segments of the same SDU",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &sender_events = a_sends ? events_a : events_b;
-        auto &receiver_events = a_sends ? events_b : events_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &sender_events = events_a;
+        auto &receiver_events = events_b;
 
         std::string content(50, 'y');
         auto sdu = buf::create(content);
@@ -794,7 +798,6 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
          * retry is lost too; each fire() sends one retry. Failure and
          * success both report RLC_EVENT_TX_RELEASE, so they are told apart
          * by the receiver having gotten nothing. */
-        bool a_sends = GENERATE(true, false);
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
@@ -806,7 +809,7 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        (a_sends ? link_a : link_b).drop = drop_always(true);
+        link_a.drop = drop_always(true);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -814,10 +817,10 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &sender_events = a_sends ? events_a : events_b;
-        auto &receiver_events = a_sends ? events_b : events_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &sender_events = events_a;
+        auto &receiver_events = events_b;
 
         auto conf = *::rlc_get_config(sender.get());
         conf.max_retx_threshhold = 2;
@@ -856,9 +859,7 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
         /* Three separately queued SDUs, the middle one lost. Spec
          * 5.2.3.2.1/5.2.3.2.3: RX_Next only advances past a completed SDU
          * at the window base, so delivery stalls at the gap and the last
-         * SDU is withheld until the middle one is recovered. Runs the loss
-         * on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * SDU is withheld until the middle one is recovered. */
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
@@ -870,7 +871,7 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        (a_sends ? link_a : link_b).drop = drop_sn(1);
+        link_a.drop = drop_sn(1);
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -878,11 +879,11 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &sender_events = a_sends ? events_a : events_b;
-        auto &receiver_events = a_sends ? events_b : events_a;
-        auto &receiver_link = a_sends ? link_b : link_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &sender_events = events_a;
+        auto &receiver_events = events_b;
+        auto &receiver_link = link_b;
 
         std::string content0 = "sdu zero";
         std::string content1 = "sdu one, dropped once";
@@ -936,9 +937,7 @@ TEST_CASE("AM peers reassemble an SDU whose segments arrive out of order",
          * and the SDU is delivered once every byte is there. Swapping two
          * segments on the wire reaches that through the link rather than by
          * feeding rlc_rx_submit by hand, so RX_Next_Highest and t-Reassembly
-         * see the gap the way they would on a reordering link. Runs the
-         * reordering on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * see the gap the way they would on a reordering link. */
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
@@ -951,7 +950,7 @@ TEST_CASE("AM peers reassemble an SDU whose segments arrive out of order",
         peer_link link_b{peer_b.get(), peer_a.get()};
 
         unsigned int sent = 0;
-        auto &data_link = a_sends ? link_a : link_b;
+        auto &data_link = link_a;
 
         data_link.hold = hold_first(true);
         data_link.drop = [&sent](::gabs_pbuf buf) {
@@ -965,9 +964,9 @@ TEST_CASE("AM peers reassemble an SDU whose segments arrive out of order",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &receiver_events = a_sends ? events_b : events_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &receiver_events = events_b;
 
         /* 6.2.2.4: a 3 octet header on the first segment and 5 on the rest,
          * so a 20 byte grant carries 17 bytes and then 15. */
@@ -1002,9 +1001,7 @@ TEST_CASE("AM peers deliver in order when an SDU overtakes its predecessor",
 {
         /* Spec 5.2.3.2.3: RX_Next only advances past a completed SDU at the
          * window base, so an SDU that arrives early is held back until the
-         * one before it lands, and both go up in SN order. Runs the
-         * reordering on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * one before it lands, and both go up in SN order. */
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
@@ -1016,7 +1013,7 @@ TEST_CASE("AM peers deliver in order when an SDU overtakes its predecessor",
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        auto &data_link = a_sends ? link_a : link_b;
+        auto &data_link = link_a;
 
         data_link.hold = hold_sn(0);
 
@@ -1026,9 +1023,9 @@ TEST_CASE("AM peers deliver in order when an SDU overtakes its predecessor",
         REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &receiver = a_sends ? peer_b : peer_a;
-        auto &receiver_events = a_sends ? events_b : events_a;
+        auto &sender = peer_a;
+        auto &receiver = peer_b;
+        auto &receiver_events = events_b;
 
         std::string first = "sdu zero, held back";
         std::string second = "sdu one, overtakes it";

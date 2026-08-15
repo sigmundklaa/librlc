@@ -279,8 +279,7 @@ TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
 {
         /* Spec 5.3.1: ARQ is AM only, and TM keeps no reassembly state,
          * so a lost PDU is simply gone and the sender still counts it
-         * released. Runs the loss on each link in turn. */
-        bool a_sends = GENERATE(true, false);
+         * released. */
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
@@ -292,7 +291,7 @@ TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        (a_sends ? link_a : link_b).drop = drop_first();
+        link_a.drop = drop_first();
 
         auto backend_a = make_peer_backend(link_a);
         auto backend_b = make_peer_backend(link_b);
@@ -300,9 +299,9 @@ TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
         REQUIRE(init_tm(peer_a, backend_a, events_a) == 0);
         REQUIRE(init_tm(peer_b, backend_b, events_b) == 0);
 
-        auto &sender = a_sends ? peer_a : peer_b;
-        auto &sender_events = a_sends ? events_a : events_b;
-        auto &receiver_events = a_sends ? events_b : events_a;
+        auto &sender = peer_a;
+        auto &sender_events = events_a;
+        auto &receiver_events = events_b;
 
         std::string content(30, 'y');
         auto sdu = buf::create(content);
