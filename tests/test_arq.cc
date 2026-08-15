@@ -344,7 +344,8 @@ TEST_CASE("restart_status_prohibit", "[arq][static]")
                 REQUIRE(restart_status_prohibit(&ctx) == 0);
 
                 REQUIRE(ctx.arq.status_prohibit == true);
-                REQUIRE(timer_ctx.armed(ctx.arq.t_status_prohibit) == true);
+                REQUIRE(timer_ctx.armed(ctx.arq.t_status_prohibit.gtimer) ==
+                       true);
         }
 
         REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_status_prohibit) == 0);
@@ -652,7 +653,8 @@ TEST_CASE("process_nack", "[arq][static]")
         SECTION("queues the whole SDU buffer for retransmission")
         {
                 fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
-                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                sdu.get()->tx.buffer =
+                        buf::create(std::string(10, 'x')).strong();
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_pdu_status cur = {};
@@ -693,7 +695,8 @@ TEST_CASE("process_nack", "[arq][static]")
                                           5000000) == 0);
 
                 fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
-                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                sdu.get()->tx.buffer =
+                        buf::create(std::string(10, 'x')).strong();
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
                 ctx.arq.poll_sn = 4;
 
@@ -705,7 +708,7 @@ TEST_CASE("process_nack", "[arq][static]")
                 /* Tear down before asserting: a failing REQUIRE unwinds
                  * out of the SECTION and would leak. */
                 auto still_armed =
-                        timer_ctx.armed(ctx.arq.t_poll_retransmit);
+                        timer_ctx.armed(ctx.arq.t_poll_retransmit.gtimer);
 
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
                        0);
@@ -734,7 +737,8 @@ TEST_CASE("process_nack_offset", "[arq][static]")
         SECTION("retransmits only the NACKed byte range")
         {
                 fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
-                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                sdu.get()->tx.buffer =
+                        buf::create(std::string(10, 'x')).strong();
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_pdu_status cur = {};
@@ -756,7 +760,8 @@ TEST_CASE("process_nack_offset", "[arq][static]")
         SECTION("a max SOend resolves to the SDU buffer size")
         {
                 fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
-                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                sdu.get()->tx.buffer =
+                        buf::create(std::string(10, 'x')).strong();
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
 
                 ::rlc_pdu_status cur = {};
@@ -788,7 +793,8 @@ TEST_CASE("process_nack_offset", "[arq][static]")
                                           5000000) == 0);
 
                 fake_sdu sdu(&ctx, 4, RLC_WAIT, true);
-                sdu.get()->tx.buffer = buf::create(std::string(10, 'x')).strong();
+                sdu.get()->tx.buffer =
+                        buf::create(std::string(10, 'x')).strong();
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu.strong());
                 ctx.arq.poll_sn = 4;
 
@@ -799,7 +805,8 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
                 process_nack_offset(&ctx, &cur);
 
-                REQUIRE(timer_ctx.armed(ctx.arq.t_poll_retransmit) == false);
+                REQUIRE(timer_ctx.armed(ctx.arq.t_poll_retransmit.gtimer) ==
+                       false);
 
                 REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_poll_retransmit) ==
                        0);
@@ -840,10 +847,12 @@ TEST_CASE("process_nack_range", "[arq][static]")
         SECTION("retransmits every SDU within the range, ignores the rest")
         {
                 fake_sdu sdu0(&ctx, 0, RLC_WAIT, true);
-                sdu0.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                sdu0.get()->tx.buffer =
+                        buf::create(std::string(4, 'x')).strong();
 
                 fake_sdu sdu1(&ctx, 1, RLC_WAIT, true);
-                sdu1.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                sdu1.get()->tx.buffer =
+                        buf::create(std::string(4, 'x')).strong();
 
                 fake_sdu sdu2(&ctx, 2, RLC_WAIT, true);
 
@@ -873,10 +882,12 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 /* Already at the limit, so this NACK is the one that
                  * exhausts it and removes the SDU mid-iteration. */
                 sdu0.get()->tx.retx_count = conf.max_retx_threshhold;
-                sdu0.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                sdu0.get()->tx.buffer =
+                        buf::create(std::string(4, 'x')).strong();
 
                 fake_sdu sdu1(&ctx, 1, RLC_WAIT, true);
-                sdu1.get()->tx.buffer = buf::create(std::string(4, 'x')).strong();
+                sdu1.get()->tx.buffer =
+                        buf::create(std::string(4, 'x')).strong();
 
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu0.strong());
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu1.strong());

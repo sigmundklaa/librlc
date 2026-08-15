@@ -397,7 +397,7 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_FAIL).sn == 1);
                 REQUIRE(events.empty());
 
-                REQUIRE(timer_ctx.armed(ctx.rx.t_reassembly) ==
+                REQUIRE(timer_ctx.armed(ctx.rx.t_reassembly.gtimer) ==
                        false);
         }
 
@@ -429,7 +429,7 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2.get());
 
                 REQUIRE(ctx.rx.next_status_trigger == 3);
-                REQUIRE(timer_ctx.armed(ctx.rx.t_reassembly) ==
+                REQUIRE(timer_ctx.armed(ctx.rx.t_reassembly.gtimer) ==
                        true);
         }
 

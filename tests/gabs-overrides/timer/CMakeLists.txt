@@ -5,7 +5,6 @@ gabs_implement(
         gabs-timer
     INCLUDE
         .
-        ../../../include
     SOURCES
         timer.cc
 )

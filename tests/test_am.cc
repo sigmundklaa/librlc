@@ -330,8 +330,8 @@ TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
         ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
         REQUIRE(events.empty());
 
-        REQUIRE(timer_ctx.armed(fx.get()->rx.t_reassembly) == true);
-        timer_ctx.fire(fx.get()->rx.t_reassembly);
+        REQUIRE(timer_ctx.armed(fx.get()->rx.t_reassembly.gtimer) == true);
+        timer_ctx.fire(fx.get()->rx.t_reassembly.gtimer);
 
         REQUIRE(fx.get()->arq.gen_status == true);
 
@@ -459,8 +459,9 @@ TEST_CASE("AM TX retransmits the polled PDU when t-PollRetransmit expires",
         REQUIRE(tx_queue.size() == 1);
         tx_queue.pop();
 
-        REQUIRE(timer_ctx.armed(fx.get()->arq.t_poll_retransmit) == true);
-        timer_ctx.fire(fx.get()->arq.t_poll_retransmit);
+        REQUIRE(timer_ctx.armed(fx.get()->arq.t_poll_retransmit.gtimer) ==
+               true);
+        timer_ctx.fire(fx.get()->arq.t_poll_retransmit.gtimer);
 
         (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 8);
         REQUIRE(!tx_queue.empty());
@@ -579,7 +580,8 @@ TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
         (void)::rlc_tx_avail(fx.get(), 64);
         REQUIRE(tx_queue.size() == 1);
         tx_queue.pop();
-        REQUIRE(timer_ctx.armed(fx.get()->arq.t_status_prohibit) == true);
+        REQUIRE(timer_ctx.armed(fx.get()->arq.t_status_prohibit.gtimer) ==
+               true);
 
         ::rlc_rx_submit(fx.get(), buf::create(polled_pdu(1)).strong());
         REQUIRE(fx.get()->arq.gen_status == true);
@@ -588,7 +590,7 @@ TEST_CASE("AM RX collapses multiple STATUS triggers under t-StatusProhibit",
         (void)::rlc_tx_avail(fx.get(), 64);
         REQUIRE(tx_queue.empty());
 
-        timer_ctx.fire(fx.get()->arq.t_status_prohibit);
+        timer_ctx.fire(fx.get()->arq.t_status_prohibit.gtimer);
 
         (void)::rlc_tx_avail(fx.get(), 64);
         REQUIRE(!tx_queue.empty());
@@ -713,13 +715,13 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         REQUIRE(events_b.size() == 1);
         REQUIRE(events_a.empty());
 
-        REQUIRE(timer_ctx.armed(peer_a.get()->arq.t_poll_retransmit) ==
+        REQUIRE(timer_ctx.armed(peer_a.get()->arq.t_poll_retransmit.gtimer) ==
                true);
-        timer_ctx.fire(peer_a.get()->arq.t_poll_retransmit);
+        timer_ctx.fire(peer_a.get()->arq.t_poll_retransmit.gtimer);
 
-        REQUIRE(timer_ctx.armed(peer_b.get()->arq.t_status_prohibit) ==
+        REQUIRE(timer_ctx.armed(peer_b.get()->arq.t_status_prohibit.gtimer) ==
                true);
-        timer_ctx.fire(peer_b.get()->arq.t_status_prohibit);
+        timer_ctx.fire(peer_b.get()->arq.t_status_prohibit.gtimer);
 
         pump(link_a, link_b, 30);
 
@@ -808,9 +810,10 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
         /* maxRetxThreshold retransmissions are served before the limit is
          * reached, so the give-up happens on the round after them. */
         for (std::uint32_t i = 0; i < conf.max_retx_threshhold + 1; i++) {
-                REQUIRE(timer_ctx.armed(peer_a.get()->arq.t_poll_retransmit) ==
+                REQUIRE(timer_ctx.armed(
+                               peer_a.get()->arq.t_poll_retransmit.gtimer) ==
                        true);
-                timer_ctx.fire(peer_a.get()->arq.t_poll_retransmit);
+                timer_ctx.fire(peer_a.get()->arq.t_poll_retransmit.gtimer);
 
                 pump(link_a, link_b, 30);
         }
@@ -877,9 +880,9 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
         REQUIRE(events_a.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
         REQUIRE(events_a.empty());
 
-        REQUIRE(timer_ctx.armed(peer_b.get()->arq.t_status_prohibit) ==
+        REQUIRE(timer_ctx.armed(peer_b.get()->arq.t_status_prohibit.gtimer) ==
                true);
-        timer_ctx.fire(peer_b.get()->arq.t_status_prohibit);
+        timer_ctx.fire(peer_b.get()->arq.t_status_prohibit.gtimer);
 
         pump(link_a, link_b, 64);
 

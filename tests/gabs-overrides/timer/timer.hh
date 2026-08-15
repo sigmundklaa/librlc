@@ -12,8 +12,6 @@
 #include <stop_token>
 #include <list>
 
-#include <rlc/timer.h>
-
 #include "gabs_timer_def.h"
 
 namespace rlc::gabs_override
@@ -136,11 +134,6 @@ class timer_ctx
                 return t->armed.load();
         }
 
-        bool armed(const ::rlc_timer &timer)
-        {
-                return armed(timer.gtimer);
-        }
-
         /**
          * @brief Run `handle`'s callback now, blocking until it finishes or
          * a concurrent stop() wins. Needs a resolver whose callback waits
@@ -165,11 +158,6 @@ class timer_ctx
 
                 std::unique_lock<std::mutex> lock(t->fire_mutex);
                 t->fire_cv.wait(lock, [t] { return t->fire_complete; });
-        }
-
-        void fire(const ::rlc_timer &timer)
-        {
-                fire(timer.gtimer);
         }
 
         static timer_ctx *get_inst()

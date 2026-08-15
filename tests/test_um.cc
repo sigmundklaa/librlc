@@ -269,9 +269,9 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
         ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
         REQUIRE(events.empty());
 
-        REQUIRE(timer_ctx.armed(fx.get()->rx.t_reassembly) ==
+        REQUIRE(timer_ctx.armed(fx.get()->rx.t_reassembly.gtimer) ==
                true);
-        timer_ctx.fire(fx.get()->rx.t_reassembly);
+        timer_ctx.fire(fx.get()->rx.t_reassembly.gtimer);
 
         REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_FAIL).sn == 0);
         REQUIRE(events.empty());
@@ -441,9 +441,9 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
 
         REQUIRE(events_b.empty());
 
-        REQUIRE(timer_ctx.armed(peer_b.get()->rx.t_reassembly) ==
+        REQUIRE(timer_ctx.armed(peer_b.get()->rx.t_reassembly.gtimer) ==
                true);
-        timer_ctx.fire(peer_b.get()->rx.t_reassembly);
+        timer_ctx.fire(peer_b.get()->rx.t_reassembly.gtimer);
 
         (void)events_b.pop(::rlc_event::RLC_EVENT_RX_FAIL);
         REQUIRE(events_b.empty());
