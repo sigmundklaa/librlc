@@ -369,8 +369,14 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
 TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
          "[um][tx]")
 {
-        /* Spec 5.2.2.1.1: if the PDU contains the complete SDU, both the SN
-         * and SO fields are omitted (SI=ALL). */
+        /* Spec 6.2.2.3: "When an UMD PDU contains a complete RLC SDU, the
+         * UMD PDU header only contains the SI and R fields" - Figure
+         * 6.2.2.3-1 makes that header exactly one octet, against the four
+         * of Figure 6.2.2.3-5 (12 bit SN plus a 16 bit SO). The header
+         * size is normative, so the transmit opportunity below is the SDU
+         * plus exactly one byte: the smallest grant for which the spec
+         * still requires a single PDU with SI=ALL. Per 5.2.2.1.1 the SN is
+         * set only when the PDU carries a segment. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
