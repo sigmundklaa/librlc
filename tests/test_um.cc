@@ -231,8 +231,12 @@ TEST_CASE("UM RX discards a PDU with SN outside the receiving window",
 
 TEST_CASE("UM RX discards a duplicate PDU segment", "[um][rx]")
 {
-        /* Spec 5.2.2.2.2: duplicate byte segments of an RLC SDU are
-         * discarded. Uses a segmented SDU (SI=FIRST) rather than SI=ALL so
+        /* Spec 5.2.2.2.3: an SDU is reassembled and delivered once "all
+         * byte segments with SN = x are received", so re-receiving a
+         * segment must not complete it. Note UM has no explicit
+         * discard-the-duplicate rule - that is 5.2.3.2.2, an AM clause -
+         * so this pins reassembly-level behaviour, not a UM requirement.
+         * Uses a segmented SDU (SI=FIRST) rather than SI=ALL so
          * the duplicate is caught by rlc_seg_buf_insert rather than the
          * SDU already having been removed by the first delivery attempt. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
@@ -269,10 +273,7 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
          "[um][rx]")
 {
         /* Spec 5.2.2.2.4/5.2.2.2.3: on t-Reassembly expiry, RX_Next_Highest
-         * is used to advance past whatever hasn't completed. Unlike the
-         * RLC_AM completion path, this drop path (drop_sdu/
-         * rlc_event_rx_drop) is unconditional on type, so it isn't
-         * affected by the RLC_UM delivery gap above. */
+         * is used to advance past whatever hasn't completed. */
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -320,9 +321,10 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
 
 TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
 {
-        /* Spec 5.2.2.1: an SDU too large for one PDU is segmented; the
-         * first segment carries SI=FIRST, later ones the SN of the SDU
-         * plus a byte offset. */
+        /* Spec 4.2.1.2.2: the transmitting entity segments the RLC SDUs,
+         * if needed, so that the UMD PDUs fit within the size indicated by
+         * the lower layer. The header of each is fixed by 6.2.2.3 and
+         * Table 6.2.3.4-1, checked per PDU below. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -349,15 +351,27 @@ TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
                 auto it = bytes.cbegin();
                 auto hdr = proto::um::header::decode(it, w);
 
-                if (reassembled.empty()) {
+                auto offset = reassembled.size();
+                reassembled.insert(reassembled.end(), it, bytes.cend());
+                bool is_last = reassembled.size() == content.size();
+
+                REQUIRE(hdr.sn.value() == 0);
+
+                if (offset == 0) {
+                        /* 6.2.2.3: the SN is carried because the SDU is
+                         * segmented, and "an UMD PDU carrying the first
+                         * segment of an RLC SDU does not carry the SO field
+                         * in its header". */
                         REQUIRE(hdr.si == proto::seginfo::FIRST);
+                        REQUIRE(hdr.so.has_value() == false);
                 } else {
-                        REQUIRE(hdr.si != proto::seginfo::FIRST);
-                        REQUIRE(hdr.sn.value() == 0);
-                        REQUIRE(hdr.so.value() == reassembled.size());
+                        /* Table 6.2.3.4-1: 10 is the last segment, 11 one
+                         * that is neither first nor last. */
+                        REQUIRE(hdr.si == (is_last ? proto::seginfo::LAST
+                                                   : proto::seginfo::NEITHER));
+                        REQUIRE(hdr.so.value() == offset);
                 }
 
-                reassembled.insert(reassembled.end(), it, bytes.cend());
                 tx_queue.pop();
         }
 
