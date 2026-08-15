@@ -15,6 +15,7 @@
 #include "util/event.hh"
 #include "util/fake_sdu.hh"
 #include "util/fixture.hh"
+#include "util/proto.hh"
 
 #include "gabs-overrides/timer/timer.hh"
 
@@ -1134,4 +1135,172 @@ TEST_CASE("create_nack_offset", "[arq][static]")
                 REQUIRE(status_count(&pool) == 2);
         }
 }
+TEST_CASE("tx_status", "[arq][static]")
+{
+        /* Spec 5.3.4: "set the ACK_SN to the SN of the next not received RLC
+         * SDU which is not indicated as missing in the resulting STATUS
+         * PDU", after reporting what is missing below it. */
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
+        static const ::rlc_config conf = {
+                .type = RLC_AM,
+                .window_size = 10,
+                .time_status_prohibit_us = 5000000,
+                .sn_width = RLC_SN_18BIT,
+        };
+
+        std::queue<buf::pbuf_ptr> queue;
+        unsigned int cnt = 0;
+        backend::backend back(backend::queue_submitter(queue),
+                              backend::request_counter(cnt));
+
+        ::rlc_context ctx = {};
+        ctx.conf = &conf;
+        ctx.backend = back;
+        ctx.alloc_misc = mem::alloc;
+        ctx.alloc_buf = mem::alloc;
+        ::rlc_list_init(&ctx.rx.sdus);
+        ::rlc_window_init(&ctx.rx.win, 0, 10);
+        REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
+        REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
+        REQUIRE(::rlc_timer_install(&ctx.arq.t_status_prohibit,
+                                    alarm_status_prohibit, &ctx) == 0);
+
+        auto submitted = [&queue]() {
+                REQUIRE(queue.size() == 1);
+
+                auto bytes = queue.front().vec();
+                queue.pop();
+
+                return bytes;
+        };
+
+        /* 6.2.2.5: D/C and CPT occupy the top four bits of octet 1, then
+         * ACK_SN runs to bit 2 of octet 3. */
+        auto ack_sn = [](const std::vector<std::byte> &bytes) {
+                return (std::to_integer<std::uint32_t>(bytes[0] &
+                                                       std::byte{0xf})
+                        << 14) |
+                       (std::to_integer<std::uint32_t>(bytes[1]) << 6) |
+                       (std::to_integer<std::uint32_t>(bytes[2]) >> 2);
+        };
+
+        /* 6.2.3.11: E1 says whether another NACK set follows. Read from the
+         * third octet of an 18 bit NACK set, which holds NACK_SN[1:0], E1,
+         * E2, E3 and three reserved bits. */
+        auto last_nack_ext = [](const std::vector<std::byte> &bytes) {
+                return (bytes[5] & std::byte{0x20}) != std::byte{0};
+        };
+
+        SECTION("nothing outstanding acks the window base")
+        {
+                REQUIRE(tx_status(&ctx, RLC_STATUS_MAX_SIZE) > 0);
+                ::rlc_sched_yield(&ctx.sched);
+
+                auto status = proto::am::status::decode(
+                        submitted().cbegin(), proto::snwidth::W18);
+
+                REQUIRE(status.sn == 0);
+                REQUIRE(status.parts.empty());
+        }
+
+        SECTION("a fully received prefix is acked past, with no NACK")
+        {
+                fake_sdu sdu0(&ctx, 0, RLC_DONE);
+                fake_sdu sdu1(&ctx, 1, RLC_DONE);
+
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu1.strong());
+
+                REQUIRE(tx_status(&ctx, RLC_STATUS_MAX_SIZE) > 0);
+                ::rlc_sched_yield(&ctx.sched);
+
+                auto status = proto::am::status::decode(
+                        submitted().cbegin(), proto::snwidth::W18);
+
+                REQUIRE(status.sn == 2);
+                REQUIRE(status.parts.empty());
+        }
+
+        SECTION("an SDU missing entirely is NACKed and acked past")
+        {
+                fake_sdu sdu0(&ctx, 0, RLC_DONE);
+                fake_sdu sdu2(&ctx, 2, RLC_DONE);
+
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu0.strong());
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu2.strong());
+
+                REQUIRE(tx_status(&ctx, RLC_STATUS_MAX_SIZE) > 0);
+                ::rlc_sched_yield(&ctx.sched);
+
+                auto bytes = submitted();
+
+                /* One 3 octet ACK_SN part and one bare NACK set. */
+                REQUIRE(bytes.size() == 6);
+
+                auto it = bytes.cbegin() + 3;
+                auto [nack, more] =
+                        proto::am::status_part::decode(it, proto::snwidth::W18);
+
+                REQUIRE(nack.sn == 1);
+                REQUIRE(nack.range.has_value() == false);
+
+                /* SN 1 is indicated as missing, so ACK_SN is the SN after
+                 * the reported ones rather than 1 itself. */
+                REQUIRE(ack_sn(bytes) == 3);
+
+                /* Fails: encode_last sets E1 on every set and clears it
+                 * only when the buffer is too full to hold another, so a
+                 * list that ends because nothing more is missing claims a
+                 * set follows it. CHECK, so the teardown below still
+                 * runs. */
+                CHECK(last_nack_ext(bytes) == false);
+        }
+
+        SECTION("a partly received SDU is NACKed by byte range")
+        {
+                fake_sdu sdu(&ctx, 0, RLC_READY);
+                REQUIRE(::rlc_seg_buf_insert(&sdu.get()->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{0, 3}, mem::alloc,
+                                             mem::alloc) == 0);
+                REQUIRE(::rlc_seg_buf_insert(&sdu.get()->rx.buffer,
+                                             buf::create(std::string(3, 'x')),
+                                             ::rlc_seg{5, 8}, mem::alloc,
+                                             mem::alloc) == 0);
+                sdu.get()->rx.last_received = true;
+
+                ::rlc_sdu_queue_insert(&ctx.rx.sdus, sdu.strong());
+
+                REQUIRE(tx_status(&ctx, RLC_STATUS_MAX_SIZE) > 0);
+                ::rlc_sched_yield(&ctx.sched);
+
+                auto bytes = submitted();
+
+                /* One 3 octet ACK_SN part and one NACK set carrying SOstart
+                 * and SOend. */
+                REQUIRE(bytes.size() == 10);
+
+                auto it = bytes.cbegin() + 3;
+                auto [nack, more] =
+                        proto::am::status_part::decode(it, proto::snwidth::W18);
+
+                REQUIRE(nack.sn == 0);
+                REQUIRE(nack.sostart.value() == 3);
+                REQUIRE(nack.soend.value() == 5);
+
+                REQUIRE(ack_sn(bytes) == 1);
+
+                /* Passes only because a 7 octet set leaves no room for
+                 * another within RLC_STATUS_MAX_SIZE, which is what makes
+                 * encode_last clear E1. */
+                CHECK(last_nack_ext(bytes) == false);
+        }
+
+        ::rlc_sdu_queue_clear(&ctx.rx.sdus);
+        REQUIRE(::rlc_timer_uninstall(&ctx.arq.t_status_prohibit) == 0);
+        REQUIRE(::gabs_timer_ctx_deinit(&ctx.timer_ctx) == 0);
+        REQUIRE(::rlc_sched_deinit(&ctx.sched) == 0);
+}
+
 }; // namespace rlc::test
