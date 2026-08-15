@@ -163,7 +163,7 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
         ::rlc_rx_submit(fx.get(), buf::create(last_bytes).strong());
         ::rlc_rx_submit(fx.get(), buf::create(first_bytes).strong());
 
-        REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(payload));
         REQUIRE(events.empty());
 
@@ -293,7 +293,7 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
                true);
         gabs_override::fire(fx.get()->rx.t_reassembly.gtimer);
 
-        REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_FAIL).sn == 0);
+        REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_FAIL).sn == 0);
         REQUIRE(events.empty());
         REQUIRE(::rlc_window_base(&fx.get()->rx.win) == 1);
 
@@ -426,7 +426,7 @@ TEST_CASE("UM peers exchange a complete SDU end-to-end", "[um][loopback]")
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(events_b.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
         REQUIRE(events_b.empty());
 
@@ -478,7 +478,7 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
                true);
         gabs_override::fire(receiver.get()->rx.t_reassembly.gtimer);
 
-        (void)receiver_events.get(::rlc_event::RLC_EVENT_RX_FAIL);
+        (void)receiver_events.pop(::rlc_event::RLC_EVENT_RX_FAIL);
         REQUIRE(receiver_events.empty());
 
         pump(link_a, link_b, 20);

@@ -65,29 +65,29 @@ class event_handler
 
         /* Consumes the next event, requiring it to be of the expected
          * type. */
-        const record &get(event_type expected)
+        const record &pop(event_type expected)
         {
                 INFO("expected a " << name(expected) << " event");
-                REQUIRE(pos_ < records_.size());
+                REQUIRE(pos < records.size());
 
-                const record &rec = records_[pos_++];
+                const record &rec = records[pos++];
 
-                INFO("event " << (pos_ - 1) << " is a " << name(rec.type));
+                INFO("event " << (pos - 1) << " is a " << name(rec.type));
                 REQUIRE(rec.type == expected);
 
                 return rec;
         }
 
-        /* True once every recorded event has been consumed by get(). */
+        /* True once every recorded event has been consumed by pop(). */
         bool empty() const
         {
-                return pos_ >= records_.size();
+                return pos >= records.size();
         }
 
         /* Number of events recorded but not yet consumed. */
         std::size_t size() const
         {
-                return records_.size() - pos_;
+                return records.size() - pos;
         }
 
       private:
@@ -132,11 +132,11 @@ class event_handler
                         break;
                 }
 
-                records_.push_back(std::move(rec));
+                records.push_back(std::move(rec));
         }
 
-        std::vector<record> records_;
-        std::size_t pos_ = 0;
+        std::vector<record> records;
+        std::size_t pos = 0;
 };
 
 } // namespace rlc::test::util::event

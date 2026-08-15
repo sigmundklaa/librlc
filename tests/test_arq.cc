@@ -478,9 +478,9 @@ TEST_CASE("tx_ack", "[arq][static]")
                 tx_ack(&ctx, 2);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
                        0);
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
                        1);
                 REQUIRE(events.empty());
 
@@ -501,7 +501,7 @@ TEST_CASE("tx_ack", "[arq][static]")
                 tx_ack(&ctx, 1);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
                        0);
                 REQUIRE(events.empty());
 
@@ -681,7 +681,7 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 0) == nullptr);
                 REQUIRE(::rlc_window_base(&ctx.tx.win) == 1);
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
                        0);
                 REQUIRE(events.empty());
         }
@@ -957,7 +957,7 @@ TEST_CASE("process_nack_range", "[arq][static]")
                 ::rlc_sched_yield(&ctx.sched);
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.tx.sdus, 0) == nullptr);
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn ==
                        0);
                 REQUIRE(events.empty());
 

@@ -146,7 +146,7 @@ TEST_CASE("TM RX delivers a received PDU unmodified", "[tm][rx]")
 
         ::rlc_rx_submit(fx.get(), buf::create(payload).strong());
 
-        REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE_DIRECT).payload ==
+        REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE_DIRECT).payload ==
                to_bytevec(payload));
         REQUIRE(events.empty());
 
@@ -177,7 +177,7 @@ TEST_CASE("TM TX submits an SDU without adding a header", "[tm][tx]")
         REQUIRE(tx_queue.size() == 1);
         REQUIRE(tx_queue.front().vec() == to_bytevec(content));
 
-        (void)events.get(::rlc_event::RLC_EVENT_TX_RELEASE);
+        (void)events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
         REQUIRE(events.empty());
 
         REQUIRE(::rlc_deinit(fx.get()) == 0);
@@ -239,7 +239,7 @@ TEST_CASE("TM peers exchange an SDU end-to-end", "[tm][loopback]")
 
         pump(link_a, link_b, 64);
 
-        REQUIRE(events_b.get(::rlc_event::RLC_EVENT_RX_DONE_DIRECT)
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE_DIRECT)
                        .payload == to_bytevec(content));
         REQUIRE(events_b.empty());
 
@@ -278,7 +278,7 @@ TEST_CASE("TM peers deliver several SDUs in order", "[tm][loopback]")
         pump(link_a, link_b, 64);
 
         for (const auto &content : {first, second, third}) {
-                const auto &ev = events_b.get(
+                const auto &ev = events_b.pop(
                         ::rlc_event::RLC_EVENT_RX_DONE_DIRECT);
 
                 REQUIRE(ev.payload == to_bytevec(content));
@@ -327,7 +327,7 @@ TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
         pump(link_a, link_b, 64);
 
         REQUIRE(receiver_events.empty());
-        (void)sender_events.get(::rlc_event::RLC_EVENT_TX_RELEASE);
+        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
         REQUIRE(sender_events.empty());
 
         pump(link_a, link_b, 64);

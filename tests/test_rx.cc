@@ -335,8 +335,8 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 1);
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE).sn == 1);
                 REQUIRE(events.empty());
 
                 /* sdu2 is not DONE, so it remains queued, undelivered. */
@@ -356,7 +356,7 @@ TEST_CASE("deliver_ready", "[rx][static]")
                 deliver_ready(&ctx);
                 ::rlc_sched_yield(&ctx.sched);
 
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
                 REQUIRE(events.empty());
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 2) == sdu2);
@@ -431,8 +431,8 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 2);
 
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_FAIL).sn == 1);
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_FAIL).sn == 1);
                 REQUIRE(events.empty());
 
                 REQUIRE(gabs_override::armed(ctx.rx.t_reassembly.gtimer) ==
@@ -461,7 +461,7 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
                 REQUIRE(::rlc_window_base(&ctx.rx.win) == 1);
 
-                REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
+                REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE).sn == 0);
                 REQUIRE(events.empty());
 
                 REQUIRE(::rlc_sdu_queue_get(&ctx.rx.sdus, 1) == sdu1);

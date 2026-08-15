@@ -210,7 +210,7 @@ TEST_CASE("AM RX reassembles a segmented SDU received out of order",
 
         ::rlc_rx_submit(fx.get(), buf::create(first_bytes).strong());
 
-        REQUIRE(events.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(payload));
         REQUIRE(events.empty());
 
@@ -320,7 +320,7 @@ TEST_CASE("AM RX discards a duplicate AMD PDU segment", "[am][rx]")
         auto pdu = buf::create(bytes);
 
         ::rlc_rx_submit(fx.get(), pdu.strong());
-        (void)events.get(::rlc_event::RLC_EVENT_RX_DONE);
+        (void)events.pop(::rlc_event::RLC_EVENT_RX_DONE);
 
         ::rlc_rx_submit(fx.get(), pdu.strong());
 
@@ -498,7 +498,7 @@ TEST_CASE("AM TX advances TX_Next_Ack and releases the SDU on a positive "
 
         ::rlc_rx_submit(fx.get(), buf::create(status.encode(w)).strong());
 
-        REQUIRE(events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
+        REQUIRE(events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
         REQUIRE(events.empty());
 
         REQUIRE(::rlc_deinit(fx.get()) == 0);
@@ -579,7 +579,7 @@ TEST_CASE("AM peers exchange a segmented SDU end-to-end", "[am][loopback]")
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(events_b.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(events_b.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
         REQUIRE(events_b.empty());
 
@@ -629,7 +629,7 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver_events.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
         REQUIRE(receiver_events.empty());
 
@@ -701,7 +701,7 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
 
         pump(link_a, link_b, 30);
 
-        (void)sender_events.get(::rlc_event::RLC_EVENT_TX_RELEASE);
+        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
         REQUIRE(sender_events.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
@@ -747,7 +747,7 @@ TEST_CASE("AM peers recover multiple lost segments of the same SDU",
 
         pump(link_a, link_b, 20);
 
-        REQUIRE(receiver_events.get(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
                to_bytevec(content));
         REQUIRE(receiver_events.empty());
 
@@ -817,7 +817,7 @@ TEST_CASE("AM TX gives up and fails the SDU after too many losses",
         }
 
         REQUIRE(receiver_events.empty());
-        REQUIRE(sender_events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
+        REQUIRE(sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
         REQUIRE(sender_events.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
@@ -877,7 +877,7 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
          * withheld until SDU 1 is recovered, then both go out together. */
         for (const auto &content : {content0, content1, content2}) {
                 const auto &ev =
-                        receiver_events.get(::rlc_event::RLC_EVENT_RX_DONE);
+                        receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE);
 
                 REQUIRE(ev.payload == to_bytevec(content));
         }
@@ -889,7 +889,7 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
          * the piggybacked ack for SDU 2) triggered another STATUS report,
          * but the receiver's own first STATUS already started its
          * t-StatusProhibit, so that second report is still pending. */
-        REQUIRE(sender_events.get(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
+        REQUIRE(sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
         REQUIRE(sender_events.empty());
 
         REQUIRE(gabs_override::armed(
@@ -902,8 +902,8 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
 
         /* SDU 0 was released above, so the remaining two arrive now. */
         REQUIRE(sender_events.size() == 2);
-        (void)sender_events.get(::rlc_event::RLC_EVENT_TX_RELEASE);
-        (void)sender_events.get(::rlc_event::RLC_EVENT_TX_RELEASE);
+        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
+        (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
         REQUIRE(sender_events.empty());
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
