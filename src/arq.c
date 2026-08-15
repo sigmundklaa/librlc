@@ -784,8 +784,11 @@ void rlc_arq_rx_status(struct rlc_context *ctx, const struct rlc_pdu *pdu,
 
         tx_nack_clear(ctx, pdu->sn);
 
+        cur.ext.has_more = pdu->flags.e1;
+
         /* Iterate over every status */
-        while ((status = rlc_status_decode(&cur, buf, conf->sn_width)) == 0) {
+        while (cur.ext.has_more &&
+               (status = rlc_status_decode(&cur, buf, conf->sn_width)) == 0) {
                 gabs_log_dbgf(ctx->logger,
                               "TX AM STATUS; NACK_SN: %" PRIu32
                               ", OFFSET: %" PRIu32 "->%" PRIu32
