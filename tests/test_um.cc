@@ -318,16 +318,6 @@ TEST_CASE("UM RX drops an incomplete SDU and advances the window when "
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
-/* Every TX/loopback case below reaches a heap-use-after-free rather than a
- * plain expectation failure, so under a sanitized build they abort the test
- * process instead of reporting. rlc_tx_yield frees a completed non-AM SDU -
- * and, for UM, pdu_size_adjust sets is_last on the very first PDU whenever
- * the whole SDU fits - without updating the rlc_list_foreach iterator it is
- * still running under, unlike the pop-before-free pattern serve_sdu uses for
- * the same list. The next loop iteration's rlc_list_it_next() then
- * dereferences the freed node, which any UM SDU completing within
- * rlc_tx_avail runs into. */
-
 TEST_CASE("UM TX segments an SDU across multiple PDUs", "[um][tx]")
 {
         /* Spec 5.2.2.1: an SDU too large for one PDU is segmented; the
