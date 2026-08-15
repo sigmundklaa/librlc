@@ -76,11 +76,9 @@ include(Catch)
 catch_discover_tests(tests)
 
 if(RLC_COVERAGE)
-    # Both targets: tx.c, rx.c and arq.c are #included by the tests, so their
-    # counters live in the test objects, but the rest of the library is only
-    # reached through rlc.
-    foreach(target rlc tests)
-        target_compile_options(${target} PRIVATE --coverage -O0 -g)
-        target_link_options(${target} PRIVATE --coverage)
-    endforeach()
+    # PUBLIC so that tests inherits this by linking rlc, which it needs: the
+    # counters for tx.c, rx.c and arq.c live in the test objects, since those
+    # are #included there rather than compiled into the library.
+    target_compile_options(rlc PUBLIC --coverage -O0 -g)
+    target_link_options(rlc PUBLIC --coverage)
 endif()
