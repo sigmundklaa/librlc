@@ -94,34 +94,20 @@ class event_handler
         void capture(const ::rlc_event &ev)
         {
                 record rec{ev.type, 0, {}};
+                const ::gabs_pbuf *payload = nullptr;
 
                 switch (ev.type) {
                 case ::rlc_event::RLC_EVENT_RX_DONE_DIRECT:
                         /* rlc_event's payload is a union: for this type the
                          * live member is a gabs_pbuf*, so there is no SDU to
-                         * read an SN from. pbuf_ptr takes ownership and
-                         * decrefs on scope exit, hence the incref. */
-                        ::gabs_pbuf_incref(*ev.buf);
-                        rec.payload = buf::pbuf_ptr(*ev.buf).vec();
+                         * read an SN from. */
+                        payload = ev.buf;
                         break;
 
                 case ::rlc_event::RLC_EVENT_RX_DONE:
                         if (ev.sdu != nullptr) {
                                 rec.sn = ev.sdu->sn;
-
-                                /* Tests that hand-build an ::rlc_sdu to
-                                 * drive a static function directly leave
-                                 * the reassembly buffer empty; there is no
-                                 * payload to copy and increfing it would
-                                 * dereference a null frag list. */
-                                if (::gabs_pbuf_okay(ev.sdu->rx.buffer.buf)) {
-                                        ::gabs_pbuf_incref(
-                                                ev.sdu->rx.buffer.buf);
-                                        rec.payload =
-                                                buf::pbuf_ptr(
-                                                        ev.sdu->rx.buffer.buf)
-                                                        .vec();
-                                }
+                                payload = &ev.sdu->rx.buffer.buf;
                         }
                         break;
 
@@ -130,6 +116,20 @@ class event_handler
                                 rec.sn = ev.sdu->sn;
                         }
                         break;
+                }
+
+                /* Tests that hand-build an ::rlc_sdu to drive a static
+                 * function directly leave the reassembly buffer empty, so
+                 * there is nothing to read and no frag list to walk. */
+                if (payload != nullptr && ::gabs_pbuf_okay(*payload)) {
+                        buf::pbuf_ptr view(*payload);
+
+                        rec.payload = view.vec();
+
+                        /* pbuf_ptr adopts the reference it is handed and
+                         * decrefs it on scope exit; strong() hands one back,
+                         * leaving the event's own reference untouched. */
+                        (void)view.strong();
                 }
 
                 records.push_back(std::move(rec));
