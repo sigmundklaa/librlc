@@ -148,7 +148,7 @@ static void encode_status_header_(const struct rlc_pdu *pdu, gabs_pbuf *buf,
         bit_copy_mem_(data, pdu->sn, full_width, sn_width_bits);
         full_width += sn_width_bits;
 
-        bit_copy_mem_(data, pdu->flags.ext, full_width, 1);
+        bit_copy_mem_(data, pdu->flags.e1, full_width, 1);
         full_width += 1;
 
         gabs_pbuf_put(buf, data, bytes_ceil_(full_width));
@@ -230,11 +230,11 @@ decode_status_header_(struct rlc_pdu *pdu,
 
         if (sn_width == RLC_SN_12BIT) {
                 pdu->sn = ((header[0] & 0xf) << 8) | (header[1]);
-                pdu->flags.ext = (header[2] >> 7) & 0x1;
+                pdu->flags.e1 = (header[2] >> 7) & 0x1;
         } else {
                 pdu->sn = ((header[0] & 0xf) << 14) | (header[1] << 6) |
                           ((header[2] >> 2) & 0x3f);
-                pdu->flags.ext = (header[2] >> 1) & 0x1;
+                pdu->flags.e1 = (header[2] >> 1) & 0x1;
         }
 
         return 0;

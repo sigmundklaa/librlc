@@ -26,7 +26,7 @@ struct rlc_pdu {
 
                 bool polled: 1;
 
-                bool ext: 1;       /* AM Status PDU E1 bit */
+                bool e1: 1;        /* AM Status PDU E1 bit */
                 bool is_status: 1; /* True if PDU is AM status PDU */
         } flags;
 };
