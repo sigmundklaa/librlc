@@ -198,10 +198,17 @@ TEST_CASE("UM RX delivers a reassembled SDU", "[um][rx]")
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 }
 
-TEST_CASE("UM RX discards a PDU with SN outside the receiving window",
+TEST_CASE("UM RX discards a PDU with a SN the reassembly window has passed",
          "[um][rx]")
 {
-        /* Spec 5.2.2.2.2: a SN outside the receiving window is discarded. */
+        /* Spec 5.2.2.2.2 second bullet: discard when (RX_Next_Highest -
+         * UM_Window_Size) <= SN < RX_Next_Reassembly. Per 7.1 that
+         * comparison takes RX_Next_Highest - UM_Window_Size as its modulus
+         * base, so with both state variables at 0 and a 12 bit SN the base
+         * is 2048 and the range covers every SN from 2048 to the wrap.
+         * Note this is not a case of falling outside the reassembly
+         * window: 5.2.2.2.1 places that window at [2048, 4096) here, and
+         * the SN below is inside it. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -215,8 +222,12 @@ TEST_CASE("UM RX discards a PDU with SN outside the receiving window",
 
         auto w = proto::snwidth::W12;
 
-        /* RX_Next starts at 0, UM_Window_Size = 2048 for 12-bit SN; a SN
-         * far beyond that is outside the window. */
+        /* 3000 falls in the discard range described above. The entity
+         * itself never gets that far: um_conf sets window_size to 10,
+         * which is not one of the two UM_Window_Size values 7.2 allows
+         * (32 for a 6 bit SN, 2048 for a 12 bit SN), so rlc_rx_submit
+         * drops the PDU against its own narrower window. Either way
+         * nothing may be delivered. */
         proto::um::header hdr{proto::seginfo::FIRST, 3000, std::nullopt};
         auto bytes = hdr.encode(w);
         auto payload = to_bytevec(std::string("unreachable"));
