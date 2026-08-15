@@ -2,9 +2,13 @@
 
 Review of the test suite against 3GPP TS 38.322 v18.1.0 (Release 18).
 
-At the time of writing the suite is 75 test cases / 1298 assertions, all
-passing, with no AddressSanitizer or UndefinedBehaviorSanitizer findings and no
-leaks.
+Revised against the suite at 82 test cases / 1447 assertions. One assertion
+fails by design, documenting the defect in §4.6; everything else passes, with
+no AddressSanitizer or UndefinedBehaviorSanitizer findings and no leaks. Line
+coverage of `src/` and `include/` is 88.6%, branch coverage 74.1%.
+
+Items closed since the first revision are marked **[closed]** with the case
+that closed them; the analysis is kept because it says what the case is for.
 
 Contents:
 
@@ -40,19 +44,28 @@ inferred from test names.
 
 | File | Lines | Cases | Level |
 | --- | --- | --- | --- |
-| `test_am.cc` | 952 | 16 | Integration (public API) |
-| `test_um.cc` | 504 | 8 | Integration (public API) |
-| `test_tm.cc` | 370 | 6 | Integration (public API) |
-| `test_arq.cc` | 1224 | 18 | Unit (`arq.c` statics) |
-| `test_rx.cc` | 499 | 6 | Unit (`rx.c` statics) |
+| `test_am.cc` | 1097 | 20 | Integration (public API) |
+| `test_um.cc` | 566 | 10 | Integration (public API) |
+| `test_tm.cc` | 320 | 6 | Integration (public API) |
+| `test_arq.cc` | 1368 | 19 | Unit (`arq.c` statics) |
+| `test_rx.cc` | 442 | 6 | Unit (`rx.c` statics) |
 | `test_tx.cc` | 220 | 2 | Unit (`tx.c` statics) |
-| `test_encode.cc` | 282 | 6 | Unit (wire format) |
-| `test_seg_list.cc`, `test_seg_buf.cc`, `test_list.cc` | 785 | 13 | Unit (containers) |
+| `test_encode.cc` | 280 | 6 | Unit (wire format) |
+| `test_seg_list.cc`, `test_seg_buf.cc`, `test_list.cc` | 782 | 13 | Unit (containers) |
+| `util/` | 927 | - | Shared helpers |
 
-The three mode files share a common shape: a `fixture::rlc_ctx` wrapper, a
-caller-owned `std::vector<captured_event>`, and for the loopback cases a
-`peer_link` / `pump()` pair. That consistency is a strength - a reader who
-knows one file can read the others.
+The three mode files share a common shape: a `fixture::rlc_ctx` wrapper, an
+`event::event_handler`, and for the loopback cases a `peer_link` / `pump()`
+pair. That consistency is a strength - a reader who knows one file can read
+the others.
+
+The helpers were per-file copies at the first revision and are now shared:
+`util/event.hh` (event recording, `pop(type)` consuming in order),
+`util/fake_sdu.hh` (an SDU owning its own reference so it survives the code
+under test releasing one), `util/bytevec.hh`, and `buf::pbuf_ptr::from_weak`
+for reading a borrowed buffer. `catch_discover_tests` registers one ctest
+entry per case, and `-DRLC_COVERAGE=ON` instruments the build for gcovr;
+`README.md` documents both.
 
 ---
 
@@ -61,9 +74,12 @@ knows one file can read the others.
 Most cases map cleanly onto a clause and assert the right thing. The
 exceptions follow.
 
-### 3.1 The two window-boundary tests do not test the window size they claim
+### 3.1 The window-boundary tests do not test the window size they claim
 
-`test_am.cc:268` and `test_um.cc:218`:
+**[partly closed]** - the UM case was restated and now says what actually
+discards the PDU; the AM one still reads as below.
+
+`test_am.cc` and `test_um.cc`:
 
 ```c
 /* RX_Next starts at 0, AM_Window_Size = 131072 for 18-bit SN; a SN
@@ -86,6 +102,17 @@ rather than flagging it.
 
 The boundary that matters is untested either way: no case submits a SN
 *just* inside and *just* outside the edge.
+
+The UM case was also wrong about its own reasoning, in a way worth recording.
+§7.1 makes the receiving UM entity compare SNs against a modulus base of
+`RX_Next_Highest - UM_Window_Size`, so at rest its reassembly window is
+`[2048, 4096)` and SN 3000 is *inside* it - discarded by §5.2.2.2.2's second
+bullet (an SN the window has already passed), not for being outside anything.
+Read modularly, `rlc_window_has`'s accept-set and the specification's
+not-discarded set coincide whenever `window_size` holds a legal
+`UM_Window_Size`, so there is no deviation on that path - only the
+configurable-window one above. The case is now titled and commented
+accordingly.
 
 ### 3.2 `adjust_poll_sn` - "never decreases an already higher poll_sn"
 
@@ -122,7 +149,9 @@ guard but should not be read as specification coverage.
 `RX_Next_Reassembly` and `RX_Timer_Trigger`. The implementation reuses one
 `rlc_window` plus `next_highest` / `next_status_trigger` for both AM and UM,
 and the tests follow it. This is consistent within the codebase but means no
-test would notice if the UM-specific window rules diverged from AM's.
+test would notice if the UM-specific window rules diverged from AM's. The
+`alarm_reassembly` case now runs under both types for that reason, even though
+nothing on that path reads `conf->type` today.
 
 ### 3.6 Everything else checked out
 
@@ -159,17 +188,40 @@ comparison and `tx_ack`'s `sdu->sn >= sn` are affected.
 
 ### 4.2 Window stalling
 
+**[closed]** - "AM TX refuses an SDU that would fall outside the window" and
+"AM TX accepts again once an acknowledgement moves the window".
+
 §5.2.3.1 forbids submitting an AMD PDU whose SN falls outside the transmitting
 window, and §5.3.3.2 and §5.3.3.4 both make *"no new RLC SDU can be
-transmitted (e.g. due to window stalling)"* a trigger. With `window_size = 10`
-this is reachable by queuing 11 SDUs. No test does.
+transmitted (e.g. due to window stalling)"* a trigger.
+
+The bound is covered: filling the window makes `rlc_tx` return `-ENOSPC`, and
+an acknowledgement moving TX_Next_Ack admits the next SDU. The poll trigger is
+a different matter. This implementation applies the bound at **ingress** -
+`rlc_tx` refuses the SDU - where §5.2.3.1 phrases it as a bound on submitting
+a PDU to the lower layer. The consequence is that the transmission buffer can
+never hold an SDU that is not submittable, so "the buffer is non-empty but
+nothing new can be sent" does not arise and `tx_pollable` has no stalling
+condition. That trigger is therefore unreachable rather than untested, and no
+test asserts it. Accepted as the intended API behaviour for now; a future
+`rlc_tx` taking a timeout would keep the same shape.
 
 ### 4.3 ACK_SN construction
 
+**[closed]** - the `tx_status` case, four sections.
+
 §5.3.4's closing bullet - *"set the ACK_SN to the SN of the next not received
 RLC SDU which is not indicated as missing in the resulting STATUS PDU"* - runs
-through `tx_status`, which has no test at any level. The receive-side
-counterpart (`tx_ack`) is covered. This is the largest hole in ARQ coverage.
+through `tx_status`. Covered for an empty receive queue, a fully received
+prefix, an SDU missing entirely (ACK_SN skips past the NACKed SN rather than
+stopping at it) and one received in part.
+
+Writing it found a real defect, since fixed in `src/`: `encode_last` set E1 on
+every NACK set and cleared it only when the buffer could not hold another, so
+a list that ended because nothing more was missing still claimed a successor,
+contrary to Table 6.2.3.11-1. Nothing had noticed because the receive side
+ignored `has_more` and decoded until the buffer ran out. Both sides now honour
+E1, and the case asserts the header's E1 and the last set's independently.
 
 ### 4.4 Transmission-priority rules
 
@@ -189,14 +241,23 @@ is tested.
 
 ### 4.6 UM specifics
 
-- **RX of a complete SDU with no SN.** §5.2.2.2.2's first branch - *"if the
-  UMD PDU header does not contain an SN: remove the RLC header and deliver the
-  RLC SDU to upper layer"* - is the SI=ALL fast path. The TX side is covered
-  ("UM TX omits the SN when a segment fills the entire SDU"); the RX side is
-  not.
-- **TX_Next increment across SDUs.** §5.2.2.1.1 increments TX_Next only when a
-  segment maps to the last byte of an SDU. Only a single segmented SDU is ever
-  sent, so no test observes the SN advancing from one SDU to the next.
+- **RX of a complete SDU with no SN.** **[closed, and failing - an open
+  defect in `src/`]** §5.2.2.2.2's first branch - *"if the UMD PDU header does
+  not contain an SN: remove the RLC header and deliver the RLC SDU to upper
+  layer"* - is the SI=ALL fast path, which the TX side happily produces.
+  `rlc_rx_submit` has no such branch: it takes the SN path and reads
+  `pdu.sn`, which `rlc_pdu_decode` leaves untouched when the header carries no
+  SN field (only `pdu->flags` is zeroed, and `struct rlc_pdu pdu;` in
+  `rlc_rx_submit` is uninitialised). The indeterminate SN then usually falls
+  outside the receive window and the PDU is dropped - confirmed by
+  `next_highest` never advancing. So a single-PDU UM SDU is silently
+  discarded, and the read is undefined behaviour besides. "UM RX delivers a
+  complete SDU that carries no SN" documents it with a `CHECK`, after reading
+  its results out so the failure cannot skip teardown.
+- **TX_Next increment across SDUs.** **[closed]** - "UM TX advances TX_Next
+  from one SDU to the next": every segment of the first SDU carries SN 0,
+  every segment of the second SN 1, so §5.2.2.1.1's "increment once a segment
+  maps to the last byte" holds across SDUs.
 - **Reassembly-window edges** per §5.2.2.2.3 (`RX_Next_Reassembly` updates,
   discard of PDUs outside the window) are untested at integration level.
 
@@ -217,11 +278,10 @@ explicit instruction - noted here for completeness.)
 
 ### 4.9 `process_nack_range` POLL_SN handling
 
-§5.3.3.3 is now implemented on all three NACK dispatch paths, and
-`process_nack` and `process_nack_offset` each have a "NACK matching POLL_SN
-stops t-PollRetransmit" section. `process_nack_range` has the implementation
-(`rlc_window_has(&nack_win, ctx->arq.poll_sn)`) but no matching test - an
-asymmetry that is easy to close.
+**[closed]** - two sections, since the check is a window test rather than an
+equality: a range spanning POLL_SN stops t-PollRetransmit, and one clear of it
+leaves the timer running. Without the negative section the assertion would
+pass against an implementation that stopped the timer unconditionally.
 
 ### 4.10 Not implemented, so untested
 
@@ -257,12 +317,14 @@ which is the right trade for a regression suite.
 
 **Where it departs from a real link.** In rough order of how much they matter:
 
-1. **No reordering.** Delivery is strictly in submission order. A real link -
-   especially one under HARQ - reorders. AM's out-of-order reassembly is
-   tested, but only by hand-feeding `rlc_rx_submit` directly
-   (`test_am.cc:203`); the loopback never produces it. Since reordering is
-   precisely what drives RX_Next_Highest / t-Reassembly / STATUS logic, this
-   is the most significant omission.
+1. **No reordering.** **[closed]** `peer_link::hold` holds one PDU back and
+   releases it after the next, swapping the two on the wire, and the link
+   records each data PDU's SN and offset as the peer saw them so a case can
+   assert the order really changed. Two AM cases use it: segments of one SDU
+   arriving out of order, and an SDU overtaking its predecessor. Both fail if
+   the hold is disabled, so they test the reordering rather than passing on
+   the in-order path. UM and TM keep their own copies of the link and do not
+   have it - UM is where it would exercise the t-Reassembly *drop* path.
 2. **Zero latency, and delivery is synchronous and re-entrant.**
    `rlc_rx_submit` on the peer runs nested inside the sender's
    `rlc_tx_avail`, so a STATUS report can be produced before the sender's
@@ -276,18 +338,27 @@ which is the right trade for a regression suite.
 4. **No corruption.** Nothing produces a malformed or truncated PDU on the
    wire. §5.6.1's reserved/invalid handling is covered only by a hand-built
    reserved-CPT PDU.
-5. **Fixed, symmetric grants.** `pump()` gives both peers exactly `mtu` bytes
-   every iteration, strictly alternating. Real MAC grants vary in size and
-   arrive asymmetrically. Segmentation boundaries are therefore always the
-   same across a run.
+5. **Fixed grants, though no longer a fixed order.** `pump()` gives both peers
+   exactly `mtu` bytes every iteration. Real MAC grants vary in size, so
+   segmentation boundaries are always the same across a run. Which peer is
+   served first is now a parameter - it decides whether a pending STATUS goes
+   out ahead of the next data PDU or behind it - and one case generates both.
 6. **No stochastic or bursty loss.** Every predicate is positional and
    deterministic. There is no seeded-random or burst model, so nothing
    resembles a soak or fuzz test.
 
 None of these are defects in the existing cases - they bound what the suite
-can find. Reordering (1) and varying grant size (5) are the two that would add
-the most coverage for the least machinery, since both can stay fully
-deterministic.
+can find. With reordering closed, varying the grant size (5) is the remaining
+one that would add coverage for little machinery and stay deterministic.
+
+**A lifetime constraint the harness has to respect.** A submitted PDU is a
+*view* over the SDU's transmit buffer, not a copy. `rlc_sched_yield` at the
+end of `rlc_tx_avail` releases the SDU once its last segment has gone out, so
+a test that queues TX PDUs and reads them after the call can be reading freed
+memory - ASan caught exactly that while writing §4.6's TX case, which now
+decodes each header inside the submit callback. The existing
+`queue_submitter`-based cases do the same thing and happen to survive it;
+that is dormant, not safe.
 
 ---
 
@@ -343,42 +414,68 @@ deliberate about rather than accidental.
 
 ### 6.5 Not redundant despite appearances
 
-`process_nack` and `process_nack_offset` both have a "NACK matching POLL_SN
-stops t-PollRetransmit" section. These look like copies but cover distinct
-dispatch paths, and §5.3.3.3 has to hold on each. Keep both - and see §4.9
-for the missing third.
+`process_nack`, `process_nack_offset` and now `process_nack_range` each have a
+"NACK matching POLL_SN stops t-PollRetransmit" section. These look like copies
+but cover distinct dispatch paths, and §5.3.3.3 has to hold on each. Keep all
+three.
+
+### 6.6 Removed: running every loopback case in both directions
+
+Each loopback case ran twice under `GENERATE(true, false)`, once with peer A
+sending and once with peer B. The peers are configured identically and
+`peer_link` is direction-agnostic, so the parameter only decided which fixture
+was *called* the sender: pinning it left per-file coverage byte for byte
+identical, lines and branches alike. Removed, along with the aliases it forced
+(`sender`, `receiver_events`, `data_link` and the rest, all constant
+references once the direction was fixed).
+
+The rule that came out of it: a generator earns its runtime when the axis
+could diverge later, even with no coverage gain today - `alarm_reassembly`'s
+AM/UM split and the pump order both qualify - and not when the two runs are
+symmetric by construction and can never diverge.
 
 ---
 
 ## 7. Prioritised recommendations
 
+Recommendations 3-7 of the first revision are closed; §4 records what closed
+each. What remains, re-prioritised:
+
 **High**
 
-1. Decide whether window size is configurable or derived from SN width per
-   §7.2, then make the two window-boundary tests exercise the real edge
-   (SN at the boundary and one past it) instead of a value far outside a
-   window of 10.
-2. Add SN wraparound coverage, and modulus-base comparisons to match §7.1.
-   This needs an implementation change first; it is the largest correctness
-   gap in the library.
-3. Test ACK_SN construction (`tx_status`, §5.3.4).
+1. **Fix the UM no-SN receive path** (§4.6). A single-PDU UM SDU is dropped,
+   and the SN it is dropped on is read uninitialised. This is the only open
+   defect the suite is currently failing on, and it is in `src/`, not the
+   tests.
+2. **Decide whether window size is configurable or derived from SN width** per
+   §7.2, then make the AM window-boundary test exercise the real edge - a SN
+   at the boundary and one past it - instead of a value far outside a window
+   of 10.
+3. **Add SN wraparound coverage, and modulus-base comparisons to match §7.1.**
+   This needs an implementation change first; it remains the largest
+   correctness gap in the library. The UM analysis in §3.1 is the worked
+   example of why plain-integer comparisons mislead.
 
 **Medium**
 
-4. Add reordering to the loopback link - a predicate that holds one PDU back
-   and releases it after the next. Deterministic, and it would exercise the
-   RX_Next_Highest / t-Reassembly / STATUS paths the way a real link does.
-5. Cover window stalling (§5.2.3.1, §5.3.3.2, §5.3.3.4) by queuing more SDUs
-   than the window admits.
-6. Add the `process_nack_range` POLL_SN section (§4.9) for symmetry.
-7. Cover UM's no-SN receive fast path (§5.2.2.2.2) and TX_Next incrementing
-   across successive SDUs.
+4. Cover the UM reassembly-window edges at integration level (§4.6, third
+   bullet): `RX_Next_Reassembly` updates and discard of PDUs the window has
+   passed.
+5. Cover re-segmentation on retransmission (§4.7) - a NACKed SDU retransmitted
+   into a grant smaller than the original.
+6. Assert the §5.2.3.1 priority rules (§4.4) so they cannot regress silently.
+7. Cover delayed STATUS triggering (§4.5), the branch of §5.3.4 that holds the
+   report back rather than sending it at once.
 
 **Low**
 
 8. Vary grant size across `pump()` iterations so segmentation boundaries are
-   not fixed.
-9. Collapse `should_start_reassembly` / `should_restart_reassembly` into one
-   parameterised case.
-10. Drop `tx_win_shift`; fold `last_segment` into the `test_list.cc` coverage.
-11. Assert the §5.2.3.1 priority rules so they cannot regress silently.
+   not fixed (§5, item 5).
+9. Give UM and TM the reordering the AM link now has, or lift `peer_link` into
+   `util/` so all three share one (§5, item 1).
+10. Convert the remaining `queue_submitter` cases to read PDUs inside the
+    submit callback, before the view-lifetime hazard in §5 stops being dormant.
+11. Collapse `should_start_reassembly` / `should_restart_reassembly` into one
+    parameterised case (§6.1).
+12. Drop `tx_win_shift`; fold `last_segment` into the `test_list.cc` coverage
+    (§6.2).
