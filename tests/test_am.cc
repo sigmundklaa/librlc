@@ -40,12 +40,8 @@ namespace
         return fx.attach_listener(events.listener());
 }
 
-/* Spec 6.2.3.6: D/C is the MSB of a PDU's first octet - 1 for an AMD (data)
- * PDU, 0 for a STATUS (control) PDU. proto::am::header::decode() asserts
- * this bit is set (it only models AMD headers), so it can't be used for
- * the classification itself - just this one raw peek, which reads
- * without touching buf's refcount so the caller keeps full ownership
- * either way. */
+/* Spec 6.2.3.6: D/C is the MSB of the first octet, 1 for data. Read raw
+ * because proto::am::header::decode() asserts the bit is set. */
 bool pdu_is_data(::gabs_pbuf buf)
 {
         auto it = ::gabs_pbuf_ci_init(&buf);
@@ -55,8 +51,8 @@ bool pdu_is_data(::gabs_pbuf buf)
         return (byte0 & 0x80) != 0;
 }
 
-/* Only meaningful when pdu_is_data(buf) is true. Every context in this
- * file uses the default RLC_SN_18BIT config. */
+/* Only meaningful when pdu_is_data(buf). Every context here is
+ * RLC_SN_18BIT. */
 std::uint32_t pdu_sn(::gabs_pbuf buf)
 {
         auto bytes = buf::pbuf_ptr::from_weak(buf).vec();
@@ -65,13 +61,8 @@ std::uint32_t pdu_sn(::gabs_pbuf buf)
         return proto::am::header::decode(it, proto::snwidth::W18).sn;
 }
 
-/* Peer-to-peer wiring for the loopback tests: submitting a PDU on one side
- * delivers it directly into the other side's rlc_rx_submit, unless `drop`
- * says to simulate the packet being lost in transit. rlc_tx_avail only
- * sends what fits in one opportunity - a multi-segment SDU needs several
- * calls - so pump() grants opportunities to both sides repeatedly (like a
- * MAC polling on its own schedule) until neither has anything left to
- * send, rather than relying solely on tx_request. */
+/* Loopback wiring: a PDU submitted on one side goes straight into the
+ * other's rlc_rx_submit, unless `drop` says it was lost. */
 struct peer_link {
         ::rlc_context *self = nullptr;
         ::rlc_context *other = nullptr;
@@ -80,10 +71,8 @@ struct peer_link {
         };
 };
 
-/* Drops the first `count` data (or, if !want_data, control) PDUs
- * submitted on a link and forwards everything else - simulating `count`
- * lost packets (not necessarily the same one retransmitted, if several
- * PDUs of the requested kind are already in flight before any retry). */
+/* Drops the first `count` data (or control) PDUs. These need not be the
+ * same PDU retransmitted, if several are in flight. */
 std::function<bool(::gabs_pbuf)> drop_up_to(bool want_data, int count)
 {
         return [want_data, count](::gabs_pbuf buf) mutable {
@@ -101,8 +90,8 @@ std::function<bool(::gabs_pbuf)> drop_first(bool want_data)
         return drop_up_to(want_data, 1);
 }
 
-/* Drops every data (or control) PDU submitted on a link, unconditionally -
- * simulating a direction that never gets through at all. */
+/* Drops every data (or control) PDU, for a direction that never gets
+ * through. */
 std::function<bool(::gabs_pbuf)> drop_always(bool want_data)
 {
         return [want_data](::gabs_pbuf buf) {
@@ -110,10 +99,8 @@ std::function<bool(::gabs_pbuf)> drop_always(bool want_data)
         };
 }
 
-/* Drops the first AMD PDU submitted on a link with the given SN, and
- * forwards everything else - simulating one specific SDU, out of several
- * independently queued ones, being lost entirely (as opposed to just one
- * segment of a single larger SDU). */
+/* Drops the first AMD PDU with the given SN, losing one whole SDU out of
+ * several queued. */
 std::function<bool(::gabs_pbuf)> drop_sn(std::uint32_t sn)
 {
         return [sn, dropped = false](::gabs_pbuf buf) mutable {
@@ -221,8 +208,7 @@ TEST_CASE("AM RX discards an AMD PDU with SN outside the receiving window",
 
         auto w = proto::snwidth::W18;
 
-        /* RX_Next starts at 0, AM_Window_Size = 131072 for 18-bit SN; a SN
-         * far beyond that is outside the window. */
+        /* RX_Next is 0 and AM_Window_Size is 131072 for an 18 bit SN. */
         proto::am::header hdr{false, proto::seginfo::ALL, 200000,
                               std::nullopt};
         auto bytes = hdr.encode(w);
@@ -255,9 +241,8 @@ TEST_CASE("AM RX triggers a STATUS report when t-Reassembly expires",
 
         auto w = proto::snwidth::W18;
 
-        /* Deliver the first and last segments of SN=0 with a gap in
-         * between, so the SDU is detectably incomplete and t-Reassembly
-         * starts. */
+        /* A gap between the first and last segment leaves SN=0 detectably
+         * incomplete, which starts t-Reassembly. */
         proto::am::header first{false, proto::seginfo::FIRST, 0,
                                 std::nullopt};
         auto first_bytes = first.encode(w);
@@ -577,14 +562,10 @@ TEST_CASE("AM peers exchange a segmented SDU end-to-end", "[am][loopback]")
 TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
          "[am][loopback]")
 {
-        /* Spec 5.3.3.2: an AMD PDU that empties the transmission buffer is
-         * always polled. Spec 5.3.4: the receiving side triggers a STATUS
-         * report for a polled PDU. Spec 5.3.2: the resulting NACK causes
-         * the sender to retransmit exactly the missing byte range. A
-         * single pump() drains the whole cascade - send, drop, poll,
-         * STATUS, retransmit, deliver - with no manual timer intervention
-         * needed. Runs with the loss on each link in turn, so both the
-         * A->B and B->A data directions are covered. */
+        /* Spec 5.3.3.2, 5.3.4 and 5.3.2 together: a PDU that empties the
+         * buffer is polled, the poll triggers a STATUS report, and its
+         * NACK retransmits the missing range. One pump() drains the whole
+         * cascade. Runs the loss on each link in turn. */
         bool a_sends = GENERATE(true, false);
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
@@ -627,12 +608,9 @@ TEST_CASE("AM peers recover a lost data segment via a poll-triggered STATUS",
 TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
          "[am][loopback]")
 {
-        /* Spec 5.3.3.4: if the acknowledgement never arrives, expiry of
-         * t-PollRetransmit makes the sender retransmit with a fresh poll,
-         * giving the receiver another chance to report status - this time
-         * without the control PDU being lost. Runs with the loss on each
-         * link in turn, so both the A->B and B->A control directions are
-         * covered. */
+        /* Spec 5.3.3.4: with the ack lost, t-PollRetransmit expiry
+         * retransmits with a fresh poll, so the receiver reports status
+         * again. Runs the loss on each link in turn. */
         bool a_sends = GENERATE(true, false);
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
@@ -645,8 +623,7 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
         peer_link link_a{peer_a.get(), peer_b.get()};
         peer_link link_b{peer_b.get(), peer_a.get()};
 
-        /* The STATUS report flows back from the receiver to the sender,
-         * i.e. on the *other* link from the data. */
+        /* STATUS flows back on the other link from the data. */
         (a_sends ? link_b : link_a).drop = drop_first(false);
 
         auto backend_a = make_peer_backend(link_a);
@@ -668,10 +645,8 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
 
         pump(link_a, link_b, 30);
 
-        /* The data got through fine, but its ack was lost in transit. The
-         * receiver's own (dropped) attempt still started its
-         * t-StatusProhibit, which needs to expire too before a retry can
-         * go out. */
+        /* The data arrived but its ack was lost. The dropped attempt still
+         * started t-StatusProhibit, which must expire before a retry. */
         REQUIRE(receiver_events.size() == 1);
         REQUIRE(sender_events.empty());
 
@@ -698,11 +673,9 @@ TEST_CASE("AM TX recovers from a lost STATUS via t-PollRetransmit",
 TEST_CASE("AM peers recover multiple lost segments of the same SDU",
          "[am][loopback]")
 {
-        /* Generalizes the single-lost-segment case: losing more than one
-         * of a multi-segment SDU's PDUs, but staying under
-         * maxRetxThreshold, still recovers via repeated poll-triggered
-         * STATUS/NACK rounds within a single pump(). Runs with the loss
-         * on each link in turn. */
+        /* Losing several PDUs of one SDU, but staying under
+         * maxRetxThreshold, still recovers within a single pump(). Runs
+         * the loss on each link in turn. */
         bool a_sends = GENERATE(true, false);
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
@@ -745,17 +718,11 @@ TEST_CASE("AM peers recover multiple lost segments of the same SDU",
 TEST_CASE("AM TX gives up and fails the SDU after too many losses",
          "[am][loopback]")
 {
-        /* Spec 5.3.2: once RETX_COUNT reaches maxRetxThreshold, the
-         * sender gives up on the RLC SDU and notifies upper layers of the
-         * failure. Modeled here as a direction that never gets through at
-         * all, so every t-PollRetransmit-driven retry attempt is lost too
-         * - each fire() only stages and sends one retry, so it's called
-         * up to maxRetxThreshold times. Runs with the failing direction
-         * on each link in turn.
-         *
-         * rlc_event_tx_fail and rlc_event_tx_done both report
-         * RLC_EVENT_TX_RELEASE, so failure is distinguished from success
-         * here by the receiver never having gotten anything. */
+        /* Spec 5.3.2: reaching maxRetxThreshold gives up on the SDU and
+         * tells upper layers. The direction never gets through, so every
+         * retry is lost too; each fire() sends one retry. Failure and
+         * success both report RLC_EVENT_TX_RELEASE, so they are told apart
+         * by the receiver having gotten nothing. */
         bool a_sends = GENERATE(true, false);
 
         gabs_override::timer_ctx timer_ctx(gabs_override::manual_resolver);
@@ -815,14 +782,10 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
          "dropped middle SDU",
          "[am][loopback]")
 {
-        /* Three independently queued SDUs (not segments of one larger
-         * SDU) with the middle one's sole PDU lost entirely. Spec
+        /* Three separately queued SDUs, the middle one lost. Spec
          * 5.2.3.2.1/5.2.3.2.3: RX_Next only advances past a completed SDU
-         * at the window base, so it stalls at the missing one even
-         * though the last SDU has already fully arrived; deliver_ready
-         * only hands SDUs to the upper layer in contiguous SN order, so
-         * the last SDU is withheld until the middle one is recovered -
-         * then both are delivered together, in order. Runs with the loss
+         * at the window base, so delivery stalls at the gap and the last
+         * SDU is withheld until the middle one is recovered. Runs the loss
          * on each link in turn. */
         bool a_sends = GENERATE(true, false);
 
@@ -872,10 +835,8 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
 
         REQUIRE(::rlc_window_base(&receiver.get()->rx.win) == 3);
 
-        /* Only SDU 0 has been acked so far: the recovery of SDU 1 (and
-         * the piggybacked ack for SDU 2) triggered another STATUS report,
-         * but the receiver's own first STATUS already started its
-         * t-StatusProhibit, so that second report is still pending. */
+        /* Only SDU 0 is acked so far: the second STATUS report is held
+         * back by t-StatusProhibit from the first. */
         REQUIRE(sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE).sn == 0);
         REQUIRE(sender_events.empty());
 

@@ -412,11 +412,9 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
         SECTION("nothing left pending: delivers, drops, no restart")
         {
-                /* Window advances all the way to RX_Next_Highest since
-                 * nothing remains pending at or after the trigger; the
-                 * completed SDU is delivered and the incomplete one below
-                 * the new base is dropped, and the timer is not
-                 * restarted. */
+                /* Nothing pending at or after the trigger, so the window
+                 * advances to RX_Next_Highest, the completed SDU is
+                 * delivered, the incomplete one dropped, no restart. */
                 ctx.rx.next_status_trigger = 2;
                 ctx.rx.next_highest = 2;
 
@@ -441,10 +439,9 @@ TEST_CASE("alarm_reassembly", "[rx][static]")
 
         SECTION("gap remains after expiry: delivers below base, restarts")
         {
-                /* Window advances only to the first still-incomplete SDU at
-                 * or after the trigger; SDUs below the new base that are
-                 * DONE are delivered, and the rest stay queued. Since a gap
-                 * remains, the timer is restarted. */
+                /* The window stops at the first incomplete SDU. DONE SDUs
+                 * below the new base are delivered, the rest stay queued,
+                 * and the remaining gap restarts the timer. */
                 ctx.rx.next_status_trigger = 1;
                 ctx.rx.next_highest = 3;
 

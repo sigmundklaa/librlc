@@ -190,11 +190,9 @@ TEST_CASE("adjust_poll_sn", "[arq][static]")
 
         SECTION("never decreases an already higher poll_sn")
         {
-                /* Spec 5.3.3.2 says to *set* POLL_SN to the highest
-                 * submitted SN rather than to take a maximum. The two agree
-                 * while SNs advance monotonically, so this covers defensive
-                 * behaviour outside what the spec describes rather than a
-                 * requirement of it. */
+                /* 5.3.3.2 says to set POLL_SN, not to take a maximum. The
+                 * two agree while SNs advance, so this covers defensive
+                 * behaviour, not a requirement. */
                 auto sdu = make_sdu(&ctx, 1, RLC_READY, true);
                 REQUIRE(::rlc_seg_list_insert_all(&sdu->tx.unsent,
                                                   ::rlc_seg{5, 10},
@@ -458,9 +456,8 @@ TEST_CASE("tx_ack", "[arq][static]")
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
-        /* Spec 5.3.3.3: an acknowledgement covering POLL_SN stops
-         * t-PollRetransmit, so tx_ack reaches the timer even when a case is
-         * only interested in which SDUs get released. */
+        /* Spec 5.3.3.3: an ack covering POLL_SN stops t-PollRetransmit, so
+         * tx_ack needs the timer even where only releases are asserted. */
         REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_timer_install(&ctx.arq.t_poll_retransmit,
                                     alarm_poll_retransmit, &ctx) == 0);
@@ -604,11 +601,9 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
 
         SECTION("marks a not-yet-pending SDU for retransmission")
         {
-                /* Spec 5.3.2 counts a first-time retransmission as
-                 * RETX_COUNT zero; arq.c instead counts from one and raises
-                 * the threshold comparison to match, so the count here is
-                 * retransmissions performed rather than the spec's variable.
-                 * The resulting limit is pinned below. */
+                /* Spec 5.3.2 counts a first retransmission as zero; arq.c
+                 * counts from one and raises the threshold to match, so
+                 * this counts retransmissions, not the spec's variable. */
                 auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
                 ::rlc_sdu_queue_insert(&ctx.tx.sdus, sdu);
 
@@ -655,11 +650,10 @@ TEST_CASE("retransmit_sdu", "[arq][static]")
 
         SECTION("survives maxRetxThreshold retransmissions, then fails")
         {
-                /* Spec 5.3.2: reaching maxRetxThreshold is what indicates
-                 * the failure to upper layers, so exactly that many
-                 * retransmissions must be served first. Stated in terms of
-                 * calls rather than the counter, so it holds regardless of
-                 * which value arq.c counts from. */
+                /* Spec 5.3.2: reaching maxRetxThreshold reports the
+                 * failure, so exactly that many retransmissions come
+                 * first. Counted in calls so it holds whichever value
+                 * arq.c counts from. */
                 ctx.tx.next_sn = 1;
 
                 auto sdu = make_sdu(&ctx, 0, RLC_WAIT, true);
@@ -736,10 +730,8 @@ TEST_CASE("process_nack", "[arq][static]")
 
         SECTION("a NACK matching POLL_SN stops t-PollRetransmit")
         {
-                /* Spec 5.3.3.3: the acknowledgement for POLL_SN that stops
-                 * t-PollRetransmit may be negative, and a NACK_SN carrying
-                 * neither an offset nor a range is routed here by
-                 * rlc_arq_rx_status. */
+                /* Spec 5.3.3.3: the ack for POLL_SN may be negative.
+                 * rlc_arq_rx_status routes a bare NACK_SN here. */
                 gabs_override::timer_ctx timer_ctx(
                         gabs_override::default_resolver);
                 REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
@@ -759,9 +751,8 @@ TEST_CASE("process_nack", "[arq][static]")
 
                 process_nack(&ctx, &cur);
 
-                /* Read the timer state out and tear down before asserting,
-                 * so that a failing expectation - which unwinds out of the
-                 * SECTION - cannot leak the SDU or the timer. */
+                /* Tear down before asserting: a failing REQUIRE unwinds
+                 * out of the SECTION and would leak. */
                 auto still_armed =
                         gabs_override::armed(ctx.arq.t_poll_retransmit.gtimer);
 
@@ -836,11 +827,9 @@ TEST_CASE("process_nack_offset", "[arq][static]")
 
         SECTION("a NACK matching POLL_SN stops t-PollRetransmit")
         {
-                /* Spec 5.3.3.3: a STATUS report carrying a positive or
-                 * negative acknowledgement for the SDU with SN equal to
-                 * POLL_SN stops and resets t-PollRetransmit. rlc_arq_rx_status
-                 * only routes a status entry here when it carries an offset,
-                 * so that is the shape used. */
+                /* Spec 5.3.3.3: an ack for SN == POLL_SN, positive or
+                 * negative, stops and resets t-PollRetransmit.
+                 * rlc_arq_rx_status only routes here with an offset. */
                 gabs_override::timer_ctx timer_ctx(
                         gabs_override::default_resolver);
                 REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
@@ -894,9 +883,8 @@ TEST_CASE("process_nack_range", "[arq][static]")
         ctx.listener = fixture::rlc_ctx::listener_trampoline;
         REQUIRE(::rlc_sched_init(&ctx.sched) == 0);
 
-        /* Spec 5.3.3.3: a range covering POLL_SN stops t-PollRetransmit, so
-         * the timer is reached whenever the range starts at the default
-         * POLL_SN of zero. */
+        /* Spec 5.3.3.3: a range covering POLL_SN stops t-PollRetransmit,
+         * which any range starting at the default POLL_SN of zero does. */
         REQUIRE(::gabs_timer_ctx_init(&ctx.timer_ctx) == 0);
         REQUIRE(::rlc_timer_install(&ctx.arq.t_poll_retransmit,
                                     alarm_poll_retransmit, &ctx) == 0);

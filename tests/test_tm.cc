@@ -27,9 +27,8 @@ using namespace util;
 namespace
 {
 
-/* rlc_init always installs the AM default_config; every context in this
- * file is switched to RLC_TM right after init. The SN width and the timer
- * durations are never consulted in transparent mode. */
+/* rlc_init installs the AM default_config, so every context here is
+ * switched to RLC_TM after init. */
 const ::rlc_config tm_conf = {
         .type = RLC_TM,
         .window_size = 10,
@@ -55,9 +54,8 @@ const ::rlc_config tm_conf = {
         return fx.attach_listener(events.listener());
 }
 
-/* Peer-to-peer wiring, as in test_am.cc/test_um.cc. A TMD PDU carries no
- * header at all, so there is nothing to classify a dropped packet by -
- * loss here is purely positional. */
+/* Loopback wiring, as in test_am.cc. A TMD PDU has no header to classify
+ * a dropped packet by, so loss is positional. */
 struct peer_link {
         ::rlc_context *self = nullptr;
         ::rlc_context *other = nullptr;
@@ -175,9 +173,8 @@ TEST_CASE("TM TX submits an SDU without adding a header", "[tm][tx]")
 TEST_CASE("TM TX does not segment an SDU that exceeds the opportunity",
          "[tm][tx]")
 {
-        /* Spec 4.2.1.1.2: a transmitting TM RLC entity shall not segment
-         * the RLC SDUs, so an opportunity too small to carry the whole SDU
-         * yields nothing at all, and the SDU waits for a larger one. */
+        /* Spec 4.2.1.1.2: TM must not segment, so an opportunity too
+         * small for the whole SDU yields nothing. */
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
 
         std::queue<buf::pbuf_ptr> tx_queue;
@@ -280,11 +277,9 @@ TEST_CASE("TM peers deliver several SDUs in order", "[tm][loopback]")
 
 TEST_CASE("TM peers permanently lose a dropped PDU", "[tm][loopback]")
 {
-        /* Spec 5.3.1: ARQ procedures are only performed by an AM RLC
-         * entity, and transparent mode keeps no reassembly state either, so
-         * a lost TMD PDU is simply gone - the sender still counts it as
-         * released and nothing is retransmitted. Runs with the loss on each
-         * link in turn. */
+        /* Spec 5.3.1: ARQ is AM only, and TM keeps no reassembly state,
+         * so a lost PDU is simply gone and the sender still counts it
+         * released. Runs the loss on each link in turn. */
         bool a_sends = GENERATE(true, false);
 
         gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);

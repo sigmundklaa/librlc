@@ -168,11 +168,9 @@ TEST_CASE("am status pdu ack header encode/decode", "[encode][am][status]")
         pdu.sn = sn;
         pdu.flags.ext = ext;
 
-        /* rlc_pdu_encode only ever encodes the ACK_SN/E1 part of an AM
-         * status PDU; the NACK list is handled separately by
-         * rlc_status_encode. proto::am::status with no parts reproduces
-         * exactly that wire layout, with `has_parts` occupying the same bit
-         * position as the E1 (ext) flag. */
+        /* rlc_pdu_encode only writes the ACK_SN/E1 part; the NACK list is
+         * rlc_status_encode's job. A proto::am::status with no parts is
+         * that same layout, `has_parts` sitting where E1 does. */
         proto::am::status expect{sn, {}};
         auto expect_bytes = expect.encode(w);
         if (ext) {

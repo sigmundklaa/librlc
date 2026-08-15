@@ -22,15 +22,10 @@ struct timer {
 
         fire_fn cb;
 
-        /*
-         * Test-only extension, deliberately *not* what gabs_timer_active()
-         * reports: stopping a timer is asynchronous in the gabs API, so
-         * active() keeps its joinable()-based meaning. This flag instead
-         * records whether the timer has been *asked* to be running - set by
-         * start()/restart(), cleared by stop() and by a resolver's callback
-         * once it fires (one-shot) - which is what a test needs to assert
-         * on synchronously.
-         */
+        /* Whether the timer has been asked to run, set by start() and
+         * cleared by stop() or by firing. Not what gabs_timer_active()
+         * reports, since stopping is asynchronous and a test needs to
+         * assert synchronously. */
         std::atomic<bool> armed{false};
 
         /* Used by manual_resolver/fire() below to let a test drive this
@@ -40,12 +35,8 @@ struct timer {
         bool fire_requested = false;
         bool fire_complete = false;
 
-        /*
-         * Declared last so it is destroyed *first* (member destruction runs
-         * in reverse declaration order): runner's destructor stops and
-         * joins the thread before fire_mutex/fire_cv/active go away, since
-         * a running resolver callback may still be using them.
-         */
+        /* Declared last so it is destroyed first: the destructor joins the
+         * thread before the members a running callback still uses. */
         std::jthread runner;
 };
 
@@ -132,12 +123,9 @@ class timer_ctx
         }
 
         /**
-         * @brief Test-only: whether the timer is currently *meant* to be
-         * running, updated synchronously by start()/stop()/fire().
-         *
-         * gabs_timer_active() cannot answer this - stopping is
-         * asynchronous, so a stopped timer still reports active until its
-         * thread is joined.
+         * @brief Whether the timer is meant to be running, updated
+         * synchronously by start()/stop()/fire(). gabs_timer_active()
+         * cannot answer this, as stopping is asynchronous.
          */
         bool armed(void *handle)
         {
@@ -147,11 +135,9 @@ class timer_ctx
         }
 
         /**
-         * @brief Drive `handle`'s callback to run now, blocking until it has
-         * finished (or a concurrent stop() wins the race).
-         *
-         * Only meaningful for a timer started with a resolver whose
-         * callback waits on `fire_requested` (see manual_resolver).
+         * @brief Run `handle`'s callback now, blocking until it finishes or
+         * a concurrent stop() wins. Needs a resolver whose callback waits
+         * on `fire_requested` (see manual_resolver).
          */
         void fire(void *handle)
         {
@@ -215,8 +201,7 @@ inline timer_ctx::callback_type default_resolver(void *)
 
 /**
  * @brief Resolver whose timers never fire on their own. A test drives them
- * explicitly via timer_ctx::fire()/fire(gabs_timer), synchronously and
- * without depending on real elapsed time.
+ * with timer_ctx::fire(), without depending on real time.
  */
 inline void manual_timer(std::stop_token stop_token, timer *t,
                          std::chrono::microseconds /*delay*/)

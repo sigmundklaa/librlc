@@ -355,19 +355,16 @@ TEST_CASE("list iterator - skip and repeat", "[list]")
         ::rlc_list_it skipped = ::rlc_list_it_skip(it);
         ::rlc_list_it plain_next = ::rlc_list_it_next(it);
 
-        /* skip() advances .node exactly like next() would, but retains the
-         * *original* iterator's slot pointer instead of the target node's
-         * own `next` field. This is what lets rlc_list_it_repeat() resume
-         * iteration correctly even if the node `it` currently points at is
-         * invalidated (e.g. freed) through some means other than
-         * rlc_list_it_pop() before the next next() call - see
-         * process_nack_range() in arq.c for the real usage pattern. */
+        /* skip() advances .node like next(), but keeps the original slot
+         * pointer rather than the target node's own `next`. That is what
+         * lets repeat() resume after the node it points at is freed by
+         * something other than pop() - see process_nack_range in arq.c. */
         REQUIRE(::rlc_list_it_node(skipped) == ::rlc_list_it_node(plain_next));
         REQUIRE(skipped.slotptr == it.slotptr);
         REQUIRE(plain_next.slotptr != skipped.slotptr);
 
-        /* Simulate node 1 being unlinked through some means other than
-         * rlc_list_it_pop(), using the slot pointer captured by skip(). */
+        /* Unlink node 1 by some means other than pop(), through the slot
+         * pointer skip() captured. */
         *skipped.slotptr = skipped.node;
 
         std::vector<std::uint32_t> after_removal = {0, 2, 3};
