@@ -47,6 +47,19 @@ class pbuf_ptr
                 return *ptr;
         }
 
+        /*
+         * Owning handle over a buffer someone else owns, for reading a
+         * buffer that is only borrowed for the duration of a call. The
+         * constructor adopts the reference it is given, so this takes one
+         * of its own and leaves the lender's untouched.
+         */
+        static pbuf_ptr from_weak(::gabs_pbuf buf)
+        {
+                ::gabs_pbuf_incref(buf);
+
+                return pbuf_ptr(buf);
+        }
+
         operator ::gabs_pbuf() const
         {
                 return weak();

@@ -67,12 +67,10 @@ bool pdu_is_data(::gabs_pbuf buf)
 }
 
 /* Only meaningful when pdu_is_data(buf) is true. Every context in this
- * file uses the default RLC_SN_18BIT config. Increfs buf for the
- * duration, since pbuf_ptr takes ownership and decrefs on scope exit. */
+ * file uses the default RLC_SN_18BIT config. */
 std::uint32_t pdu_sn(::gabs_pbuf buf)
 {
-        ::gabs_pbuf_incref(buf);
-        auto bytes = buf::pbuf_ptr(buf).vec();
+        auto bytes = buf::pbuf_ptr::from_weak(buf).vec();
         auto it = bytes.cbegin();
 
         return proto::am::header::decode(it, proto::snwidth::W18).sn;

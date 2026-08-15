@@ -122,14 +122,7 @@ class event_handler
                  * function directly leave the reassembly buffer empty, so
                  * there is nothing to read and no frag list to walk. */
                 if (payload != nullptr && ::gabs_pbuf_okay(*payload)) {
-                        buf::pbuf_ptr view(*payload);
-
-                        rec.payload = view.vec();
-
-                        /* pbuf_ptr adopts the reference it is handed and
-                         * decrefs it on scope exit; strong() hands one back,
-                         * leaving the event's own reference untouched. */
-                        (void)view.strong();
+                        rec.payload = buf::pbuf_ptr::from_weak(*payload).vec();
                 }
 
                 records.push_back(std::move(rec));
