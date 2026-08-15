@@ -71,14 +71,9 @@ target_link_libraries(tests PRIVATE Catch2::Catch2WithMain rlc gabs)
 list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
 include(Catch)
 
-# One ctest entry per TEST_CASE, so a failure names the case and -R can
-# select a subset.
 catch_discover_tests(tests)
 
 if(RLC_COVERAGE)
-    # PUBLIC so that tests inherits this by linking rlc, which it needs: the
-    # counters for tx.c, rx.c and arq.c live in the test objects, since those
-    # are #included there rather than compiled into the library.
     target_compile_options(rlc PUBLIC --coverage -O0 -g)
     target_link_options(rlc PUBLIC --coverage)
 endif()
