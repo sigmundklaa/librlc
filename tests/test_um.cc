@@ -457,4 +457,110 @@ TEST_CASE("UM peers permanently lose an SDU when a segment is dropped",
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
 }
 
+TEST_CASE("UM RX delivers a complete SDU that carries no SN", "[um][rx]")
+{
+        /* Spec 5.2.2.2.2 first bullet: "if the UMD PDU header does not
+         * contain an SN: remove the RLC header and deliver the RLC SDU to
+         * upper layer". SI=ALL is that PDU, per 6.2.2.3. */
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
+        std::queue<buf::pbuf_ptr> tx_queue;
+        unsigned int tx_cnt = 0;
+        backend::backend back(backend::queue_submitter(tx_queue),
+                              backend::request_counter(tx_cnt));
+
+        fixture::rlc_ctx fx;
+        event::event_handler events;
+        REQUIRE(init_um(fx, back, events) == 0);
+
+        auto w = proto::snwidth::W12;
+        std::string payload = "a whole UM SDU in one PDU";
+
+        proto::um::header hdr{proto::seginfo::ALL, std::nullopt, std::nullopt};
+        auto bytes = hdr.encode(w);
+        auto data = to_bytevec(payload);
+        bytes.insert(bytes.end(), data.begin(), data.end());
+
+        ::rlc_rx_submit(fx.get(), buf::create(bytes).strong());
+
+        /* Read out before tearing down, so a failing expectation cannot
+         * unwind past rlc_deinit. */
+        auto received = events.size();
+        auto reassembling = ::rlc_timer_active(&fx.get()->rx.t_reassembly);
+
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
+
+        /* Fails: there is no branch for a PDU without an SN. rlc_rx_submit
+         * reads pdu.sn, which rlc_pdu_decode leaves untouched when the
+         * header carries none, then drops the PDU for falling outside the
+         * receive window. */
+        CHECK(received == 1);
+
+        if (received == 1) {
+                CHECK(events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+                     to_bytevec(payload));
+        }
+
+        /* Delivered from the header, so there is nothing to reassemble. */
+        CHECK(reassembling == false);
+}
+
+TEST_CASE("UM TX advances TX_Next from one SDU to the next", "[um][tx]")
+{
+        /* Spec 5.2.2.1.1: the SN is TX_Next, and TX_Next only increments
+         * once a segment maps to the last byte of an SDU - so every segment
+         * of one SDU carries the same SN, and the next SDU carries the
+         * next. */
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
+        auto w = proto::snwidth::W12;
+        std::vector<proto::um::header> sent;
+
+        /* Decoded here rather than from a queue: a submitted PDU is a view
+         * over the SDU's buffer, which is released once its last segment
+         * has gone out. */
+        backend::backend back(
+                [&sent, w](::rlc_context *, ::gabs_pbuf buf) -> int {
+                        auto bytes = buf::pbuf_ptr(buf).vec();
+                        auto it = bytes.cbegin();
+
+                        sent.push_back(proto::um::header::decode(it, w));
+                        return 0;
+                },
+                [](::rlc_context *) -> int { return 0; });
+
+        fixture::rlc_ctx fx;
+        event::event_handler events;
+        REQUIRE(init_um(fx, back, events) == 0);
+
+        REQUIRE(::rlc_tx(fx.get(), buf::create(std::string(30, 'a')),
+                         nullptr) == 0);
+        REQUIRE(::rlc_tx(fx.get(), buf::create(std::string(30, 'b')),
+                         nullptr) == 0);
+
+        for (int i = 0; i < 16 && sent.size() < 8; i++) {
+                (void)::rlc_tx_avail(fx.get(), 12);
+        }
+
+        /* Both SDUs are segmented, so every PDU carries an SN. */
+        auto last = std::find_if(sent.begin(), sent.end(), [](const auto &h) {
+                return h.si == proto::seginfo::LAST;
+        });
+
+        REQUIRE(last != sent.end());
+        REQUIRE(last + 1 != sent.end());
+
+        for (auto it = sent.begin(); it <= last; it++) {
+                REQUIRE(it->sn.value() == 0);
+        }
+
+        REQUIRE((last + 1)->si == proto::seginfo::FIRST);
+
+        for (auto it = last + 1; it != sent.end(); it++) {
+                REQUIRE(it->sn.value() == 1);
+        }
+
+        REQUIRE(::rlc_deinit(fx.get()) == 0);
+}
+
 }; // namespace rlc::test
