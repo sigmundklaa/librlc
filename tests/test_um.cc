@@ -385,7 +385,7 @@ TEST_CASE("UM TX omits the SN when a segment fills the entire SDU",
         auto sdu = buf::create(std::string("fits in one PDU"));
         REQUIRE(::rlc_tx(fx.get(), sdu, nullptr) == 0);
 
-        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 4);
+        (void)::rlc_tx_avail(fx.get(), gabs_pbuf_size(sdu) + 1);
         REQUIRE(tx_queue.size() == 1);
 
         auto w = proto::snwidth::W12;
