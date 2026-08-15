@@ -53,12 +53,17 @@ bool pdu_is_data(::gabs_pbuf buf)
 
 /* Only meaningful when pdu_is_data(buf). Every context here is
  * RLC_SN_18BIT. */
-std::uint32_t pdu_sn(::gabs_pbuf buf)
+proto::am::header pdu_header(::gabs_pbuf buf)
 {
         auto bytes = buf::pbuf_ptr::from_weak(buf).vec();
         auto it = bytes.cbegin();
 
-        return proto::am::header::decode(it, proto::snwidth::W18).sn;
+        return proto::am::header::decode(it, proto::snwidth::W18);
+}
+
+std::uint32_t pdu_sn(::gabs_pbuf buf)
+{
+        return pdu_header(buf).sn;
 }
 
 /* Loopback wiring: a PDU submitted on one side goes straight into the
@@ -69,6 +74,22 @@ struct peer_link {
         std::function<bool(::gabs_pbuf)> drop = [](::gabs_pbuf) {
                 return false;
         };
+        /* Reordering: a PDU the predicate holds is delivered after the one
+         * behind it, swapping the two on the wire. */
+        std::function<bool(::gabs_pbuf)> hold = [](::gabs_pbuf) {
+                return false;
+        };
+        std::optional<::gabs_pbuf> held;
+        /* SN and segment offset of each data PDU, in the order the peer
+         * received them. */
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> arrived;
+
+        ~peer_link()
+        {
+                if (held.has_value()) {
+                        ::gabs_pbuf_decref(held.value());
+                }
+        }
 };
 
 /* Drops the first `count` data (or control) PDUs. These need not be the
@@ -99,6 +120,32 @@ std::function<bool(::gabs_pbuf)> drop_always(bool want_data)
         };
 }
 
+/* Holds the first data (or control) PDU back. */
+std::function<bool(::gabs_pbuf)> hold_first(bool want_data)
+{
+        return [want_data, done = false](::gabs_pbuf buf) mutable {
+                if (done || pdu_is_data(buf) != want_data) {
+                        return false;
+                }
+
+                done = true;
+                return true;
+        };
+}
+
+/* Holds back the first AMD PDU with the given SN. */
+std::function<bool(::gabs_pbuf)> hold_sn(std::uint32_t sn)
+{
+        return [sn, done = false](::gabs_pbuf buf) mutable {
+                if (done || !pdu_is_data(buf) || pdu_sn(buf) != sn) {
+                        return false;
+                }
+
+                done = true;
+                return true;
+        };
+}
+
 /* Drops the first AMD PDU with the given SN, losing one whole SDU out of
  * several queued. */
 std::function<bool(::gabs_pbuf)> drop_sn(std::uint32_t sn)
@@ -113,6 +160,17 @@ std::function<bool(::gabs_pbuf)> drop_sn(std::uint32_t sn)
         };
 }
 
+void deliver(peer_link &link, ::gabs_pbuf buf)
+{
+        if (pdu_is_data(buf)) {
+                auto hdr = pdu_header(buf);
+
+                link.arrived.emplace_back(hdr.sn, hdr.so.value_or(0));
+        }
+
+        ::rlc_rx_submit(link.other, buf);
+}
+
 backend::backend make_peer_backend(peer_link &link)
 {
         return backend::backend(
@@ -122,7 +180,20 @@ backend::backend make_peer_backend(peer_link &link)
                                 return 0;
                         }
 
-                        ::rlc_rx_submit(link.other, buf);
+                        if (!link.held.has_value() && link.hold(buf)) {
+                                link.held = buf;
+                                return 0;
+                        }
+
+                        deliver(link, buf);
+
+                        if (link.held.has_value()) {
+                                auto held = link.held.value();
+
+                                link.held.reset();
+                                deliver(link, held);
+                        }
+
                         return 0;
                 },
                 [](::rlc_context *) -> int { return 0; });
@@ -853,6 +924,131 @@ TEST_CASE("AM peers advance the window and deliver in order around a "
         (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
         (void)sender_events.pop(::rlc_event::RLC_EVENT_TX_RELEASE);
         REQUIRE(sender_events.empty());
+
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
+}
+
+TEST_CASE("AM peers reassemble an SDU whose segments arrive out of order",
+         "[am][loopback]")
+{
+        /* Spec 5.2.3.2.2/5.2.3.2.3: byte segments may arrive in any order,
+         * and the SDU is delivered once every byte is there. Swapping two
+         * segments on the wire reaches that through the link rather than by
+         * feeding rlc_rx_submit by hand, so RX_Next_Highest and t-Reassembly
+         * see the gap the way they would on a reordering link. Runs the
+         * reordering on each link in turn. */
+        bool a_sends = GENERATE(true, false);
+
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
+        fixture::rlc_ctx peer_a;
+        event::event_handler events_a;
+        fixture::rlc_ctx peer_b;
+        event::event_handler events_b;
+
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
+
+        unsigned int sent = 0;
+        auto &data_link = a_sends ? link_a : link_b;
+
+        data_link.hold = hold_first(true);
+        data_link.drop = [&sent](::gabs_pbuf buf) {
+                sent += pdu_is_data(buf);
+                return false;
+        };
+
+        auto backend_a = make_peer_backend(link_a);
+        auto backend_b = make_peer_backend(link_b);
+
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
+
+        auto &sender = a_sends ? peer_a : peer_b;
+        auto &receiver = a_sends ? peer_b : peer_a;
+        auto &receiver_events = a_sends ? events_b : events_a;
+
+        /* 6.2.2.4: a 3 octet header on the first segment and 5 on the rest,
+         * so a 20 byte grant carries 17 bytes and then 15. */
+        const unsigned int segments = 4;
+
+        std::string content(50, 'r');
+        auto sdu = buf::create(content);
+        REQUIRE(::rlc_tx(sender.get(), sdu, nullptr) == 0);
+
+        pump(link_a, link_b, 20);
+
+        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+               to_bytevec(content));
+        REQUIRE(receiver_events.empty());
+
+        /* The second segment arrived before the first. */
+        REQUIRE(data_link.arrived[0].second != 0);
+        REQUIRE(data_link.arrived[1].second == 0);
+
+        /* Reordering alone costs no retransmission: every PDU the sender
+         * put on the wire was a segment of the SDU. */
+        REQUIRE(sent == segments);
+
+        REQUIRE(::rlc_window_base(&receiver.get()->rx.win) == 1);
+
+        REQUIRE(::rlc_deinit(peer_a.get()) == 0);
+        REQUIRE(::rlc_deinit(peer_b.get()) == 0);
+}
+
+TEST_CASE("AM peers deliver in order when an SDU overtakes its predecessor",
+         "[am][loopback]")
+{
+        /* Spec 5.2.3.2.3: RX_Next only advances past a completed SDU at the
+         * window base, so an SDU that arrives early is held back until the
+         * one before it lands, and both go up in SN order. Runs the
+         * reordering on each link in turn. */
+        bool a_sends = GENERATE(true, false);
+
+        gabs_override::timer_ctx timer_ctx(gabs_override::default_resolver);
+
+        fixture::rlc_ctx peer_a;
+        event::event_handler events_a;
+        fixture::rlc_ctx peer_b;
+        event::event_handler events_b;
+
+        peer_link link_a{peer_a.get(), peer_b.get()};
+        peer_link link_b{peer_b.get(), peer_a.get()};
+
+        auto &data_link = a_sends ? link_a : link_b;
+
+        data_link.hold = hold_sn(0);
+
+        auto backend_a = make_peer_backend(link_a);
+        auto backend_b = make_peer_backend(link_b);
+
+        REQUIRE(init_am(peer_a, backend_a, events_a) == 0);
+        REQUIRE(init_am(peer_b, backend_b, events_b) == 0);
+
+        auto &sender = a_sends ? peer_a : peer_b;
+        auto &receiver = a_sends ? peer_b : peer_a;
+        auto &receiver_events = a_sends ? events_b : events_a;
+
+        std::string first = "sdu zero, held back";
+        std::string second = "sdu one, overtakes it";
+
+        REQUIRE(::rlc_tx(sender.get(), buf::create(first), nullptr) == 0);
+        REQUIRE(::rlc_tx(sender.get(), buf::create(second), nullptr) == 0);
+
+        pump(link_a, link_b, 64);
+
+        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+               to_bytevec(first));
+        REQUIRE(receiver_events.pop(::rlc_event::RLC_EVENT_RX_DONE).payload ==
+               to_bytevec(second));
+        REQUIRE(receiver_events.empty());
+
+        /* SN 1 reached the peer first, but SN 0 was delivered first. */
+        REQUIRE(data_link.arrived[0].first == 1);
+        REQUIRE(data_link.arrived[1].first == 0);
+
+        REQUIRE(::rlc_window_base(&receiver.get()->rx.win) == 2);
 
         REQUIRE(::rlc_deinit(peer_a.get()) == 0);
         REQUIRE(::rlc_deinit(peer_b.get()) == 0);
