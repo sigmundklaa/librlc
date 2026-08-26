@@ -17,6 +17,12 @@ in at `rlc_init`.
 The specification is not in the repo. Clause numbers in code, tests and commit
 messages refer to TS 38.322 v18.1.0.
 
+Search a copy of it as text rather than paging the PDF: `pdftotext -layout
+<pdf> out.txt`, then grep. `-layout` matters — the PDU-format figures are
+ASCII field tables that collapse into nonsense without it. Every clause number
+appears twice in the dump, once in the table of contents and once in the body,
+so a range match gets the body: `awk '/^6\.2\.2\.3 *UMD PDU/,/^6\.2\.2\.4/'`.
+
 ## Building
 
 The root `CMakeLists.txt` is not standalone — it aborts with `Gabs not found`
@@ -36,6 +42,14 @@ cd tests/build && ctest --output-on-failure
 
 Sanitizer and coverage recipes are in `tests/README.md`. `tests/build/` is
 gitignored; do not commit it.
+
+gabs is fetched from `main`, not a tag or a pinned commit, so what you build
+against moves. `FetchContent` re-fetches on every configure: re-running `cmake
+.` inside an already-configured build directory picks up a new upstream
+commit, and `git -C tests/build/_deps/gabs-src log -1` says which one you
+have. Upstream sometimes rewrites `main`, in which case the re-fetch fails on
+a rebase conflict; `git -C tests/build/_deps/gabs-src reset --hard
+origin/main` clears it.
 
 **Baseline.** 82 cases, 1447 assertions, one of them failing: "UM RX delivers
 a complete SDU that carries no SN" documents an open defect in `src/`
@@ -57,7 +71,6 @@ sanitizer run is not evidence the defect is gone.
 | `src/` | Implementation, plus the private `common.h`, `encode.h`, `arq.h`, `log.h` |
 | `tests/` | Catch2 suite, its helpers and the fake timer backend |
 | `zephyr/` | Zephyr module glue: `module.yml`, `Kconfig`, source list |
-| `.claude/skills/writing-tests/` | General test-writing principles, not specific to this repo |
 
 Within `src/`:
 
@@ -82,6 +95,14 @@ Zephyr build silently diverges from the host one.
 **Tests only.** Unless fixing the library is the task, do not edit `src/` to
 make a test pass. A test that asserts the specification and fails is
 documenting a defect — leave it failing and say so.
+
+The exception is a defect that aborts the process rather than failing an
+assertion — memory corruption caught by ASan, say. There is no clean pass to
+observe: the binary dies and every other case reports nothing, so "leave it
+failing" costs the whole run. Ask before deciding. Keeping the repro and
+hiding it from the default run is the usual answer — a Catch2 `[.]` in the tag
+list (`"[um][tx][.]"`) keeps a bare `./tests` clean while `./tests "[um]"`
+still reproduces it.
 
 **Cite the clause.** Where code or a test encodes a requirement, name the TS
 38.322 clause it comes from: the number and the rule, not a pasted quotation.
@@ -128,6 +149,13 @@ inside the submit callback.
 **An AM PDU that empties the transmission buffer is polled unconditionally**
 (§5.3.3.2), so any single-SDU AM transmission drags a poll, a STATUS report and
 possibly a retransmission behind it.
+
+**Unlink a list node before freeing what holds it.** The `rlc_list_node` is
+embedded in the object, and `rlc_list_foreach`'s own `rlc_list_it_next(it)`
+reads it after the body has run — so freeing inside the loop reads freed
+memory on the next step. Pop first, then free: `it = rlc_list_it_pop(it,
+NULL);`. `serve_sdu` and `rlc_tx_yield` in `src/tx.c` are the worked examples.
+A missing pop here is invisible in an unsanitized build.
 
 **Stopping a timer is asynchronous.** `gabs_timer_active()` therefore cannot
 answer "is this timer meant to be running?" — a stopped timer can still report

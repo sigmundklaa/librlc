@@ -121,6 +121,19 @@ build an `::rlc_context` by hand call `rlc_sdu_queue_clear` themselves, as
 literals with nested designators are the construct that has broken this
 before.
 
+When that forces a syntax change in `src/`, check the file still builds as C
+afterwards. `remove_sources` only drops it from this build's local `rlc`
+target, so it can keep compiling here while breaking for every real consumer:
+
+```sh
+INC=$(grep -o '\-I[^ "]*' tests/build/compile_commands.json | sort -u | tr '\n' ' ')
+cc -std=gnu11 -fsyntax-only $INC -Isrc src/arq.c
+```
+
+Take the include flags from `compile_commands.json` rather than writing them
+out: gabs contributes one directory per selected backend, so a hand-written
+`-I` list will be missing several.
+
 **Timers.** `gabs-overrides/timer` offers `default_resolver` (a real thread,
 real delay) and `manual_resolver` (never fires on its own). Drive the latter
 with `timer_ctx.fire(timer.gtimer)`, which blocks until the callback has run,
@@ -132,6 +145,19 @@ existing call means.
 Any scenario needing *two* STATUS reports must use `manual_resolver`:
 `pump()` runs everything with no real delay, so a real `t-StatusProhibit`
 armed by the first report will not have expired by the second.
+
+A unit-style case that reaches a timer needs both a `timer_ctx` *and* a real
+`rlc_timer_install`. Registering the context alone is not enough: the
+override's `stop()` dereferences the handle, and an uninstalled one is null.
+The symptom is `std::logic_error("No instance registered")` unwinding past the
+case's cleanup, which shows up as a leak spike rather than as an obvious
+error.
+
+If you extend `struct timer`, keep `std::jthread runner` declared **last**, as
+the comment there asks. Members destruct in reverse declaration order, so a
+`jthread` declared ahead of the mutex and condition variable its thread waits
+on has those torn down underneath it while it is still running. The failure is
+a hang at destruction, with nothing pointing back at the declaration order.
 
 **The loopback link.** `peer_link` connects two entities: `drop` discards a
 PDU, `hold` keeps one back and releases it after the next, reordering the two.
