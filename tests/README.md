@@ -4,6 +4,10 @@ Catch2 v3, one executable (`tests`) covering the three RLC modes and the
 internals beneath them. `tests/CMakeLists.txt` is the entry point: it fetches
 Catch2 and gabs, then adds the library at `../` as the `rlc` target.
 
+The repo-wide rules — tests only, citing clauses, style, and the protocol
+facts that mislead if you assume otherwise — are in
+[`../AGENTS.md`](../AGENTS.md). What follows is specific to this suite.
+
 ## Running
 
 ```sh
@@ -35,6 +39,13 @@ first memory error aborts the binary and Catch2 reports **zero** results.
 
 The baseline is clean — no reports, no leaks — so treat any finding as a
 regression from the change under test rather than pre-existing noise.
+
+This build also reports 82 passing cases and 1450 assertions, where the
+default build fails one case at 1447. The difference is the uninitialised SN
+of `REVIEW.md` §4.6: here the indeterminate value lands inside the receive
+window and the SDU is delivered, which carries the case three assertions
+further. Neither sanitizer flags it — an uninitialised read is MemorySanitizer
+territory — so a green run says nothing about that defect.
 
 ## Coverage
 
@@ -92,25 +103,10 @@ files are `log.c`, `rlc.c` and `sched.c` — mostly init, teardown and logging.
 
 ## Conventions
 
-**Tests only.** Do not edit `src/` to make a test pass. A test that asserts
-the specification and fails is documenting a defect; leave it failing and say
-so. If the assertion is one of several in a case with shared teardown, use
-`CHECK` rather than `REQUIRE` so the teardown still runs.
-
-**Cite the clause.** Assertions that encode a requirement name the TS 38.322
-clause they come from. Keep it to the number and the rule. PDU header sizes
-and field layouts are normative (§6.2.2, §6.2.3), so a test may pin them.
-
-**SN comparisons are modular.** §7.1 requires subtracting a per-entity modulus
-base before comparing: `TX_Next_Ack` on the transmitting AM side, `RX_Next` on
-the receiving AM side, `RX_Next_Highest - UM_Window_Size` on the receiving UM
-side. Reasoning about SNs as plain integers gives wrong answers — at rest a UM
-entity's reassembly window is `[2048, 4096)`, so a "large" SN like 3000 is
-inside it. The spec says *inside*/*outside* a window, never *above*/*below*.
-
-**`rlc_event`'s payload is a union.** Branch on `ev.type` before reading it;
-`RLC_EVENT_RX_DONE_DIRECT` carries a `gabs_pbuf *`, not an SDU, and the
-pointer is to the caller's stack.
+**A failing assertion is a finding.** Leave it failing and say so; `REVIEW.md`
+records what it documents. Where a case has shared teardown and several
+checks, use `CHECK` rather than `REQUIRE` so the teardown still runs, and read
+the observed value into a local before asserting on it.
 
 **Helpers release only what they took.** A destructor must not tidy up state
 the code under test left behind — a still-queued SDU, an armed timer — because
@@ -144,22 +140,17 @@ left, and grants its first argument before its second — the argument order is
 therefore the interleaving. The link records each data PDU's SN and offset as
 the peer saw them, so a case can assert the order.
 
-Note an AM PDU that empties the transmission buffer is polled unconditionally
-(§5.3.3.2), so any single-SDU AM transmission drags a poll, a STATUS report
-and possibly a retransmission behind it. Design scenarios around that.
-`rlc_event_tx_fail` and `rlc_event_tx_done` both report `RLC_EVENT_TX_RELEASE`,
-so success and give-up have to be told apart some other way.
+Delivery is synchronous and re-entrant: `rlc_rx_submit` on the peer runs
+nested inside the sender's `rlc_tx_avail`, so a STATUS report can come back
+before the transmit call has returned. Scenarios also have to allow for the
+unconditional poll on the last AM segment and the shared
+`RLC_EVENT_TX_RELEASE` for both success and give-up, described in
+`../AGENTS.md`.
 
 **`GENERATE`.** Worth keeping when the axis could diverge later, even if it
 adds no coverage today — the AM/UM split in `alarm_reassembly`, the pump order.
 Not worth keeping when the two runs are symmetric by construction and can never
 diverge, as running each loopback case in both directions was.
-
-**Style.** Prefer no comment; when one is needed, a couple of plain sentences
-on what the code does and why it has to. Comments describe the code as it
-stands — rationale for a change belongs in the commit message. No
-trailing-underscore private members. Name a method for its effect: an accessor
-that consumes is `pop()`, not `get()`.
 
 ## Known gaps
 

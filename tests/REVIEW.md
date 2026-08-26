@@ -3,9 +3,13 @@
 Review of the test suite against 3GPP TS 38.322 v18.1.0 (Release 18).
 
 Revised against the suite at 82 test cases / 1447 assertions. One assertion
-fails by design, documenting the defect in §4.6; everything else passes, with
-no AddressSanitizer or UndefinedBehaviorSanitizer findings and no leaks. Line
+fails, documenting the defect in §4.6; everything else passes, with no
+AddressSanitizer or UndefinedBehaviorSanitizer findings and no leaks. Line
 coverage of `src/` and `include/` is 88.6%, branch coverage 74.1%.
+
+Those numbers are the default build's. The sanitizer build reports 82 passing
+cases at 1450 assertions, because §4.6's defect is an uninitialised read and
+the value differs there - see that section.
 
 Items closed since the first revision are marked **[closed]** with the case
 that closed them; the analysis is kept because it says what the case is for.
@@ -65,7 +69,8 @@ The helpers were per-file copies at the first revision and are now shared:
 under test releasing one), `util/bytevec.hh`, and `buf::pbuf_ptr::from_weak`
 for reading a borrowed buffer. `catch_discover_tests` registers one ctest
 entry per case, and `-DRLC_COVERAGE=ON` instruments the build for gcovr;
-`README.md` documents both.
+`README.md` documents both, and `../AGENTS.md` carries the rules that hold
+across the repo rather than only in the suite.
 
 ---
 
@@ -254,6 +259,14 @@ is tested.
   discarded, and the read is undefined behaviour besides. "UM RX delivers a
   complete SDU that carries no SN" documents it with a `CHECK`, after reading
   its results out so the failure cannot skip teardown.
+
+  "Usually" is literal: under the sanitizer recipe in `README.md` the value
+  left on the stack lands *inside* the window, the SDU is delivered and the
+  case passes - three assertions further in, which is the whole difference
+  between the two builds' totals. Neither ASan nor UBSan reports the read;
+  catching it as such needs MemorySanitizer. A green sanitizer run is
+  therefore not evidence that this is fixed, and the default build is where
+  the failure has to be checked.
 - **TX_Next increment across SDUs.** **[closed]** - "UM TX advances TX_Next
   from one SDU to the next": every segment of the first SDU carries SN 0,
   every segment of the second SN 1, so §5.2.2.1.1's "increment once a segment
