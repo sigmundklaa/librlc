@@ -490,10 +490,6 @@ TEST_CASE("UM RX delivers a complete SDU that carries no SN", "[um][rx]")
 
         REQUIRE(::rlc_deinit(fx.get()) == 0);
 
-        /* Fails: there is no branch for a PDU without an SN. rlc_rx_submit
-         * reads pdu.sn, which rlc_pdu_decode leaves untouched when the
-         * header carries none, then drops the PDU for falling outside the
-         * receive window. */
         CHECK(received == 1);
 
         if (received == 1) {
